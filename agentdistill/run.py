@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from rich.console import Console
 
 from agentdistill.config import ExperimentConfig, TaskConfig, load_config
-from agentdistill.diagnosis import parse_diagnosis, write_patch_artifact
+from agentdistill.diagnosis import apply_patch_bundle, parse_diagnosis, write_patch_artifact
 from agentdistill.harness import load_system_prompt
 from agentdistill.models import ChatClient, load_model_settings
 
@@ -23,22 +23,22 @@ console = Console()
 def main(
     config: Path = typer.Option(..., "--config", "-c"),
     profile: str | None = typer.Option(None, "--profile", "-p"),
+    apply_patches: bool = typer.Option(False, "--apply-patches"),
 ) -> None:
     load_dotenv(override=True)
     cfg = load_config(config)
     try:
-        asyncio.run(run_experiment(cfg, profile))
+        asyncio.run(run_experiment(cfg, profile, apply_patches))
     except RuntimeError as exc:
         console.print(f"[bold red]Error:[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
 
 
-async def run_experiment(cfg: ExperimentConfig, profile: str | None) -> None:
+async def run_experiment(cfg: ExperimentConfig, profile: str | None, apply_patches: bool) -> None:
     output_dir = cfg.output_dir / profile.lower() if profile else cfg.output_dir / "default"
     output_dir.mkdir(parents=True, exist_ok=True)
     weak = ChatClient(load_model_settings("weak", profile))
     teacher = ChatClient(load_model_settings("teacher", profile))
-    weak_system = load_system_prompt(cfg.harness.system_prompt_path, cfg.harness.skills_dir)
     repo_root = Path(__file__).resolve().parent.parent
     teacher_system = (repo_root / "prompts/teacher_diagnosis.md").read_text().strip()
 
@@ -50,14 +50,26 @@ async def run_experiment(cfg: ExperimentConfig, profile: str | None) -> None:
     summary: list[dict[str, object]] = []
     for task in cfg.tasks:
         console.print(f"\n[bold cyan]Task[/bold cyan] {task.id}")
+        weak_system = load_system_prompt(
+            cfg.harness.system_prompt_path,
+            cfg.harness.skills_dir,
+            cfg.harness.guidelines_dir,
+            cfg.harness.validators_dir,
+        )
         result = await run_task(task, weak, teacher, weak_system, teacher_system)
         diagnosis = parse_diagnosis(str(result["teacher_diagnosis_raw"]))
         result["teacher_diagnosis"] = diagnosis.model_dump()
+        applied_patch_path = None
+        if apply_patches and diagnosis.patch_bundle is not None:
+            applied_patch_path = apply_patch_bundle(repo_root, diagnosis.patch_bundle)
+            result["applied_patch_path"] = str(applied_patch_path)
         output_path = output_dir / f"{task.id}.json"
         output_path.write_text(json.dumps(result, indent=2, ensure_ascii=False))
         patch_path = write_patch_artifact(output_dir / "patches", task.id, profile or "default", diagnosis)
         console.print(f"Saved {output_path}")
         console.print(f"Patch {patch_path}")
+        if applied_patch_path is not None:
+            console.print(f"Applied {applied_patch_path}")
         summary.append(
             {
                 "task_id": task.id,
@@ -67,6 +79,7 @@ async def run_experiment(cfg: ExperimentConfig, profile: str | None) -> None:
                 "confidence": diagnosis.confidence,
                 "output_path": str(output_path),
                 "patch_path": str(patch_path),
+                "applied_patch_path": str(applied_patch_path) if applied_patch_path else None,
             }
         )
 

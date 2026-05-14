@@ -16,6 +16,14 @@ class Diagnosis(BaseModel):
     regression_test: str
     confidence: float | None = None
     parse_status: str = "parsed"
+    patch_bundle: "PatchBundle | None" = None
+
+
+class PatchBundle(BaseModel):
+    target_path: str
+    action: str = "create_or_replace"
+    content: str
+    rationale: str
 
 
 def parse_diagnosis(raw: str) -> Diagnosis:
@@ -71,6 +79,29 @@ def write_patch_artifact(
     ]
     path.write_text("\n".join(content), encoding="utf-8")
     return path
+
+
+def apply_patch_bundle(repo_root: Path, bundle: PatchBundle) -> Path:
+    if bundle.action != "create_or_replace":
+        raise RuntimeError(f"Unsupported patch bundle action: {bundle.action}")
+    target = _safe_harness_path(repo_root, bundle.target_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(bundle.content.strip() + "\n", encoding="utf-8")
+    return target
+
+
+def _safe_harness_path(repo_root: Path, target_path: str) -> Path:
+    target = (repo_root / target_path).resolve()
+    allowed_roots = [
+        (repo_root / "harness" / "guidelines").resolve(),
+        (repo_root / "harness" / "skills").resolve(),
+        (repo_root / "harness" / "validators").resolve(),
+    ]
+    if target.suffix != ".md":
+        raise RuntimeError(f"Patch target must be a markdown file: {target_path}")
+    if not any(target.is_relative_to(root) for root in allowed_roots):
+        raise RuntimeError(f"Patch target is outside allowed harness directories: {target_path}")
+    return target
 
 
 def _extract_json(raw: str) -> str | None:

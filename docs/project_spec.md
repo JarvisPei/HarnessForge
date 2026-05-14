@@ -34,6 +34,8 @@ not merely:
 What is the correct answer?
 ```
 
+The implementation must preserve this boundary: humans should build the mechanism for applying teacher-generated patch bundles, but the concrete harness update should be produced by the teacher from traces. Manual edits to harness content are only for bootstrapping base structure or fixing infrastructure.
+
 ## Update Types
 
 ### Prompt Guideline

@@ -14,8 +14,14 @@ if [[ -d .venv ]]; then
 fi
 
 PROFILE="${1:-}"
+APPLY_PATCHES="${APPLY_PATCHES:-0}"
+EXTRA_ARGS=()
+if [[ "$APPLY_PATCHES" == "1" ]]; then
+  EXTRA_ARGS+=(--apply-patches)
+fi
+
 if [[ -n "$PROFILE" ]]; then
-  python -m agentdistill.run --config configs/smoke.yaml --profile "$PROFILE"
+  python -m agentdistill.run --config configs/smoke.yaml --profile "$PROFILE" "${EXTRA_ARGS[@]}"
 else
-  python -m agentdistill.run --config configs/smoke.yaml
+  python -m agentdistill.run --config configs/smoke.yaml "${EXTRA_ARGS[@]}"
 fi

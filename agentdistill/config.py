@@ -14,6 +14,8 @@ class RoleConfig(BaseModel):
 class HarnessConfig(BaseModel):
     system_prompt_path: Path
     skills_dir: Path | None = None
+    guidelines_dir: Path | None = None
+    validators_dir: Path | None = None
 
 
 class TaskConfig(BaseModel):
@@ -39,4 +41,8 @@ def load_config(path: str | Path) -> ExperimentConfig:
     cfg.harness.system_prompt_path = (base / cfg.harness.system_prompt_path).resolve()
     if cfg.harness.skills_dir is not None:
         cfg.harness.skills_dir = (base / cfg.harness.skills_dir).resolve()
+    if cfg.harness.guidelines_dir is not None:
+        cfg.harness.guidelines_dir = (base / cfg.harness.guidelines_dir).resolve()
+    if cfg.harness.validators_dir is not None:
+        cfg.harness.validators_dir = (base / cfg.harness.validators_dir).resolve()
     return cfg

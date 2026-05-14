@@ -47,6 +47,12 @@ Run a named provider profile such as `*_CLAUDE`:
 scripts/run_smoke.sh CLAUDE
 ```
 
+By default, teacher harness patches are proposals only. To let the teacher write patch bundles into the allowed `harness/` directories:
+
+```bash
+APPLY_PATCHES=1 scripts/run_smoke.sh
+```
+
 ## Environment Variables
 
 The weak and teacher roles are independent so they can point to different providers or relay routes:

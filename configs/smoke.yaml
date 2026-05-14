@@ -6,7 +6,9 @@ teacher:
   role: teacher
 harness:
   system_prompt_path: prompts/weak_system.md
-  skills_dir: prompts/skills
+  skills_dir: harness/skills
+  guidelines_dir: harness/guidelines
+  validators_dir: harness/validators
 tasks:
   - id: arithmetic_check
     instruction: |
