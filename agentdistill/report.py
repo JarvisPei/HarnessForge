@@ -56,4 +56,7 @@ def build_impact_report(
 
 
 def _numbers(text: str) -> list[str]:
-    return [match.replace(",", "") for match in re.findall(r"-?\d[\d,]*(?:\.\d+)?", text)]
+    numbers = []
+    for match in re.findall(r"-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?", text):
+        numbers.append(match.replace(",", ""))
+    return numbers
