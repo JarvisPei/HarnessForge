@@ -1,0 +1,26 @@
+name: smoke
+output_dir: outputs/smoke
+weak:
+  role: weak
+teacher:
+  role: teacher
+harness:
+  system_prompt_path: prompts/weak_system.md
+  skills_dir: prompts/skills
+tasks:
+  - id: arithmetic_check
+    instruction: |
+      A user asks: "I bought 17 packs with 24 screws each, used 139 screws, and lost 18. How many screws remain?"
+      Solve carefully and give only the final number plus a one-sentence explanation.
+  - id: tiny_debug
+    instruction: |
+      The following Python function should return the maximum value in a non-empty list, but it is wrong:
+
+      def max_value(xs):
+          best = 0
+          for x in xs:
+              if x > best:
+                  best = x
+          return best
+
+      Explain the bug and provide a corrected function.
