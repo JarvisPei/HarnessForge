@@ -16,6 +16,7 @@ class HarnessConfig(BaseModel):
     skills_dir: Path | None = None
     guidelines_dir: Path | None = None
     validators_dir: Path | None = None
+    tools_dir: Path | None = None
 
 
 class TaskConfig(BaseModel):
@@ -45,4 +46,6 @@ def load_config(path: str | Path) -> ExperimentConfig:
         cfg.harness.guidelines_dir = (base / cfg.harness.guidelines_dir).resolve()
     if cfg.harness.validators_dir is not None:
         cfg.harness.validators_dir = (base / cfg.harness.validators_dir).resolve()
+    if cfg.harness.tools_dir is not None:
+        cfg.harness.tools_dir = (base / cfg.harness.tools_dir).resolve()
     return cfg

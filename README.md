@@ -46,6 +46,12 @@ APPLY_PATCHES=1 python -m agentdistill.run --config configs/smoke.yaml
 
 By default, only patches attached to diagnosed failures are applied. Add `--apply-success-patches` only when you intentionally want teacher-generated reinforcement patches from successful traces.
 
+To let teacher changes affect the next weak-model attempt in the same run:
+
+```bash
+APPLY_PATCHES=1 ITERATIONS=2 scripts/run_smoke.sh
+```
+
 ## Remote Server Workflow
 
 The code is API-first and does not require GPUs for the smoke loop. This is the fastest path for early iteration: use API weak/teacher models, collect traces, then decide which harness updates are worth automating.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import py_compile
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +88,8 @@ def apply_patch_bundle(repo_root: Path, bundle: PatchBundle) -> Path:
     target = _safe_harness_path(repo_root, bundle.target_path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(bundle.content.strip() + "\n", encoding="utf-8")
+    if target.suffix == ".py":
+        py_compile.compile(str(target), doraise=True)
     return target
 
 
@@ -96,9 +99,12 @@ def _safe_harness_path(repo_root: Path, target_path: str) -> Path:
         (repo_root / "harness" / "guidelines").resolve(),
         (repo_root / "harness" / "skills").resolve(),
         (repo_root / "harness" / "validators").resolve(),
+        (repo_root / "harness" / "tools").resolve(),
     ]
-    if target.suffix != ".md":
-        raise RuntimeError(f"Patch target must be a markdown file: {target_path}")
+    if target.suffix not in {".md", ".py"}:
+        raise RuntimeError(f"Patch target must be a markdown or Python file: {target_path}")
+    if target.suffix == ".py" and not target.is_relative_to((repo_root / "harness" / "tools").resolve()):
+        raise RuntimeError(f"Python patch targets are only allowed under harness/tools: {target_path}")
     if not any(target.is_relative_to(root) for root in allowed_roots):
         raise RuntimeError(f"Patch target is outside allowed harness directories: {target_path}")
     return target

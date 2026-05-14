@@ -55,6 +55,14 @@ APPLY_PATCHES=1 scripts/run_smoke.sh
 
 Apply mode only applies patches from traces with non-empty `failure_categories` by default. This keeps successful examples from bloating the harness with optional reinforcements.
 
+Use multiple iterations to measure actual impact:
+
+```bash
+APPLY_PATCHES=1 ITERATIONS=2 scripts/run_smoke.sh
+```
+
+Iteration 1 lets the teacher write a harness patch. Iteration 2 reloads the harness and runs the weak model again with the teacher's update included.
+
 ## Environment Variables
 
 The weak and teacher roles are independent so they can point to different providers or relay routes:

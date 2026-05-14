@@ -25,11 +25,12 @@ def main(
     profile: str | None = typer.Option(None, "--profile", "-p"),
     apply_patches: bool = typer.Option(False, "--apply-patches"),
     apply_success_patches: bool = typer.Option(False, "--apply-success-patches"),
+    iterations: int = typer.Option(1, "--iterations", min=1),
 ) -> None:
     load_dotenv(override=True)
     cfg = load_config(config)
     try:
-        asyncio.run(run_experiment(cfg, profile, apply_patches, apply_success_patches))
+        asyncio.run(run_experiment(cfg, profile, apply_patches, apply_success_patches, iterations))
     except RuntimeError as exc:
         console.print(f"[bold red]Error:[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
@@ -40,6 +41,7 @@ async def run_experiment(
     profile: str | None,
     apply_patches: bool,
     apply_success_patches: bool,
+    iterations: int,
 ) -> None:
     output_dir = cfg.output_dir / profile.lower() if profile else cfg.output_dir / "default"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -54,44 +56,50 @@ async def run_experiment(
     console.print(f"[bold]Output:[/bold] {output_dir}")
 
     summary: list[dict[str, object]] = []
-    for task in cfg.tasks:
-        console.print(f"\n[bold cyan]Task[/bold cyan] {task.id}")
-        weak_system = load_system_prompt(
-            cfg.harness.system_prompt_path,
-            cfg.harness.skills_dir,
-            cfg.harness.guidelines_dir,
-            cfg.harness.validators_dir,
-        )
-        result = await run_task(task, weak, teacher, weak_system, teacher_system)
-        diagnosis = parse_diagnosis(str(result["teacher_diagnosis_raw"]))
-        result["teacher_diagnosis"] = diagnosis.model_dump()
-        applied_patch_path = None
-        if (
-            apply_patches
-            and diagnosis.patch_bundle is not None
-            and (apply_success_patches or bool(diagnosis.failure_categories))
-        ):
-            applied_patch_path = apply_patch_bundle(repo_root, diagnosis.patch_bundle)
-            result["applied_patch_path"] = str(applied_patch_path)
-        output_path = output_dir / f"{task.id}.json"
-        output_path.write_text(json.dumps(result, indent=2, ensure_ascii=False))
-        patch_path = write_patch_artifact(output_dir / "patches", task.id, profile or "default", diagnosis)
-        console.print(f"Saved {output_path}")
-        console.print(f"Patch {patch_path}")
-        if applied_patch_path is not None:
-            console.print(f"Applied {applied_patch_path}")
-        summary.append(
-            {
-                "task_id": task.id,
-                "patch_type": diagnosis.patch_type,
-                "failure_categories": diagnosis.failure_categories,
-                "parse_status": diagnosis.parse_status,
-                "confidence": diagnosis.confidence,
-                "output_path": str(output_path),
-                "patch_path": str(patch_path),
-                "applied_patch_path": str(applied_patch_path) if applied_patch_path else None,
-            }
-        )
+    for iteration in range(1, iterations + 1):
+        console.print(f"\n[bold]Iteration:[/bold] {iteration}/{iterations}")
+        iteration_dir = output_dir / f"iter_{iteration:02d}"
+        iteration_dir.mkdir(parents=True, exist_ok=True)
+        for task in cfg.tasks:
+            console.print(f"\n[bold cyan]Task[/bold cyan] {task.id}")
+            weak_system = load_system_prompt(
+                cfg.harness.system_prompt_path,
+                cfg.harness.skills_dir,
+                cfg.harness.guidelines_dir,
+                cfg.harness.validators_dir,
+                cfg.harness.tools_dir,
+            )
+            result = await run_task(task, weak, teacher, weak_system, teacher_system)
+            diagnosis = parse_diagnosis(str(result["teacher_diagnosis_raw"]))
+            result["teacher_diagnosis"] = diagnosis.model_dump()
+            applied_patch_path = None
+            if (
+                apply_patches
+                and diagnosis.patch_bundle is not None
+                and (apply_success_patches or bool(diagnosis.failure_categories))
+            ):
+                applied_patch_path = apply_patch_bundle(repo_root, diagnosis.patch_bundle)
+                result["applied_patch_path"] = str(applied_patch_path)
+            output_path = iteration_dir / f"{task.id}.json"
+            output_path.write_text(json.dumps(result, indent=2, ensure_ascii=False))
+            patch_path = write_patch_artifact(iteration_dir / "patches", task.id, profile or "default", diagnosis)
+            console.print(f"Saved {output_path}")
+            console.print(f"Patch {patch_path}")
+            if applied_patch_path is not None:
+                console.print(f"Applied {applied_patch_path}")
+            summary.append(
+                {
+                    "iteration": iteration,
+                    "task_id": task.id,
+                    "patch_type": diagnosis.patch_type,
+                    "failure_categories": diagnosis.failure_categories,
+                    "parse_status": diagnosis.parse_status,
+                    "confidence": diagnosis.confidence,
+                    "output_path": str(output_path),
+                    "patch_path": str(patch_path),
+                    "applied_patch_path": str(applied_patch_path) if applied_patch_path else None,
+                }
+            )
 
     summary_path = output_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False))

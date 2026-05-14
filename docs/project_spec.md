@@ -36,6 +36,15 @@ What is the correct answer?
 
 The implementation must preserve this boundary: humans should build the mechanism for applying teacher-generated patch bundles, but the concrete harness update should be produced by the teacher from traces. Manual edits to harness content are only for bootstrapping base structure or fixing infrastructure.
 
+The minimal self-improvement experiment is:
+
+```text
+iteration 1: weak run -> teacher patch_bundle -> apply to harness
+iteration 2: weak run with updated harness -> compare failure category and answer
+```
+
+Teacher-generated code is initially limited to `harness/tools/*.py`, must compile, and is exposed to the weak model as a tool specification. The framework should not execute arbitrary teacher code until there is a stronger sandbox and test gate.
+
 ## Update Types
 
 ### Prompt Guideline
