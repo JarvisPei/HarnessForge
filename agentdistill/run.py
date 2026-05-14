@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from rich.console import Console
 
 from agentdistill.config import ExperimentConfig, TaskConfig, load_config
+from agentdistill.diagnosis import parse_diagnosis, write_patch_artifact
 from agentdistill.harness import load_system_prompt
 from agentdistill.models import ChatClient, load_model_settings
 
@@ -46,12 +47,32 @@ async def run_experiment(cfg: ExperimentConfig, profile: str | None) -> None:
         console.print(f"[bold]Profile:[/bold] {profile.upper()}")
     console.print(f"[bold]Output:[/bold] {output_dir}")
 
+    summary: list[dict[str, object]] = []
     for task in cfg.tasks:
         console.print(f"\n[bold cyan]Task[/bold cyan] {task.id}")
         result = await run_task(task, weak, teacher, weak_system, teacher_system)
+        diagnosis = parse_diagnosis(str(result["teacher_diagnosis_raw"]))
+        result["teacher_diagnosis"] = diagnosis.model_dump()
         output_path = output_dir / f"{task.id}.json"
         output_path.write_text(json.dumps(result, indent=2, ensure_ascii=False))
+        patch_path = write_patch_artifact(output_dir / "patches", task.id, profile or "default", diagnosis)
         console.print(f"Saved {output_path}")
+        console.print(f"Patch {patch_path}")
+        summary.append(
+            {
+                "task_id": task.id,
+                "patch_type": diagnosis.patch_type,
+                "failure_categories": diagnosis.failure_categories,
+                "parse_status": diagnosis.parse_status,
+                "confidence": diagnosis.confidence,
+                "output_path": str(output_path),
+                "patch_path": str(patch_path),
+            }
+        )
+
+    summary_path = output_dir / "summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False))
+    console.print(f"\n[bold]Summary:[/bold] {summary_path}")
 
 
 async def run_task(
