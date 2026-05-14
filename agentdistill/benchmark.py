@@ -129,6 +129,12 @@ async def _run_phase(
     summary = []
     for task in tasks:
         console.print(f"[cyan]Task[/cyan] {task.id}")
+        result_path = phase_dir / f"{task.id}.json"
+        if result_path.exists():
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            console.print(f"Reusing {result_path}")
+            results[task.id] = result
+            continue
         tools = ToolRegistry(cfg.harness.tools_dir)
         policies = RuntimePolicyRegistry(cfg.harness.runtime_policies_dir)
         weak_system = load_system_prompt(
@@ -147,7 +153,6 @@ async def _run_phase(
         if apply_patches and diagnosis.patch_bundle is not None and diagnosis.failure_categories:
             applied_patch_path = apply_patch_bundle(repo_root, diagnosis.patch_bundle)
             result["applied_patch_path"] = str(applied_patch_path)
-        result_path = phase_dir / f"{task.id}.json"
         result_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
         patch_path = write_patch_artifact(phase_dir / "patches", task.id, cfg.name, diagnosis)
         summary.append(
