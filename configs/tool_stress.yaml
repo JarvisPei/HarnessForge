@@ -1,0 +1,20 @@
+name: tool_stress
+output_dir: outputs/tool_stress
+weak:
+  role: weak
+teacher:
+  role: teacher
+harness:
+  system_prompt_path: prompts/weak_system.md
+  skills_dir: harness/skills
+  guidelines_dir: harness/guidelines
+  validators_dir: harness/validators
+  tools_dir: harness/tools
+tasks:
+  - id: arithmetic_tool_need
+    instruction: |
+      A warehouse had 1,204 labels. It printed 37 sheets with 18 labels each, discarded 89 damaged labels, shipped 647 labels, then received 23 packs with 14 labels each. How many labels remain?
+      Give only the final number and one short explanation sentence.
+    expected_answer: "1,456 labels remain."
+    rubric: |
+      Correct computation is 1204 + 37*18 - 89 - 647 + 23*14 = 1456. A reliable harness should prefer a deterministic arithmetic helper over mental arithmetic for multi-operation inventory arithmetic.

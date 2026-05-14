@@ -52,6 +52,12 @@ To let teacher changes affect the next weak-model attempt in the same run:
 APPLY_PATCHES=1 ITERATIONS=2 scripts/run_smoke.sh
 ```
 
+Tool-focused stress run:
+
+```bash
+python -m agentdistill.run --config configs/tool_stress.yaml --apply-patches --iterations 3
+```
+
 ## Remote Server Workflow
 
 The code is API-first and does not require GPUs for the smoke loop. This is the fastest path for early iteration: use API weak/teacher models, collect traces, then decide which harness updates are worth automating.

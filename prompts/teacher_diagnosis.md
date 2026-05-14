@@ -25,4 +25,13 @@ Return JSON only with these fields:
   - rationale: why this harness change helps weak models on future tasks
 - confidence: number from 0 to 1
 
-The patch_bundle is the mechanism for updating the weak model's harness. Prefer markdown guideline, skill, or validator specs when possible. If a deterministic helper would be more reliable than instructions, you may write a small Python tool under harness/tools. Python tools must be self-contained, deterministic, and avoid network, filesystem, subprocess, eval, exec, and imports outside the standard library.
+The patch_bundle is the mechanism for updating the weak model's harness. Prefer narrowly scoped guideline, skill, validator, or tool files. Do not replace harness/guidelines/base.md; create a new focused file instead, such as harness/guidelines/arithmetic_format.md.
+
+If a deterministic helper would be more reliable than instructions, write a small Python tool under harness/tools. Python tools must be self-contained, deterministic, and avoid network, filesystem, subprocess, eval, exec, and imports outside the standard library. A callable tool must expose exactly this function:
+
+```python
+def run(input: dict) -> dict:
+    ...
+```
+
+Return JSON-serializable dictionaries only.

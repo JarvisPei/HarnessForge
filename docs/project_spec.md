@@ -45,6 +45,14 @@ iteration 2: weak run with updated harness -> compare failure category and answe
 
 Teacher-generated code is initially limited to `harness/tools/*.py`, must compile, and is exposed to the weak model as a tool specification. The framework should not execute arbitrary teacher code until there is a stronger sandbox and test gate.
 
+Current tool protocol:
+
+```json
+{"tool_call": {"name": "tool_name", "input": {"key": "value"}}}
+```
+
+The framework executes registered tools from `harness/tools/*.py` and sends the result back to the weak model for final answering. Tools must define `run(input: dict) -> dict`.
+
 ## Update Types
 
 ### Prompt Guideline

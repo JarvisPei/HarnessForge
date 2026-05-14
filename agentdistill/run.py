@@ -13,6 +13,7 @@ from agentdistill.config import ExperimentConfig, TaskConfig, load_config
 from agentdistill.diagnosis import apply_patch_bundle, parse_diagnosis, write_patch_artifact
 from agentdistill.harness import load_system_prompt
 from agentdistill.models import ChatClient, load_model_settings
+from agentdistill.tools import ToolRegistry
 
 
 app = typer.Typer(add_completion=False)
@@ -62,6 +63,7 @@ async def run_experiment(
         iteration_dir.mkdir(parents=True, exist_ok=True)
         for task in cfg.tasks:
             console.print(f"\n[bold cyan]Task[/bold cyan] {task.id}")
+            tools = ToolRegistry(cfg.harness.tools_dir)
             weak_system = load_system_prompt(
                 cfg.harness.system_prompt_path,
                 cfg.harness.skills_dir,
@@ -69,7 +71,9 @@ async def run_experiment(
                 cfg.harness.validators_dir,
                 cfg.harness.tools_dir,
             )
-            result = await run_task(task, weak, teacher, weak_system, teacher_system)
+            if tools.names:
+                weak_system = weak_system + "\n\n" + tools.describe()
+            result = await run_task(task, weak, teacher, weak_system, teacher_system, tools)
             diagnosis = parse_diagnosis(str(result["teacher_diagnosis_raw"]))
             result["teacher_diagnosis"] = diagnosis.model_dump()
             applied_patch_path = None
@@ -112,12 +116,31 @@ async def run_task(
     teacher: ChatClient,
     weak_system: str,
     teacher_system: str,
+    tools: ToolRegistry,
 ) -> dict[str, object]:
     weak_messages = [
         {"role": "system", "content": weak_system},
         {"role": "user", "content": task.instruction},
     ]
     weak_answer = await weak.complete(weak_messages)
+    tool_call = _parse_tool_call(weak_answer)
+    tool_result = None
+    final_answer = weak_answer
+    if tool_call is not None:
+        tool_result = tools.call(tool_call["name"], tool_call.get("input", {}))
+        final_answer = await weak.complete(
+            [
+                {"role": "system", "content": weak_system},
+                {"role": "user", "content": task.instruction},
+                {"role": "assistant", "content": weak_answer},
+                {
+                    "role": "user",
+                    "content": "Tool result:\n"
+                    + json.dumps(tool_result, ensure_ascii=False, indent=2)
+                    + "\n\nNow answer the original task directly.",
+                },
+            ]
+        )
 
     teacher_messages = [
         {"role": "system", "content": teacher_system},
@@ -130,7 +153,10 @@ async def run_task(
                     "expected_answer": task.expected_answer,
                     "rubric": task.rubric,
                     "weak_system_prompt": weak_system,
-                    "weak_answer": weak_answer,
+                    "weak_answer": final_answer,
+                    "initial_weak_answer": weak_answer,
+                    "tool_call": tool_call,
+                    "tool_result": tool_result,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -142,9 +168,37 @@ async def run_task(
     return {
         "task_id": task.id,
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "weak_answer": weak_answer,
+        "weak_answer": final_answer,
+        "initial_weak_answer": weak_answer,
+        "tool_call": tool_call,
+        "tool_result": tool_result,
         "teacher_diagnosis_raw": diagnosis,
     }
+
+
+def _parse_tool_call(content: str) -> dict[str, object] | None:
+    text = content.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    if not text.startswith("{"):
+        return None
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    tool_call = payload.get("tool_call")
+    if not isinstance(tool_call, dict):
+        return None
+    name = tool_call.get("name")
+    input_payload = tool_call.get("input", {})
+    if not isinstance(name, str) or not isinstance(input_payload, dict):
+        return None
+    return {"name": name, "input": input_payload}
 
 
 if __name__ == "__main__":

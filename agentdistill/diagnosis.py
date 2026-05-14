@@ -106,6 +106,8 @@ def _safe_harness_path(repo_root: Path, target_path: str) -> Path:
         raise RuntimeError(f"Patch target must be a markdown or Python file: {target_path}")
     if target.suffix == ".py" and not target.is_relative_to((repo_root / "harness" / "tools").resolve()):
         raise RuntimeError(f"Python patch targets are only allowed under harness/tools: {target_path}")
+    if target == (repo_root / "harness" / "guidelines" / "base.md").resolve():
+        raise RuntimeError("Teacher patches may not replace harness/guidelines/base.md; create a focused guideline file instead.")
     if not any(target.is_relative_to(root) for root in allowed_roots):
         raise RuntimeError(f"Patch target is outside allowed harness directories: {target_path}")
     return target
