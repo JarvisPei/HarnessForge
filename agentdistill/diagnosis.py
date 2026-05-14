@@ -83,7 +83,8 @@ def write_patch_artifact(
 
 
 def apply_patch_bundle(repo_root: Path, bundle: PatchBundle) -> Path:
-    if bundle.action != "create_or_replace":
+    action = "create_or_replace" if bundle.action in {"create_or_replace", "replace"} else bundle.action
+    if action != "create_or_replace":
         raise RuntimeError(f"Unsupported patch bundle action: {bundle.action}")
     target = _safe_harness_path(repo_root, bundle.target_path)
     target.parent.mkdir(parents=True, exist_ok=True)
