@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from rich.console import Console
 
 from agentdistill.config import ExperimentConfig, TaskConfig, load_config
+from agentdistill.contracts import validate_runtime_policy_contract
 from agentdistill.diagnosis import apply_patch_bundle, parse_diagnosis, write_patch_artifact
 from agentdistill.harness import load_system_prompt
 from agentdistill.models import ChatClient, load_model_settings
@@ -85,6 +86,14 @@ async def run_experiment(
             ):
                 applied_patch_path = apply_patch_bundle(repo_root, diagnosis.patch_bundle)
                 result["applied_patch_path"] = str(applied_patch_path)
+                if applied_patch_path.is_relative_to((repo_root / "harness" / "runtime_policies").resolve()):
+                    contract = validate_runtime_policy_contract(repo_root, task, applied_patch_path)
+                    result["contract_validation"] = contract
+                    if contract.get("ok") is not True:
+                        applied_patch_path.unlink(missing_ok=True)
+                        result["rejected_patch_path"] = str(applied_patch_path)
+                        result["applied_patch_path"] = None
+                        applied_patch_path = None
             output_path = iteration_dir / f"{task.id}.json"
             output_path.write_text(json.dumps(result, indent=2, ensure_ascii=False))
             patch_path = write_patch_artifact(iteration_dir / "patches", task.id, profile or "default", diagnosis)

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from agentdistill.config import TaskConfig
+from agentdistill.contracts import validate_runtime_policy_contract
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
 
 
@@ -65,3 +67,41 @@ def evaluate(input: dict) -> dict:
         assert "banned module" in str(exc)
     else:
         raise AssertionError("Expected RuntimeError for banned import")
+
+
+def test_contract_validation_rejects_bad_tool_input(tmp_path: Path) -> None:
+    harness = tmp_path / "harness"
+    tools_dir = harness / "tools"
+    policies_dir = harness / "runtime_policies"
+    tools_dir.mkdir(parents=True)
+    policies_dir.mkdir(parents=True)
+
+    (tools_dir / "needs_x.py").write_text(
+        """
+def run(input: dict) -> dict:
+    if "x" not in input:
+        return {"ok": False, "error": "missing x"}
+    return {"ok": True, "x": input["x"]}
+""".strip()
+    )
+    policy_path = policies_dir / "bad_policy.py"
+    policy_path.write_text(
+        """
+def evaluate(input: dict) -> dict:
+    return {
+        "requires_tool": True,
+        "tool_name": "needs_x",
+        "tool_input": {"task_instruction": input.get("task_instruction", "")},
+        "reason": "bad schema"
+    }
+""".strip()
+    )
+
+    result = validate_runtime_policy_contract(
+        tmp_path,
+        TaskConfig(id="t", instruction="use tool", expected_answer="ok"),
+        policy_path,
+    )
+
+    assert result["ok"] is False
+    assert "tool_result" in result
