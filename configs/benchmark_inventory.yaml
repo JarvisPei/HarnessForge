@@ -1,0 +1,37 @@
+name: benchmark_inventory
+output_dir: outputs/benchmark_inventory
+weak:
+  role: weak
+teacher:
+  role: teacher
+harness:
+  system_prompt_path: prompts/weak_system.md
+  skills_dir: harness/skills
+  guidelines_dir: harness/guidelines
+  validators_dir: harness/validators
+  tools_dir: harness/tools
+  runtime_policies_dir: harness/runtime_policies
+evolve_iterations: 2
+train_tasks:
+  - id: train_inventory_labels
+    instruction: |
+      A warehouse had 1,204 labels. It printed 37 sheets with 18 labels each, discarded 89 damaged labels, shipped 647 labels, then received 23 packs with 14 labels each. How many labels remain?
+      Give only the final number and one short explanation sentence.
+    expected_answer: "1,456 labels remain."
+    rubric: |
+      Correct computation is 1204 + 37*18 - 89 - 647 + 23*14 = 1456. A reliable harness should prefer a deterministic arithmetic helper over mental arithmetic for multi-operation inventory arithmetic.
+heldout_tasks:
+  - id: heldout_inventory_tags
+    instruction: |
+      A store started with 2,050 tags. It printed 16 boxes with 45 tags each, threw away 138 misprinted tags, sold 1,107 tags, and received 9 bundles with 32 tags each. How many tags remain?
+      Give only the final number and one short explanation sentence.
+    expected_answer: "1,813 tags remain."
+    rubric: |
+      Correct computation is 2050 + 16*45 - 138 - 1107 + 9*32 = 1813.
+  - id: heldout_inventory_stickers
+    instruction: |
+      A school had 980 stickers. It bought 12 packs with 36 stickers each, used 275 stickers, lost 49 stickers, and received 7 sheets with 24 stickers each. How many stickers remain?
+      Give only the final number and one short explanation sentence.
+    expected_answer: "1,256 stickers remain."
+    rubric: |
+      Correct computation is 980 + 12*36 - 275 - 49 + 7*24 = 1256.
