@@ -53,6 +53,8 @@ By default, teacher harness patches are proposals only. To let the teacher write
 APPLY_PATCHES=1 scripts/run_smoke.sh
 ```
 
+Apply mode only applies patches from traces with non-empty `failure_categories` by default. This keeps successful examples from bloating the harness with optional reinforcements.
+
 ## Environment Variables
 
 The weak and teacher roles are independent so they can point to different providers or relay routes:

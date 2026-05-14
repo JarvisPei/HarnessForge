@@ -24,17 +24,23 @@ def main(
     config: Path = typer.Option(..., "--config", "-c"),
     profile: str | None = typer.Option(None, "--profile", "-p"),
     apply_patches: bool = typer.Option(False, "--apply-patches"),
+    apply_success_patches: bool = typer.Option(False, "--apply-success-patches"),
 ) -> None:
     load_dotenv(override=True)
     cfg = load_config(config)
     try:
-        asyncio.run(run_experiment(cfg, profile, apply_patches))
+        asyncio.run(run_experiment(cfg, profile, apply_patches, apply_success_patches))
     except RuntimeError as exc:
         console.print(f"[bold red]Error:[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
 
 
-async def run_experiment(cfg: ExperimentConfig, profile: str | None, apply_patches: bool) -> None:
+async def run_experiment(
+    cfg: ExperimentConfig,
+    profile: str | None,
+    apply_patches: bool,
+    apply_success_patches: bool,
+) -> None:
     output_dir = cfg.output_dir / profile.lower() if profile else cfg.output_dir / "default"
     output_dir.mkdir(parents=True, exist_ok=True)
     weak = ChatClient(load_model_settings("weak", profile))
@@ -60,7 +66,11 @@ async def run_experiment(cfg: ExperimentConfig, profile: str | None, apply_patch
         diagnosis = parse_diagnosis(str(result["teacher_diagnosis_raw"]))
         result["teacher_diagnosis"] = diagnosis.model_dump()
         applied_patch_path = None
-        if apply_patches and diagnosis.patch_bundle is not None:
+        if (
+            apply_patches
+            and diagnosis.patch_bundle is not None
+            and (apply_success_patches or bool(diagnosis.failure_categories))
+        ):
             applied_patch_path = apply_patch_bundle(repo_root, diagnosis.patch_bundle)
             result["applied_patch_path"] = str(applied_patch_path)
         output_path = output_dir / f"{task.id}.json"
