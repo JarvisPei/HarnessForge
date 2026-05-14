@@ -14,11 +14,15 @@ def snapshot_harness(repo_root: Path, destination: Path) -> None:
         source = harness_root / subdir
         target = destination / subdir
         if source.exists():
-            shutil.copytree(source, target, dirs_exist_ok=True)
+            shutil.copytree(source, target, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
 
 def list_harness_files(repo_root: Path) -> list[str]:
     harness_root = repo_root / "harness"
     if not harness_root.exists():
         return []
-    return sorted(str(path.relative_to(repo_root)) for path in harness_root.glob("**/*") if path.is_file())
+    return sorted(
+        str(path.relative_to(repo_root))
+        for path in harness_root.glob("**/*")
+        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
+    )

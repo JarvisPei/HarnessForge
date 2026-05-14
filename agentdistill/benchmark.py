@@ -27,15 +27,16 @@ console = Console()
 def main(
     config: Path = typer.Option(..., "--config", "-c"),
     profile: str | None = typer.Option(None, "--profile", "-p"),
+    run_id: str | None = typer.Option(None, "--run-id"),
 ) -> None:
     load_dotenv(override=True)
     cfg = load_benchmark_config(config)
-    asyncio.run(run_benchmark(cfg, profile))
+    asyncio.run(run_benchmark(cfg, profile, run_id))
 
 
-async def run_benchmark(cfg: BenchmarkConfig, profile: str | None) -> None:
+async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str | None = None) -> None:
     repo_root = Path(__file__).resolve().parent.parent
-    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     output_dir = cfg.output_dir / (profile.lower() if profile else "default") / run_id
     output_dir.mkdir(parents=True, exist_ok=True)
 
