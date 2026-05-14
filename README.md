@@ -36,6 +36,8 @@ To use an alternate env suffix such as `*_CLAUDE`:
 python -m agentdistill.run --config configs/smoke.yaml --profile CLAUDE
 ```
 
+Provider defaults to OpenAI-compatible chat completions for every profile. Set `WEAK_PROVIDER_<PROFILE>=anthropic` and `TEACHER_PROVIDER_<PROFILE>=anthropic` only for native Anthropic `/messages` endpoints.
+
 ## Remote Server Workflow
 
 The code is API-first and does not require GPUs for the smoke loop. This is the fastest path for early iteration: use API weak/teacher models, collect traces, then decide which harness updates are worth automating.

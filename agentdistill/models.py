@@ -75,8 +75,7 @@ def load_model_settings(role: Role, profile: str | None = None) -> ModelSettings
     prefix = role.upper()
     suffix = f"_{profile.upper()}" if profile else ""
     timeout = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "120"))
-    provider_default = "anthropic" if profile and profile.upper() == "CLAUDE" else "openai"
-    provider = os.getenv(f"{prefix}_PROVIDER{suffix}", provider_default).lower()
+    provider = os.getenv(f"{prefix}_PROVIDER{suffix}", "openai").lower()
     if provider not in {"openai", "anthropic"}:
         raise RuntimeError(f"{prefix}_PROVIDER{suffix} must be openai or anthropic, got: {provider}")
     return ModelSettings(

@@ -63,14 +63,14 @@ TEACHER_MODEL=
 
 For relay APIs, the only requirement is OpenAI-compatible `/chat/completions` behavior.
 
-For Anthropic-native `/messages` behavior, set:
+Provider defaults to `openai` for every profile. For Anthropic-native `/messages` behavior, set:
 
 ```text
 WEAK_PROVIDER_CLAUDE=anthropic
 TEACHER_PROVIDER_CLAUDE=anthropic
 ```
 
-For a relay that exposes Claude models through OpenAI-compatible chat completions, set the provider to `openai` instead.
+For a relay that exposes Claude models through OpenAI-compatible chat completions, omit provider variables or set them to `openai`.
 
 ## Codex On Server
 

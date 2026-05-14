@@ -33,7 +33,8 @@ def main(
 
 
 async def run_experiment(cfg: ExperimentConfig, profile: str | None) -> None:
-    cfg.output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = cfg.output_dir / profile.lower() if profile else cfg.output_dir / "default"
+    output_dir.mkdir(parents=True, exist_ok=True)
     weak = ChatClient(load_model_settings("weak", profile))
     teacher = ChatClient(load_model_settings("teacher", profile))
     weak_system = load_system_prompt(cfg.harness.system_prompt_path, cfg.harness.skills_dir)
@@ -43,12 +44,12 @@ async def run_experiment(cfg: ExperimentConfig, profile: str | None) -> None:
     console.print(f"[bold]Experiment:[/bold] {cfg.name}")
     if profile:
         console.print(f"[bold]Profile:[/bold] {profile.upper()}")
-    console.print(f"[bold]Output:[/bold] {cfg.output_dir}")
+    console.print(f"[bold]Output:[/bold] {output_dir}")
 
     for task in cfg.tasks:
         console.print(f"\n[bold cyan]Task[/bold cyan] {task.id}")
         result = await run_task(task, weak, teacher, weak_system, teacher_system)
-        output_path = cfg.output_dir / f"{task.id}.json"
+        output_path = output_dir / f"{task.id}.json"
         output_path.write_text(json.dumps(result, indent=2, ensure_ascii=False))
         console.print(f"Saved {output_path}")
 
