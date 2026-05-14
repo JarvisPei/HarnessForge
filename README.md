@@ -30,6 +30,12 @@ python -m agentdistill.run --config configs/smoke.yaml
 
 Outputs are written under `outputs/`.
 
+To use an alternate env suffix such as `*_CLAUDE`:
+
+```bash
+python -m agentdistill.run --config configs/smoke.yaml --profile CLAUDE
+```
+
 ## Remote Server Workflow
 
 The code is API-first and does not require GPUs for the smoke loop. This is the fastest path for early iteration: use API weak/teacher models, collect traces, then decide which harness updates are worth automating.

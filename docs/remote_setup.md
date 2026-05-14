@@ -41,6 +41,12 @@ Run:
 scripts/run_smoke.sh
 ```
 
+Run a named provider profile such as `*_CLAUDE`:
+
+```bash
+scripts/run_smoke.sh CLAUDE
+```
+
 ## Environment Variables
 
 The weak and teacher roles are independent so they can point to different providers or relay routes:
@@ -56,6 +62,15 @@ TEACHER_MODEL=
 ```
 
 For relay APIs, the only requirement is OpenAI-compatible `/chat/completions` behavior.
+
+For Anthropic-native `/messages` behavior, set:
+
+```text
+WEAK_PROVIDER_CLAUDE=anthropic
+TEACHER_PROVIDER_CLAUDE=anthropic
+```
+
+For a relay that exposes Claude models through OpenAI-compatible chat completions, set the provider to `openai` instead.
 
 ## Codex On Server
 

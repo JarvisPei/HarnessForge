@@ -13,4 +13,9 @@ if [[ -d .venv ]]; then
   source .venv/bin/activate
 fi
 
-python -m agentdistill.run --config configs/smoke.yaml
+PROFILE="${1:-}"
+if [[ -n "$PROFILE" ]]; then
+  python -m agentdistill.run --config configs/smoke.yaml --profile "$PROFILE"
+else
+  python -m agentdistill.run --config configs/smoke.yaml
+fi

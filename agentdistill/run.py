@@ -19,25 +19,30 @@ console = Console()
 
 
 @app.command()
-def main(config: Path = typer.Option(..., "--config", "-c")) -> None:
+def main(
+    config: Path = typer.Option(..., "--config", "-c"),
+    profile: str | None = typer.Option(None, "--profile", "-p"),
+) -> None:
     load_dotenv()
     cfg = load_config(config)
     try:
-        asyncio.run(run_experiment(cfg))
+        asyncio.run(run_experiment(cfg, profile))
     except RuntimeError as exc:
         console.print(f"[bold red]Error:[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
 
 
-async def run_experiment(cfg: ExperimentConfig) -> None:
+async def run_experiment(cfg: ExperimentConfig, profile: str | None) -> None:
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
-    weak = ChatClient(load_model_settings("weak"))
-    teacher = ChatClient(load_model_settings("teacher"))
+    weak = ChatClient(load_model_settings("weak", profile))
+    teacher = ChatClient(load_model_settings("teacher", profile))
     weak_system = load_system_prompt(cfg.harness.system_prompt_path, cfg.harness.skills_dir)
     repo_root = Path(__file__).resolve().parent.parent
     teacher_system = (repo_root / "prompts/teacher_diagnosis.md").read_text().strip()
 
     console.print(f"[bold]Experiment:[/bold] {cfg.name}")
+    if profile:
+        console.print(f"[bold]Profile:[/bold] {profile.upper()}")
     console.print(f"[bold]Output:[/bold] {cfg.output_dir}")
 
     for task in cfg.tasks:
