@@ -44,6 +44,8 @@ def parse_diagnosis(raw: str) -> Diagnosis:
         data["patch_type"] = _infer_patch_type(data.get("failure_categories", []), data.get("harness_patch", ""))
     if "regression_test" not in data:
         data["regression_test"] = "Add a regression test covering the diagnosed failure mode."
+    elif not isinstance(data["regression_test"], str):
+        data["regression_test"] = json.dumps(data["regression_test"], ensure_ascii=False)
     return Diagnosis.model_validate(data)
 
 
