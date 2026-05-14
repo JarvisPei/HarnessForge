@@ -29,20 +29,20 @@ class ToolRegistry:
     def call(self, name: str, payload: dict[str, Any]) -> dict[str, Any]:
         if name not in self._tools:
             return {"error": f"Unknown tool: {name}", "available_tools": self.names}
-        module = _load_module(self._tools[name], f"agentdistill_tool_{name}")
+        module = _load_module(self._tools[name], f"agentdistill_tool_{name}", required_function="run")
         result = module.run(payload)
         json.dumps(result)
         return result
 
 
-def _load_module(path: Path, name: str) -> ModuleType:
+def _load_module(path: Path, name: str, required_function: str) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Could not load tool module: {path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    if not hasattr(module, "run"):
-        raise RuntimeError(f"Tool module has no run function: {path}")
+    if not hasattr(module, required_function):
+        raise RuntimeError(f"Module {path} has no {required_function} function")
     return module
 
 
@@ -84,7 +84,7 @@ class RuntimePolicyRegistry:
     def evaluate(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         results = []
         for name, path in self._policies.items():
-            module = _load_module(path, f"agentdistill_policy_{name}")
+            module = _load_module(path, f"agentdistill_policy_{name}", required_function="evaluate")
             result = module.evaluate(payload)
             json.dumps(result)
             if isinstance(result, dict):
