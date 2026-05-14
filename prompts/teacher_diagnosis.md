@@ -19,7 +19,7 @@ Return JSON only with these fields:
 - patch_type: one of prompt_guideline, skill, tool, validator, state_representation, runtime_policy
 - regression_test: a future test that would catch this failure
 - patch_bundle: an object with:
-  - target_path: one relative path under harness/guidelines, harness/skills, harness/validators, or harness/tools
+  - target_path: one relative path under harness/guidelines, harness/skills, harness/validators, harness/tools, or harness/runtime_policies
   - action: create_or_replace
   - content: the complete markdown or Python content to write
   - rationale: why this harness change helps weak models on future tasks
@@ -35,3 +35,18 @@ def run(input: dict) -> dict:
 ```
 
 Return JSON-serializable dictionaries only.
+
+If the weak model ignores an available required tool, write a runtime policy under harness/runtime_policies. A runtime policy must expose exactly this function:
+
+```python
+def evaluate(input: dict) -> dict:
+    ...
+```
+
+It receives task_instruction, initial_answer, tool_call, available_tools, and optional metadata. It must return a JSON-serializable dict. To force tool use, return:
+
+```python
+{"requires_tool": True, "tool_name": "inventory_arithmetic", "tool_input": {...}, "reason": "..."}
+```
+
+If a validator spec already describes a mandatory rejection rule, but the weak model still violates it, the next patch should usually be a runtime policy implementing that rejection rule.

@@ -53,6 +53,8 @@ Current tool protocol:
 
 The framework executes registered tools from `harness/tools/*.py` and sends the result back to the weak model for final answering. Tools must define `run(input: dict) -> dict`.
 
+Runtime policies live under `harness/runtime_policies/*.py` and define `evaluate(input: dict) -> dict`. They can force tool use by returning `requires_tool: true`, a `tool_name`, and `tool_input`.
+
 ## Update Types
 
 ### Prompt Guideline

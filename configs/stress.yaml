@@ -10,6 +10,7 @@ harness:
   guidelines_dir: harness/guidelines
   validators_dir: harness/validators
   tools_dir: harness/tools
+  runtime_policies_dir: harness/runtime_policies
 tasks:
   - id: subtraction_chain
     instruction: |

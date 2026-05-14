@@ -58,6 +58,8 @@ Tool-focused stress run:
 python -m agentdistill.run --config configs/tool_stress.yaml --apply-patches --iterations 3
 ```
 
+If a teacher-generated runtime policy exists, the runner evaluates it after the weak model's initial answer. A policy may force a tool call before the final answer is produced.
+
 ## Remote Server Workflow
 
 The code is API-first and does not require GPUs for the smoke loop. This is the fastest path for early iteration: use API weak/teacher models, collect traces, then decide which harness updates are worth automating.

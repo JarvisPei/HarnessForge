@@ -17,6 +17,7 @@ class HarnessConfig(BaseModel):
     guidelines_dir: Path | None = None
     validators_dir: Path | None = None
     tools_dir: Path | None = None
+    runtime_policies_dir: Path | None = None
 
 
 class TaskConfig(BaseModel):
@@ -50,4 +51,6 @@ def load_config(path: str | Path) -> ExperimentConfig:
         cfg.harness.validators_dir = (base / cfg.harness.validators_dir).resolve()
     if cfg.harness.tools_dir is not None:
         cfg.harness.tools_dir = (base / cfg.harness.tools_dir).resolve()
+    if cfg.harness.runtime_policies_dir is not None:
+        cfg.harness.runtime_policies_dir = (base / cfg.harness.runtime_policies_dir).resolve()
     return cfg

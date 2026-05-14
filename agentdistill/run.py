@@ -13,7 +13,7 @@ from agentdistill.config import ExperimentConfig, TaskConfig, load_config
 from agentdistill.diagnosis import apply_patch_bundle, parse_diagnosis, write_patch_artifact
 from agentdistill.harness import load_system_prompt
 from agentdistill.models import ChatClient, load_model_settings
-from agentdistill.tools import ToolRegistry
+from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
 
 
 app = typer.Typer(add_completion=False)
@@ -64,6 +64,7 @@ async def run_experiment(
         for task in cfg.tasks:
             console.print(f"\n[bold cyan]Task[/bold cyan] {task.id}")
             tools = ToolRegistry(cfg.harness.tools_dir)
+            policies = RuntimePolicyRegistry(cfg.harness.runtime_policies_dir)
             weak_system = load_system_prompt(
                 cfg.harness.system_prompt_path,
                 cfg.harness.skills_dir,
@@ -73,7 +74,7 @@ async def run_experiment(
             )
             if tools.names:
                 weak_system = weak_system + "\n\n" + tools.describe()
-            result = await run_task(task, weak, teacher, weak_system, teacher_system, tools)
+            result = await run_task(task, weak, teacher, weak_system, teacher_system, tools, policies)
             diagnosis = parse_diagnosis(str(result["teacher_diagnosis_raw"]))
             result["teacher_diagnosis"] = diagnosis.model_dump()
             applied_patch_path = None
@@ -117,6 +118,7 @@ async def run_task(
     weak_system: str,
     teacher_system: str,
     tools: ToolRegistry,
+    policies: RuntimePolicyRegistry,
 ) -> dict[str, object]:
     weak_messages = [
         {"role": "system", "content": weak_system},
@@ -125,6 +127,7 @@ async def run_task(
     weak_answer = await weak.complete(weak_messages)
     tool_call = _parse_tool_call(weak_answer)
     tool_result = None
+    policy_results: list[dict[str, object]] = []
     final_answer = weak_answer
     if tool_call is not None:
         tool_result = tools.call(tool_call["name"], tool_call.get("input", {}))
@@ -141,6 +144,37 @@ async def run_task(
                 },
             ]
         )
+    else:
+        policy_results = policies.evaluate(
+            {
+                "task_instruction": task.instruction,
+                "initial_answer": weak_answer,
+                "tool_call": None,
+                "available_tools": tools.names,
+                "expected_answer": task.expected_answer,
+                "rubric": task.rubric,
+            }
+        )
+        forced = _first_forced_tool(policy_results)
+        if forced is not None:
+            forced_tool_call = {"name": forced["tool_name"], "input": forced.get("tool_input", {})}
+            tool_call = forced_tool_call
+            tool_result = tools.call(str(forced_tool_call["name"]), forced_tool_call.get("input", {}))
+            final_answer = await weak.complete(
+                [
+                    {"role": "system", "content": weak_system},
+                    {"role": "user", "content": task.instruction},
+                    {"role": "assistant", "content": weak_answer},
+                    {
+                        "role": "user",
+                        "content": "A runtime policy required this tool call before finalizing:\n"
+                        + json.dumps(forced_tool_call, ensure_ascii=False, indent=2)
+                        + "\n\nTool result:\n"
+                        + json.dumps(tool_result, ensure_ascii=False, indent=2)
+                        + "\n\nNow answer the original task directly using the tool result.",
+                    },
+                ]
+            )
 
     teacher_messages = [
         {"role": "system", "content": teacher_system},
@@ -157,6 +191,7 @@ async def run_task(
                     "initial_weak_answer": weak_answer,
                     "tool_call": tool_call,
                     "tool_result": tool_result,
+                    "runtime_policy_results": policy_results,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -172,6 +207,7 @@ async def run_task(
         "initial_weak_answer": weak_answer,
         "tool_call": tool_call,
         "tool_result": tool_result,
+        "runtime_policy_results": policy_results,
         "teacher_diagnosis_raw": diagnosis,
     }
 
@@ -199,6 +235,13 @@ def _parse_tool_call(content: str) -> dict[str, object] | None:
     if not isinstance(name, str) or not isinstance(input_payload, dict):
         return None
     return {"name": name, "input": input_payload}
+
+
+def _first_forced_tool(policy_results: list[dict[str, object]]) -> dict[str, object] | None:
+    for result in policy_results:
+        if result.get("requires_tool") is True and isinstance(result.get("tool_name"), str):
+            return result
+    return None
 
 
 if __name__ == "__main__":
