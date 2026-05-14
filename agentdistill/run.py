@@ -127,6 +127,8 @@ async def run_task(
                 {
                     "task_id": task.id,
                     "task_instruction": task.instruction,
+                    "expected_answer": task.expected_answer,
+                    "rubric": task.rubric,
                     "weak_system_prompt": weak_system,
                     "weak_answer": weak_answer,
                 },

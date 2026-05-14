@@ -1,0 +1,44 @@
+name: stress
+output_dir: outputs/stress
+weak:
+  role: weak
+teacher:
+  role: teacher
+harness:
+  system_prompt_path: prompts/weak_system.md
+  skills_dir: harness/skills
+  guidelines_dir: harness/guidelines
+  validators_dir: harness/validators
+  tools_dir: harness/tools
+tasks:
+  - id: subtraction_chain
+    instruction: |
+      A warehouse had 1,204 labels. It printed 37 sheets with 18 labels each, discarded 89 damaged labels, and shipped 647 labels. How many labels remain?
+      Give only the final number and one short explanation sentence.
+    expected_answer: "1,134 labels remain."
+    rubric: |
+      Correct computation is 1204 + 37*18 - 89 - 647 = 1134. The answer must not treat printed labels as already included in the warehouse count.
+  - id: unit_conversion
+    instruction: |
+      A recipe needs 2.75 liters of broth. You have bottles of 350 milliliters each. What is the smallest number of bottles needed?
+      Give only the number and one short explanation sentence.
+    expected_answer: "8 bottles."
+    rubric: |
+      Convert 2.75 liters to 2750 ml. 2750 / 350 = 7.857..., so the smallest whole number of bottles is 8.
+  - id: negative_max_debug
+    instruction: |
+      This function should return both the maximum value and its index for a non-empty list, but it is wrong:
+
+      def max_with_index(xs):
+          best = 0
+          best_i = -1
+          for i, x in enumerate(xs):
+              if x > best:
+                  best = x
+                  best_i = i
+          return best, best_i
+
+      Explain the bug and provide a corrected implementation.
+    expected_answer: "Initialize best and best_i from xs[0] and index 0, then iterate from index 1."
+    rubric: |
+      A correct answer must identify the all-negative-list failure and preserve the index. For example, [-5, -2, -9] should return (-2, 1), not (0, -1).

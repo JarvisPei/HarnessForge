@@ -22,6 +22,8 @@ class HarnessConfig(BaseModel):
 class TaskConfig(BaseModel):
     id: str
     instruction: str
+    expected_answer: str | None = None
+    rubric: str | None = None
 
 
 class ExperimentConfig(BaseModel):
