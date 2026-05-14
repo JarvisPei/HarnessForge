@@ -23,7 +23,7 @@ def main(
     config: Path = typer.Option(..., "--config", "-c"),
     profile: str | None = typer.Option(None, "--profile", "-p"),
 ) -> None:
-    load_dotenv()
+    load_dotenv(override=True)
     cfg = load_config(config)
     try:
         asyncio.run(run_experiment(cfg, profile))
