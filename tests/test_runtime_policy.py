@@ -192,6 +192,36 @@ def test_parse_diagnosis_accepts_patch_bundles() -> None:
     assert diagnosis.patch_bundle.target_path == "harness/tests/adder.json"
 
 
+def test_parse_diagnosis_handles_fenced_and_nested_json() -> None:
+    diagnosis = parse_diagnosis(
+        """
+Here is the diagnosis:
+```json
+{
+  "diagnosis": "Nested braces in strings should not break parsing.",
+  "failure_categories": ["tool"],
+  "harness_patch": "Use text like {not json} in the explanation.",
+  "patch_type": "tool",
+  "regression_test": "Parser should handle long payloads.",
+  "patch_bundles": [
+    {
+      "target_path": "harness/tools/adder.py",
+      "action": "create_or_replace",
+      "content": "def run(input: dict) -> dict:\\n    return {\\"ok\\": True, \\"text\\": \\"{brace}\\"}",
+      "rationale": "keep braces"
+    }
+  ],
+  "confidence": 0.9
+}
+```
+Trailing text.
+""".strip()
+    )
+
+    assert diagnosis.diagnosis.startswith("Nested braces")
+    assert len(diagnosis.patch_bundles) == 1
+
+
 def test_atomic_patch_bundles_accept_tool_tests_and_policy(tmp_path: Path) -> None:
     _make_harness_dirs(tmp_path)
     task = TaskConfig(id="t", instruction="add 2 and 3", expected_answer="5")

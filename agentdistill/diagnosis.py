@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 import py_compile
 from pathlib import Path
 from typing import Any
@@ -136,15 +135,62 @@ def _safe_harness_path(repo_root: Path, target_path: str) -> Path:
 
 def _extract_json(raw: str) -> str | None:
     text = raw.strip()
-    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL)
-    if fenced:
-        return fenced.group(1)
-    if text.startswith("{") and text.endswith("}"):
-        return text
+    fenced = _extract_fenced_json(text)
+    if fenced is not None:
+        return fenced
+    balanced = _extract_balanced_json(text)
+    if balanced is not None:
+        return balanced
+    return None
+
+
+def _extract_fenced_json(text: str) -> str | None:
+    start = text.find("```")
+    if start == -1:
+        return None
+    end = text.find("```", start + 3)
+    if end == -1:
+        return None
+    block = text[start + 3 : end].strip()
+    if block.startswith("json"):
+        block = block[4:].lstrip()
+    return _extract_balanced_json(block)
+
+
+def _extract_balanced_json(text: str) -> str | None:
     start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1 and start < end:
-        return text[start : end + 1]
+    while start != -1:
+        candidate = _scan_balanced_object(text, start)
+        if candidate is not None:
+            return candidate
+        start = text.find("{", start + 1)
+    return None
+
+
+def _scan_balanced_object(text: str, start: int) -> str | None:
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+            if depth < 0:
+                return None
     return None
 
 
