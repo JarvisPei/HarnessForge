@@ -4,7 +4,13 @@ import asyncio
 from pathlib import Path
 
 from agentdistill.config import TaskConfig, load_benchmark_config
-from agentdistill.benchmark import _build_transfer_context, _critic_enabled, _run_phase, _should_request_critic_cases
+from agentdistill.benchmark import (
+    _build_transfer_context,
+    _critic_enabled,
+    _initial_transfer_context,
+    _run_phase,
+    _should_request_critic_cases,
+)
 from agentdistill.contracts import (
     validate_runtime_policy_contract,
     validate_runtime_policy_generalization,
@@ -1073,6 +1079,18 @@ def test_build_transfer_context_uses_heldout_probe_results() -> None:
     assert context["heldout_probe"][1]["success"] is False
 
 
+def test_initial_transfer_context_can_hide_dev_probe_until_feedback() -> None:
+    class Config:
+        transfer_context_mode = "feedback_only"
+        dev_probe_tasks = [
+            TaskConfig(id="heldout_a", instruction="hidden", expected_answer="1"),
+        ]
+
+    context = _initial_transfer_context(Config(), {"heldout_a": {"weak_answer": "0"}})
+
+    assert context == {"heldout_probe": []}
+
+
 def test_patch_feedback_summarizes_rejected_contract_failures() -> None:
     feedback = build_patch_feedback(
         {
@@ -1307,6 +1325,7 @@ train_tasks:
 
     cfg = load_benchmark_config(config_path)
     assert cfg.critic_mode == "off"
+    assert cfg.transfer_context_mode == "heldout_probe"
     assert _critic_enabled(cfg.critic_mode) is False
     assert _should_request_critic_cases(cfg.critic_mode, None) is False
 
@@ -1362,6 +1381,7 @@ def test_explicit_ops_v2_benchmark_config_covers_schema_variants() -> None:
     assert cfg.name == "benchmark_explicit_ops_v2"
     assert cfg.evolve_iterations == 3
     assert cfg.critic_mode == "off"
+    assert cfg.transfer_context_mode == "feedback_only"
     assert [task.id for task in cfg.train_tasks] == [
         "train_explicit_labels_block",
         "train_explicit_cards_jsonish",

@@ -48,6 +48,7 @@ class BenchmarkConfig(BaseModel):
     blind_test_tasks: list[TaskConfig] = Field(default_factory=list)
     evolve_iterations: int = 2
     critic_mode: Literal["off", "always"] = "off"
+    transfer_context_mode: Literal["heldout_probe", "feedback_only"] = "heldout_probe"
 
 
 def load_config(path: str | Path) -> ExperimentConfig:

@@ -83,7 +83,7 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
         repo_root=repo_root,
         request_teacher_diagnosis=False,
     )
-    transfer_context = _build_transfer_context(cfg.dev_probe_tasks, dev_baseline)
+    transfer_context = _initial_transfer_context(cfg, dev_baseline)
     patch_feedback: dict[str, object] | None = None
     transfer_feedback: dict[str, object] | None = None
 
@@ -379,6 +379,14 @@ def _build_transfer_context(tasks: list[TaskConfig], results: dict[str, dict[str
             }
         )
     return {"heldout_probe": rows}
+
+
+def _initial_transfer_context(cfg: BenchmarkConfig, dev_baseline: dict[str, dict[str, object]]) -> dict[str, object]:
+    if cfg.transfer_context_mode == "heldout_probe":
+        return _build_transfer_context(cfg.dev_probe_tasks, dev_baseline)
+    if cfg.transfer_context_mode == "feedback_only":
+        return {"heldout_probe": []}
+    raise ValueError(f"Unsupported transfer_context_mode: {cfg.transfer_context_mode}")
 
 
 if __name__ == "__main__":

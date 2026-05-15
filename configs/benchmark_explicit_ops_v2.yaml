@@ -12,6 +12,7 @@ harness:
   tools_dir: harness/tools
   runtime_policies_dir: harness/runtime_policies
 evolve_iterations: 3
+transfer_context_mode: feedback_only
 train_tasks:
   - id: train_explicit_labels_block
     instruction: |
