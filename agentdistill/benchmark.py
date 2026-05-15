@@ -46,12 +46,13 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
 
     weak = ChatClient(load_model_settings("weak", profile))
     teacher = ChatClient(load_model_settings("teacher", profile))
-    critic = ChatClient(load_model_settings("critic", profile))
+    critic = ChatClient(load_model_settings("critic", profile)) if _critic_enabled(cfg.critic_mode) else None
     teacher_system = (repo_root / "prompts/teacher_diagnosis.md").read_text().strip()
     critic_system = (repo_root / "prompts/critic_policy_audit.md").read_text().strip()
 
     console.print(f"[bold]Benchmark:[/bold] {cfg.name}")
     console.print(f"[bold]Run:[/bold] {output_dir}")
+    console.print(f"[bold]Critic mode:[/bold] {cfg.critic_mode}")
 
     snapshot_harness(repo_root, output_dir / "harness_before")
     dev_baseline = await _run_phase(
@@ -203,7 +204,7 @@ async def _run_phase(
     tasks: list[TaskConfig],
     weak: ChatClient,
     teacher: ChatClient,
-    critic: ChatClient,
+    critic: ChatClient | None,
     teacher_system: str,
     critic_system: str,
     output_dir: Path,
@@ -256,18 +257,19 @@ async def _run_phase(
         if apply_patches and diagnosis is not None and diagnosis.patch_bundles and diagnosis.failure_categories:
             critic_policy_cases: dict[str, list[dict[str, object]]] = {}
             critic_audits: dict[str, object] = {}
-            for policy_name in _policy_names_from_patch_bundles(diagnosis.patch_bundles):
-                existing_policy_tests = _policy_tests_from_patch_bundles(diagnosis.patch_bundles, policy_name)
-                audit = await request_policy_audit_cases(
-                    critic,
-                    critic_system,
-                    task,
-                    diagnosis.patch_bundles,
-                    policy_name,
-                    existing_policy_tests,
-                )
-                critic_audits[policy_name] = audit
-                critic_policy_cases[policy_name] = list(audit.get("audit_cases", []))
+            if _should_request_critic_cases(cfg.critic_mode, critic):
+                for policy_name in _policy_names_from_patch_bundles(diagnosis.patch_bundles):
+                    existing_policy_tests = _policy_tests_from_patch_bundles(diagnosis.patch_bundles, policy_name)
+                    audit = await request_policy_audit_cases(
+                        critic,
+                        critic_system,
+                        task,
+                        diagnosis.patch_bundles,
+                        policy_name,
+                        existing_policy_tests,
+                    )
+                    critic_audits[policy_name] = audit
+                    critic_policy_cases[policy_name] = list(audit.get("audit_cases", []))
             if critic_audits:
                 result["critic_audits"] = critic_audits
             patch_result = apply_patch_bundles_atomically(
@@ -314,6 +316,18 @@ def _policy_names_from_patch_bundles(patch_bundles) -> list[str]:
         if len(parts) == 3 and parts[0] == "harness" and parts[1] == "runtime_policies" and parts[2].endswith(".py"):
             names.append(Path(parts[2]).stem)
     return sorted(set(names))
+
+
+def _critic_enabled(mode: str) -> bool:
+    return mode == "always"
+
+
+def _should_request_critic_cases(mode: str, critic: ChatClient | None) -> bool:
+    if mode == "off":
+        return False
+    if mode == "always":
+        return critic is not None
+    raise ValueError(f"Unsupported critic_mode: {mode}")
 
 
 def _policy_tests_from_patch_bundles(patch_bundles, policy_name: str) -> dict[str, object] | None:

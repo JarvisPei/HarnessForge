@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -47,6 +47,7 @@ class BenchmarkConfig(BaseModel):
     dev_probe_tasks: list[TaskConfig] = Field(default_factory=list)
     blind_test_tasks: list[TaskConfig] = Field(default_factory=list)
     evolve_iterations: int = 2
+    critic_mode: Literal["off", "always"] = "off"
 
 
 def load_config(path: str | Path) -> ExperimentConfig:

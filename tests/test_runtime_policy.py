@@ -4,7 +4,7 @@ import asyncio
 from pathlib import Path
 
 from agentdistill.config import TaskConfig, load_benchmark_config
-from agentdistill.benchmark import _build_transfer_context, _run_phase
+from agentdistill.benchmark import _build_transfer_context, _critic_enabled, _run_phase, _should_request_critic_cases
 from agentdistill.contracts import (
     validate_runtime_policy_contract,
     validate_runtime_policy_generalization,
@@ -1252,9 +1252,56 @@ heldout_tasks:
     assert [task.id for task in cfg.blind_test_tasks] == ["heldout"]
 
 
+def test_benchmark_config_defaults_critic_mode_off(tmp_path: Path) -> None:
+    config_path = tmp_path / "configs" / "bench.yaml"
+    config_path.parent.mkdir()
+    config_path.write_text(
+        """
+name: fast_benchmark
+output_dir: outputs/fast
+weak: {role: weak}
+teacher: {role: teacher}
+harness:
+  system_prompt_path: prompts/weak_system.md
+train_tasks:
+  - id: train
+    instruction: train
+""".strip()
+    )
+
+    cfg = load_benchmark_config(config_path)
+    assert cfg.critic_mode == "off"
+    assert _critic_enabled(cfg.critic_mode) is False
+    assert _should_request_critic_cases(cfg.critic_mode, None) is False
+
+
+def test_benchmark_config_can_enable_critic_always(tmp_path: Path) -> None:
+    config_path = tmp_path / "configs" / "bench.yaml"
+    config_path.parent.mkdir()
+    config_path.write_text(
+        """
+name: audited_benchmark
+output_dir: outputs/audited
+weak: {role: weak}
+teacher: {role: teacher}
+critic_mode: always
+harness:
+  system_prompt_path: prompts/weak_system.md
+train_tasks:
+  - id: train
+    instruction: train
+""".strip()
+    )
+
+    cfg = load_benchmark_config(config_path)
+    assert cfg.critic_mode == "always"
+    assert _critic_enabled(cfg.critic_mode) is True
+
+
 def test_inventory_benchmark_allows_three_repair_iterations() -> None:
     cfg = load_benchmark_config("configs/benchmark_inventory.yaml")
     assert cfg.evolve_iterations == 3
+    assert cfg.critic_mode == "off"
     assert [task.id for task in cfg.dev_probe_tasks] == ["heldout_inventory_tags", "heldout_inventory_stickers"]
     assert [task.id for task in cfg.blind_test_tasks] == ["blind_inventory_badges", "blind_inventory_vouchers"]
 
