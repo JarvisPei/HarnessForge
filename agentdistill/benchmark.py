@@ -62,6 +62,7 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
     )
 
     train_summary: list[dict[str, object]] = []
+    transfer_context: dict[str, object] | None = None
     for iteration in range(1, cfg.evolve_iterations + 1):
         phase = f"evolve_train_iter_{iteration:02d}"
         train_results = await _run_phase(
@@ -74,6 +75,7 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
             output_dir=output_dir,
             apply_patches=True,
             repo_root=repo_root,
+            benchmark_context=transfer_context,
         )
         train_summary.extend(
             {
@@ -90,6 +92,7 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
             }
             for task_id, result in train_results.items()
         )
+        transfer_context = _build_transfer_context(cfg.heldout_tasks, after)
 
     snapshot_harness(repo_root, output_dir / "harness_after")
     after = await _run_phase(
@@ -129,6 +132,7 @@ async def _run_phase(
     output_dir: Path,
     apply_patches: bool,
     repo_root: Path,
+    benchmark_context: dict[str, object] | None = None,
 ) -> dict[str, dict[str, object]]:
     phase_dir = output_dir / phase
     phase_dir.mkdir(parents=True, exist_ok=True)
@@ -154,7 +158,16 @@ async def _run_phase(
         )
         if tools.names:
             weak_system = weak_system + "\n\n" + tools.describe()
-        result = await run_task(task, weak, teacher, weak_system, teacher_system, tools, policies)
+        result = await run_task(
+            task,
+            weak,
+            teacher,
+            weak_system,
+            teacher_system,
+            tools,
+            policies,
+            benchmark_context=benchmark_context,
+        )
         diagnosis = parse_diagnosis(str(result["teacher_diagnosis_raw"]))
         result["teacher_diagnosis"] = diagnosis.model_dump()
         applied_patch_paths: list[str] = []
@@ -186,6 +199,25 @@ async def _run_phase(
         results[task.id] = result
     (phase_dir / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     return results
+
+
+def _build_transfer_context(tasks: list[TaskConfig], results: dict[str, dict[str, object]]) -> dict[str, object]:
+    rows = []
+    for task in tasks:
+        result = results.get(task.id, {})
+        rows.append(
+            {
+                "task_id": task.id,
+                "expected_answer": task.expected_answer,
+                "before_success": result.get("before_success"),
+                "after_success": result.get("after_success"),
+                "before_answer": result.get("before_answer"),
+                "after_answer": result.get("after_answer"),
+                "before_failures": result.get("before_failures", []),
+                "after_failures": result.get("after_failures", []),
+            }
+        )
+    return {"heldout_probe": rows}
 
 
 if __name__ == "__main__":

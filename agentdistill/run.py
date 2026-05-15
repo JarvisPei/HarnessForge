@@ -130,6 +130,7 @@ async def run_task(
     teacher_system: str,
     tools: ToolRegistry,
     policies: RuntimePolicyRegistry,
+    benchmark_context: dict[str, object] | None = None,
 ) -> dict[str, object]:
     weak_messages = [
         {"role": "system", "content": weak_system},
@@ -203,6 +204,7 @@ async def run_task(
                     "tool_call": tool_call,
                     "tool_result": tool_result,
                     "runtime_policy_results": policy_results,
+                    **({"benchmark_context": benchmark_context} if benchmark_context is not None else {}),
                 },
                 ensure_ascii=False,
                 indent=2,

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agentdistill.config import TaskConfig
+from agentdistill.benchmark import _build_transfer_context
 from agentdistill.contracts import validate_runtime_policy_contract, validate_tool_contract
 from agentdistill.diagnosis import PatchBundle, parse_diagnosis
 from agentdistill.patches import apply_patch_bundles_atomically
@@ -335,3 +336,24 @@ def test_load_model_settings_prefers_role_specific_timeout(monkeypatch) -> None:
     monkeypatch.setenv("TEACHER_MODEL", "m")
     settings = load_model_settings("teacher")
     assert settings.timeout_seconds == 33.0
+
+
+def test_build_transfer_context_uses_heldout_probe_results() -> None:
+    tasks = [
+        TaskConfig(id="heldout_a", instruction="a", expected_answer="1"),
+        TaskConfig(id="heldout_b", instruction="b", expected_answer="2"),
+    ]
+    results = {
+        "heldout_a": {
+            "before_success": False,
+            "after_success": True,
+            "before_answer": "0",
+            "after_answer": "1",
+            "before_failures": ["tool"],
+            "after_failures": [],
+        }
+    }
+
+    context = _build_transfer_context(tasks, results)
+    assert context["heldout_probe"][0]["after_success"] is True
+    assert context["heldout_probe"][1]["after_success"] is None
