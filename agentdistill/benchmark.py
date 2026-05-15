@@ -92,7 +92,6 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
             }
             for task_id, result in train_results.items()
         )
-        transfer_context = _build_transfer_context(cfg.heldout_tasks, after)
 
     snapshot_harness(repo_root, output_dir / "harness_after")
     after = await _run_phase(
@@ -106,6 +105,7 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
         apply_patches=False,
         repo_root=repo_root,
     )
+    transfer_context = _build_transfer_context(cfg.heldout_tasks, after)
 
     report_rows = build_impact_report(
         baseline=baseline,
