@@ -1344,7 +1344,8 @@ def test_explicit_ops_v2_benchmark_config_covers_schema_variants() -> None:
     assert '"updates"' in all_text
     assert "updates=[" in all_text
     assert "| sign | value |" in all_text
-    assert "operations: +22*31" in all_text
+    assert "operations: +" in all_text
+    assert "; -10,004;" in all_text
     assert "handed out" not in all_text
     assert "redeemed" not in all_text
     assert "voided" not in all_text
