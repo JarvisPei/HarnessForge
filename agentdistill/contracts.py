@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,14 @@ def validate_runtime_policy_contract(
             "policy_result": forced,
             "tool_result": tool_result,
         }
+    if task.expected_answer and not _tool_result_matches_expected(task.expected_answer, tool_result):
+        return {
+            "ok": False,
+            "reason": "forced tool result does not match expected answer",
+            "expected_answer": task.expected_answer,
+            "policy_result": forced,
+            "tool_result": tool_result,
+        }
     return {"ok": True, "reason": "forced tool call succeeded", "policy_result": forced, "tool_result": tool_result}
 
 
@@ -60,3 +69,15 @@ def validate_tool_contract(repo_root: Path, tool_path: Path) -> dict[str, Any]:
         "tests_path": str(tests_path),
         "tool_test_result": result,
     }
+
+
+def _tool_result_matches_expected(expected_answer: str, tool_result: dict[str, Any]) -> bool:
+    expected_numbers = _numbers(expected_answer)
+    if not expected_numbers:
+        return True
+    result_numbers = _numbers(str(tool_result))
+    return all(number in result_numbers for number in expected_numbers)
+
+
+def _numbers(text: str) -> list[str]:
+    return [match.replace(",", "") for match in re.findall(r"-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?", text)]

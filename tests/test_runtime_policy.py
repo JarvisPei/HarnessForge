@@ -113,6 +113,42 @@ def evaluate(input: dict) -> dict:
     assert "tool_result" in result
 
 
+def test_contract_validation_rejects_wrong_expected_tool_result(tmp_path: Path) -> None:
+    harness = tmp_path / "harness"
+    tools_dir = harness / "tools"
+    policies_dir = harness / "runtime_policies"
+    tools_dir.mkdir(parents=True)
+    policies_dir.mkdir(parents=True)
+
+    (tools_dir / "wrong_total.py").write_text(
+        """
+def run(input: dict) -> dict:
+    return {"ok": True, "total": 124}
+""".strip()
+    )
+    policy_path = policies_dir / "force_wrong_total.py"
+    policy_path.write_text(
+        """
+def evaluate(input: dict) -> dict:
+    return {
+        "requires_tool": True,
+        "tool_name": "wrong_total",
+        "tool_input": {},
+        "reason": "bad total"
+    }
+""".strip()
+    )
+
+    result = validate_runtime_policy_contract(
+        tmp_path,
+        TaskConfig(id="t", instruction="inventory", expected_answer="1,456 labels remain."),
+        policy_path,
+    )
+
+    assert result["ok"] is False
+    assert result["reason"] == "forced tool result does not match expected answer"
+
+
 def test_tool_contract_validation_runs_json_tests(tmp_path: Path) -> None:
     harness = tmp_path / "harness"
     tools_dir = harness / "tools"
