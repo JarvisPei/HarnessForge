@@ -10,7 +10,7 @@ from agentdistill.tools import ToolRegistry
 def validate_tool_tests(repo_root: Path, tool_name: str) -> dict[str, Any]:
     tests_path = repo_root / "harness" / "tests" / f"{tool_name}.json"
     if not tests_path.exists():
-        return {"ok": True, "reason": "no tool tests found"}
+        return {"ok": False, "reason": "no matching tool test file found", "tool": tool_name, "expected_tests_path": str(tests_path)}
 
     try:
         data = json.loads(tests_path.read_text(encoding="utf-8"))

@@ -36,7 +36,7 @@ def run(input: dict) -> dict:
 
 Return JSON-serializable dictionaries only.
 
-If you write or revise a tool, prefer also writing a JSON test file under harness/tests that exercises the tool on at least one representative input and checks the expected output. The test file should be JSON-serializable and use a schema like:
+If you write or revise a tool, you must also write a JSON test file under harness/tests with the same stem name. The framework will reject the tool patch unless the matching test file exists and passes. The test file should be JSON-serializable and use a schema like:
 
 ```json
 {

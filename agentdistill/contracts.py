@@ -49,4 +49,14 @@ def validate_runtime_policy_contract(
 
 def validate_tool_contract(repo_root: Path, tool_path: Path) -> dict[str, Any]:
     tool_name = tool_path.stem
-    return validate_tool_tests(repo_root, tool_name)
+    result = validate_tool_tests(repo_root, tool_name)
+    if result.get("ok") is not True:
+        return result
+    tests_path = repo_root / "harness" / "tests" / f"{tool_name}.json"
+    return {
+        "ok": True,
+        "reason": "tool test file exists and all cases passed",
+        "tool": tool_name,
+        "tests_path": str(tests_path),
+        "tool_test_result": result,
+    }

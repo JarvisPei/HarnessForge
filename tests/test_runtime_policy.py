@@ -137,3 +137,20 @@ def run(input: dict) -> dict:
 
     result = validate_tool_contract(tmp_path, tool_path)
     assert result["ok"] is True
+
+
+def test_tool_contract_requires_matching_json_tests(tmp_path: Path) -> None:
+    harness = tmp_path / "harness"
+    tools_dir = harness / "tools"
+    tools_dir.mkdir(parents=True)
+    tool_path = tools_dir / "adder.py"
+    tool_path.write_text(
+        """
+def run(input: dict) -> dict:
+    return {"ok": True, "total": input["a"] + input["b"]}
+""".strip()
+    )
+
+    result = validate_tool_contract(tmp_path, tool_path)
+    assert result["ok"] is False
+    assert "no matching tool test" in result["reason"]

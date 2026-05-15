@@ -48,6 +48,10 @@ def build_impact_report(
                 "after_tool_call": (after_result or {}).get("tool_call"),
                 "before_failures": ((before_result or {}).get("teacher_diagnosis") or {}).get("failure_categories", []),
                 "after_failures": ((after_result or {}).get("teacher_diagnosis") or {}).get("failure_categories", []),
+                "before_patch_status": (before_result or {}).get("patch_status"),
+                "after_patch_status": (after_result or {}).get("patch_status"),
+                "before_contract_validation": (before_result or {}).get("contract_validation"),
+                "after_contract_validation": (after_result or {}).get("contract_validation"),
             }
         )
     output_path.parent.mkdir(parents=True, exist_ok=True)

@@ -80,6 +80,9 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
                 "iteration": iteration,
                 "task_id": task_id,
                 "applied_patch_path": result.get("applied_patch_path"),
+                "rejected_patch_path": result.get("rejected_patch_path"),
+                "patch_status": result.get("patch_status"),
+                "contract_validation": result.get("contract_validation"),
                 "failure_categories": (result.get("teacher_diagnosis") or {}).get("failure_categories", []),
             }
             for task_id, result in train_results.items()
@@ -161,16 +164,22 @@ async def _run_phase(
                 if contract.get("ok") is not True:
                     applied_patch_path.unlink(missing_ok=True)
                     result["rejected_patch_path"] = str(applied_patch_path)
+                    result["patch_status"] = "rejected"
                     result["applied_patch_path"] = None
                     applied_patch_path = None
+                else:
+                    result["patch_status"] = "accepted"
             if applied_patch_path.is_relative_to((repo_root / "harness" / "runtime_policies").resolve()):
                 contract = validate_runtime_policy_contract(repo_root, task, applied_patch_path)
                 result["contract_validation"] = contract
                 if contract.get("ok") is not True:
                     applied_patch_path.unlink(missing_ok=True)
                     result["rejected_patch_path"] = str(applied_patch_path)
+                    result["patch_status"] = "rejected"
                     result["applied_patch_path"] = None
                     applied_patch_path = None
+                else:
+                    result["patch_status"] = "accepted"
         result_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
         patch_path = write_patch_artifact(phase_dir / "patches", task.id, cfg.name, diagnosis)
         summary.append(
@@ -181,6 +190,9 @@ async def _run_phase(
                 "result_path": str(result_path),
                 "patch_path": str(patch_path),
                 "applied_patch_path": str(applied_patch_path) if applied_patch_path else None,
+                "rejected_patch_path": result.get("rejected_patch_path"),
+                "patch_status": result.get("patch_status"),
+                "contract_validation": result.get("contract_validation"),
             }
         )
         results[task.id] = result
