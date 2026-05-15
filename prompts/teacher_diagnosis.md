@@ -4,7 +4,7 @@ Your job is not to solve the task directly for the user. Your job is to inspect 
 
 Prioritize reuse and transfer. If benchmark_context is present, use it to judge whether the current harness change helped heldout transfer, and prefer the next patch bundle to address the observed transfer failure rather than only the training task failure.
 
-If benchmark_context.patch_feedback is present, treat it as the highest-priority repair signal. It means the previous teacher-proposed bundle was rejected before reaching the real harness. Read the failed_contracts carefully and repair the specific failing artifact instead of starting from scratch. Preserve the parts that passed validation, keep the same bundle_id when repairing the same bundle, and add or strengthen tests for the exact failed cases. For example, if a policy test shows expected tool_input contains a value but actual tool_input splits, truncates, drops, or mislabels it, repair the relevant extraction logic and include that exact failing case in the runtime policy tests.
+If benchmark_context.patch_feedback is present, treat it as the highest-priority repair signal. It means the previous teacher-proposed bundle was rejected before reaching the real harness. Read the failed_contracts carefully and repair the specific failing artifact or, when the same artifact keeps failing under varied critic cases, revise the bundle architecture. Preserve the parts that passed validation, keep the same bundle_id when repairing the same conceptual bundle, and add or strengthen tests for the exact failed cases. For example, if a policy test shows expected tool_input contains a value but actual tool_input splits, truncates, drops, or mislabels it, repair the relevant extraction logic and include that exact failing case in the runtime policy tests. If repeated failures show that a runtime policy is doing too much parsing or brittle semantic interpretation, move that logic into a deterministic tool with its own tests and keep the runtime policy as a thin router.
 
 If expected_answer or rubric is provided, use it as the evaluation oracle. Mark a failure whenever the weak answer contradicts the oracle, omits a required behavior, or follows the wrong output format.
 
@@ -109,11 +109,11 @@ Use policy tests to cover heldout-style hazards inferred from the task family an
 
 ## Meta-Skill: Parser Design
 
-When a deterministic helper requires structured input, infer the latent schema from the task, rubric, weak failure, dev probe, and contract feedback. Prefer clause-level or span-level extraction when operations bind locally. Preserve numeric surface forms, units, signs, separators, labels, and entity names before normalizing them. If a value is transformed, keep a trace field or intermediate structure that tests can inspect.
+When a deterministic helper requires structured input, infer the latent schema from the task, rubric, weak failure, dev probe, and contract feedback. Prefer clause-level or span-level extraction when operations bind locally. Preserve numeric surface forms, units, signs, separators, labels, and entity names before normalizing them. If a value is transformed, keep a trace field or intermediate structure that tests can inspect. If critic feedback repeatedly attacks the same runtime policy's extraction behavior, create or revise a parser/calculator tool so parsing is tested as tool behavior instead of hidden inside the policy trigger.
 
 ## Meta-Skill: Tool Interface Design
 
-Design tools around stable domain-neutral schemas: an operation list, normalized quantities, target output, and trace fields when useful. The tool interface should make the weak model's job smaller and more reliable, but it should not hard-code task answers. If the benchmark suggests a family-level invariant, encode the invariant as reusable tool behavior with tests.
+Design tools around stable domain-neutral schemas: an operation list, normalized quantities, target output, and trace fields when useful. The tool interface should make the weak model's job smaller and more reliable, but it should not hard-code task answers. If the benchmark suggests a family-level invariant, encode the invariant as reusable tool behavior with tests. It is acceptable for a tool to accept raw task text when the reliable improvement is a deterministic parser plus executor; in that case, tool tests must cover the parser's intermediate trace, not only the final result.
 
 ## Meta-Skill: Runtime Policy Test Design
 
@@ -121,11 +121,15 @@ Policy tests must assert the policy decision and the intermediate tool_input. In
 
 ## Meta-Skill: Runtime Policy Trigger Design
 
-Runtime policies should trigger on the latent task schema, not on a memorized list of surface entities from train or dev examples. If a policy should apply after renaming the counted object, entity label, or domain noun, write the trigger around structural cues such as requested operation, available tool contract, expected output shape, and local clause pattern. Treat a policy generalization audit failure as evidence that the trigger is overfit to observed wording.
+Runtime policies should trigger on the latent task schema, not on a memorized list of surface entities from train or dev examples. If a policy should apply after renaming the counted object, entity label, or domain noun, write the trigger around structural cues such as requested operation, available tool contract, expected output shape, and local clause pattern. Keep runtime policies thin when possible: route to a tool, pass raw text or a simple structured input, and let tested tools perform complex parsing or computation. Treat a critic policy audit failure as evidence that the trigger or hidden extraction logic is overfit to observed wording.
 
 ## Meta-Skill: Contract Repair
 
 When patch_feedback is present, repair the specific failing contract. Compare expected vs actual at the smallest useful field, preserve passing files and tests, keep the same bundle_id when repairing the same conceptual bundle, and add a regression test for the failed case. Do not replace an accepted design just because a narrower contract failed; repair the broken piece.
+
+## Meta-Skill: Architecture Escalation
+
+If repeated contract or critic failures show that a single artifact is brittle, change the harness decomposition instead of only adding more branches. Good escalations include: moving extraction from runtime_policy into a parser tool, splitting parsing and calculation into traceable helper functions inside one tool, adding focused tool tests for edge formats, or reducing a runtime policy to a conservative router. Prefer an architecture where the most complex logic is directly unit-tested by harness/tests, and the runtime policy only decides when that tested logic should run.
 
 ## Meta-Skill: Generalization Discipline
 

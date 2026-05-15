@@ -1117,7 +1117,10 @@ def test_teacher_prompt_uses_meta_skills_not_domain_scaffolds() -> None:
     assert "Meta-Skill: Runtime Policy Test Design" in prompt
     assert "Meta-Skill: Runtime Policy Trigger Design" in prompt
     assert "Meta-Skill: Contract Repair" in prompt
+    assert "Meta-Skill: Architecture Escalation" in prompt
     assert "Meta-Skill: Generalization Discipline" in prompt
+    assert "keep the runtime policy as a thin router" in prompt
+    assert "move that logic into a deterministic tool" in prompt
     assert "ADD_WORDS" not in prompt
     assert "SUBTRACT_WORDS" not in prompt
     assert "_parse_inventory" not in prompt
@@ -1125,6 +1128,12 @@ def test_teacher_prompt_uses_meta_skills_not_domain_scaffolds() -> None:
     assert "Inventory policy tests must include" not in prompt
     assert "For unit conversion tasks" not in prompt
     assert "Unit conversion policy tests must include" not in prompt
+
+
+def test_weak_prompt_does_not_frame_model_as_small() -> None:
+    prompt = Path("prompts/weak_system.md").read_text().lower()
+
+    assert "small model" not in prompt
 
 
 def test_merge_benchmark_context_adds_patch_feedback_only_for_rejections() -> None:
