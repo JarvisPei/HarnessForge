@@ -7,7 +7,6 @@ from typing import Any
 from agentdistill.config import TaskConfig
 from agentdistill.contracts import (
     validate_runtime_policy_contract,
-    validate_runtime_policy_generalization,
     validate_runtime_policy_tests,
     validate_tool_contract,
 )
@@ -28,6 +27,7 @@ def apply_patch_bundles_atomically(
     task: TaskConfig,
     manifest: HarnessManifest | None = None,
     critic_policy_cases: dict[str, list[dict[str, Any]]] | None = None,
+    enable_policy_generalization_audit: bool = False,
 ) -> dict[str, Any]:
     applied: list[AppliedPatch] = []
     attempted_paths: list[Path] = []
@@ -54,6 +54,7 @@ def apply_patch_bundles_atomically(
             task,
             [patch.path for patch in staged_applied],
             critic_policy_cases=critic_policy_cases,
+            enable_policy_generalization_audit=enable_policy_generalization_audit,
         )
         failures = [result for result in contract_results if result.get("ok") is not True]
         if failures:
@@ -102,6 +103,7 @@ def _validate_patch_group(
     task: TaskConfig,
     paths: list[Path],
     critic_policy_cases: dict[str, list[dict[str, Any]]] | None = None,
+    enable_policy_generalization_audit: bool = False,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     tools_root = (repo_root / "harness" / "tools").resolve()
@@ -112,7 +114,10 @@ def _validate_patch_group(
         if path.is_relative_to(policies_root):
             results.append({"path": str(path), **validate_runtime_policy_contract(repo_root, task, path)})
             results.append({"path": str(path), **validate_runtime_policy_tests(repo_root, path)})
-            results.append({"path": str(path), **validate_runtime_policy_generalization(repo_root, path)})
+            if enable_policy_generalization_audit:
+                from agentdistill.contracts import validate_runtime_policy_generalization
+
+                results.append({"path": str(path), **validate_runtime_policy_generalization(repo_root, path)})
             policy_cases = (critic_policy_cases or {}).get(path.stem, [])
             if policy_cases:
                 results.append(

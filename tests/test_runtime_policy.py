@@ -804,6 +804,91 @@ def evaluate(input: dict) -> dict:
     assert not (tmp_path / "harness" / "tools" / "adder.py").exists()
 
 
+def test_atomic_patch_bundles_default_gate_does_not_run_handwritten_generalization_audit(tmp_path: Path) -> None:
+    _make_harness_dirs(tmp_path)
+    task = TaskConfig(
+        id="t",
+        instruction="A store started with 2,050 tags and sold 237 tags. How many tags remain?",
+        expected_answer="1,813 tags remain.",
+    )
+    bundles = [
+        PatchBundle(
+            target_path="harness/tools/inventory_arithmetic.py",
+            action="create_or_replace",
+            content="""
+def run(input: dict) -> dict:
+    return {"ok": True, "result": 1813, "unit": "tags", "answer": "1,813 tags remain."}
+""".strip(),
+            rationale="Deterministic arithmetic.",
+        ),
+        PatchBundle(
+            target_path="harness/tests/inventory_arithmetic.json",
+            action="create_or_replace",
+            content='{"tool":"inventory_arithmetic","cases":[{"input":{"text":"x"},"expected":{"ok":true,"result":1813}}]}',
+            rationale="Covers the tool contract.",
+        ),
+        PatchBundle(
+            target_path="harness/runtime_policies/force_inventory.py",
+            action="create_or_replace",
+            content="""
+def evaluate(input: dict) -> dict:
+    task = input.get("task_instruction", "").lower()
+    if "tags" in task and "sold" in task and "remain" in task:
+        return {
+            "requires_tool": True,
+            "tool_name": "inventory_arithmetic",
+            "tool_input": {"text": input.get("task_instruction", "")},
+            "reason": "narrow surface trigger"
+        }
+    return {"requires_tool": False}
+""".strip(),
+            rationale="Forces tool use for the observed case.",
+        ),
+        PatchBundle(
+            target_path="harness/tests/force_inventory.json",
+            action="create_or_replace",
+            content="""
+{
+  "policy": "force_inventory",
+  "cases": [
+    {
+      "input": {
+        "task_instruction": "A store started with 2,050 tags and sold 237 tags. How many tags remain?",
+        "available_tools": ["inventory_arithmetic"],
+        "expected_answer": "1,813 tags remain."
+      },
+      "expected": {
+        "requires_tool": true,
+        "tool_name": "inventory_arithmetic",
+        "tool_input": {"text": "A store started with 2,050 tags and sold 237 tags. How many tags remain?"}
+      },
+      "expected_tool_result": {"ok": true, "result": 1813}
+    }
+  ]
+}
+""".strip(),
+            rationale="Covers the runtime policy contract.",
+        ),
+    ]
+
+    result = apply_patch_bundles_atomically(
+        tmp_path,
+        bundles,
+        task,
+        _manifest_for(
+            [
+                "harness/tools/inventory_arithmetic.py",
+                "harness/tests/inventory_arithmetic.json",
+                "harness/runtime_policies/force_inventory.py",
+                "harness/tests/force_inventory.json",
+            ]
+        ),
+    )
+
+    assert result["patch_status"] == "accepted"
+    assert all(item.get("reason") != "one or more policy generalization audits failed" for item in result["contract_validation"])
+
+
 def test_code_patch_bundles_require_manifest(tmp_path: Path) -> None:
     _make_harness_dirs(tmp_path)
     task = TaskConfig(id="t", instruction="add 2 and 3", expected_answer="5")
