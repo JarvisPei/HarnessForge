@@ -808,6 +808,15 @@ def test_inventory_benchmark_allows_three_repair_iterations() -> None:
     assert [task.id for task in cfg.blind_test_tasks] == ["blind_inventory_badges", "blind_inventory_vouchers"]
 
 
+def test_unit_conversion_benchmark_config() -> None:
+    cfg = load_benchmark_config("configs/benchmark_unit_conversion.yaml")
+    assert cfg.name == "benchmark_unit_conversion"
+    assert cfg.evolve_iterations == 3
+    assert [task.id for task in cfg.train_tasks] == ["train_solution_liters"]
+    assert [task.id for task in cfg.dev_probe_tasks] == ["dev_package_grams", "dev_cable_meters"]
+    assert [task.id for task in cfg.blind_test_tasks] == ["blind_syrup_milliliters", "blind_rope_centimeters"]
+
+
 def test_run_task_can_skip_teacher_diagnosis(tmp_path: Path) -> None:
     tools_dir = tmp_path / "tools"
     policies_dir = tmp_path / "runtime_policies"

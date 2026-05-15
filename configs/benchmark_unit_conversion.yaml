@@ -1,0 +1,52 @@
+name: benchmark_unit_conversion
+output_dir: outputs/benchmark_unit_conversion
+weak:
+  role: weak
+teacher:
+  role: teacher
+harness:
+  system_prompt_path: prompts/weak_system.md
+  skills_dir: harness/skills
+  guidelines_dir: harness/guidelines
+  validators_dir: harness/validators
+  tools_dir: harness/tools
+  runtime_policies_dir: harness/runtime_policies
+evolve_iterations: 3
+train_tasks:
+  - id: train_solution_liters
+    instruction: |
+      A lab tank started with 2.4 liters of solution. It added 350 milliliters, used 900 milliliters, then added 1.25 liters. How many liters remain?
+      Give only the final amount in liters and one short explanation sentence.
+    expected_answer: "3.10 liters remain."
+    rubric: |
+      Correct computation is 2.4 L + 0.350 L - 0.900 L + 1.25 L = 3.10 L. A reliable harness should normalize units before arithmetic.
+dev_probe_tasks:
+  - id: dev_package_grams
+    instruction: |
+      A package weighed 3.2 kilograms. It added 450 grams of packing material, removed 1.1 kilograms of samples, then added 275 grams of paperwork. What is the final weight in grams?
+      Give only the final amount in grams and one short explanation sentence.
+    expected_answer: "2,825 grams remain."
+    rubric: |
+      Correct computation is 3200 g + 450 g - 1100 g + 275 g = 2825 g.
+  - id: dev_cable_meters
+    instruction: |
+      A cable reel had 18.5 meters of cable. A technician used 325 centimeters, added 4.2 meters, and then used 180 centimeters. How many meters of cable remain?
+      Give only the final amount in meters and one short explanation sentence.
+    expected_answer: "17.65 meters remain."
+    rubric: |
+      Correct computation is 18.5 m - 3.25 m + 4.2 m - 1.8 m = 17.65 m.
+blind_test_tasks:
+  - id: blind_syrup_milliliters
+    instruction: |
+      A dispenser started with 1.75 liters of syrup. It received 625 milliliters, poured out 0.8 liters, and then received 1,250 milliliters. How many milliliters remain?
+      Give only the final amount in milliliters and one short explanation sentence.
+    expected_answer: "2,825 milliliters remain."
+    rubric: |
+      Correct computation is 1750 mL + 625 mL - 800 mL + 1250 mL = 2825 mL.
+  - id: blind_rope_centimeters
+    instruction: |
+      A rope bin had 12.75 meters of rope. It used 245 centimeters, added 3.6 meters, and used another 1,180 centimeters. How many centimeters of rope remain?
+      Give only the final amount in centimeters and one short explanation sentence.
+    expected_answer: "210 centimeters remain."
+    rubric: |
+      Correct computation is 1275 cm - 245 cm + 360 cm - 1180 cm = 210 cm.

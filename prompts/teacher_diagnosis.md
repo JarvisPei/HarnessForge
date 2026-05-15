@@ -172,3 +172,31 @@ Inventory policy tests must include at least these three cases when relevant:
 - training labels: `start=1204`, `additions=[666, 322]`, `subtractions=[89, 647]`, expected tool total `1456`
 - dev tags with comma number `1,107`: `start=2050`, `additions=[720, 288]`, `subtractions=[138, 1107]`, expected tool total `1813`
 - blind-style badges with comma number `1,206`: `start=3400`, `additions=[936, 407]`, `subtractions=[214, 1206]`, expected tool total `3323`
+
+For unit conversion tasks, prefer a deterministic tool that normalizes every quantity to the requested target unit before arithmetic. A good tool input schema is:
+
+```json
+{
+  "target_unit": "g",
+  "quantities": [
+    {"op": "add", "value": 3.2, "unit": "kg"},
+    {"op": "add", "value": 450, "unit": "g"},
+    {"op": "subtract", "value": 1.1, "unit": "kg"}
+  ]
+}
+```
+
+The tool should support at least:
+
+```text
+kg <-> g
+L/liter/liters <-> mL/milliliter/milliliters
+m/meter/meters <-> cm/centimeter/centimeters
+```
+
+For unit conversion runtime policies, use clause-level parsing and normalize unit aliases. Treat words like `added`, `received`, and `started with` as additions, and words like `used`, `removed`, `poured out`, and `spent` as subtractions. Parse comma-formatted quantities such as `1,250 milliliters` as a single number. Include policy tests that assert the normalized `tool_input`, not just the final answer.
+
+Unit conversion policy tests must include cases like:
+- training solution: target `liters`, quantities `2.4 L add`, `350 mL add`, `900 mL subtract`, `1.25 L add`, expected total `3.10`
+- dev package: target `grams`, quantities `3.2 kg add`, `450 g add`, `1.1 kg subtract`, `275 g add`, expected total `2825`
+- blind syrup: target `milliliters`, quantities `1.75 L add`, `625 mL add`, `0.8 L subtract`, `1,250 mL add`, expected total `2825`
