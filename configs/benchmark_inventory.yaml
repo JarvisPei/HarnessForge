@@ -11,7 +11,7 @@ harness:
   validators_dir: harness/validators
   tools_dir: harness/tools
   runtime_policies_dir: harness/runtime_policies
-evolve_iterations: 2
+evolve_iterations: 3
 train_tasks:
   - id: train_inventory_labels
     instruction: |

@@ -106,3 +106,69 @@ Runtime policy tests use this JSON schema:
 ```
 
 Use policy tests to cover heldout-style parsing hazards, especially comma-formatted numbers such as `1,107`, product terms, and multiple additions/subtractions.
+
+For inventory arithmetic runtime policies, prefer this canonical self-contained parser pattern instead of ad hoc regexes. Copy and adapt it inside the policy file; do not import it from another file:
+
+```python
+import re
+
+ADD_WORDS = ("printed", "received", "bought", "purchased", "added")
+SUBTRACT_WORDS = ("discarded", "threw away", "shipped", "sold", "used", "lost", "voided", "redeemed", "handed out")
+
+
+def _number(text: str) -> int:
+    return int(text.replace(",", ""))
+
+
+def _products(text: str) -> list[tuple[int, int, int, int]]:
+    pattern = r"(\d[\d,]*)\s+\w+\s+with\s+(\d[\d,]*)"
+    return [(m.start(), m.end(), _number(m.group(1)), _number(m.group(2))) for m in re.finditer(pattern, text, flags=re.I)]
+
+
+def _classify(window: str) -> str | None:
+    lowered = window.lower()
+    if any(word in lowered for word in ADD_WORDS):
+        return "add"
+    if any(word in lowered for word in SUBTRACT_WORDS):
+        return "subtract"
+    return None
+
+
+def _parse_inventory(task_instruction: str) -> dict:
+    text = task_instruction
+    start_match = re.search(r"had\s+(\d[\d,]*)|started with\s+(\d[\d,]*)", text, flags=re.I)
+    if not start_match:
+        return {}
+    start = _number(next(group for group in start_match.groups() if group))
+    additions = []
+    subtractions = []
+    consumed_spans = []
+    for start_idx, end_idx, count, each in _products(text):
+        window = text[max(0, start_idx - 40): min(len(text), end_idx + 40)]
+        kind = _classify(window)
+        value = count * each
+        if kind == "add":
+            additions.append(value)
+            consumed_spans.append((start_idx, end_idx))
+        elif kind == "subtract":
+            subtractions.append(value)
+            consumed_spans.append((start_idx, end_idx))
+    for match in re.finditer(r"\d[\d,]*", text):
+        if match.start() == start_match.start(1 if start_match.group(1) else 2):
+            continue
+        if any(start_idx <= match.start() < end_idx for start_idx, end_idx in consumed_spans):
+            continue
+        value = _number(match.group(0))
+        window = text[max(0, match.start() - 35): min(len(text), match.end() + 35)]
+        kind = _classify(window)
+        if kind == "add":
+            additions.append(value)
+        elif kind == "subtract":
+            subtractions.append(value)
+    return {"start": start, "additions": additions, "subtractions": subtractions}
+```
+
+Inventory policy tests must include at least these three cases when relevant:
+- training labels: `start=1204`, `additions=[666, 322]`, `subtractions=[89, 647]`, expected tool total `1456`
+- dev tags with comma number `1,107`: `start=2050`, `additions=[720, 288]`, `subtractions=[138, 1107]`, expected tool total `1813`
+- blind-style badges with comma number `1,206`: `start=3400`, `additions=[936, 407]`, `subtractions=[214, 1206]`, expected tool total `3323`

@@ -801,6 +801,13 @@ heldout_tasks:
     assert [task.id for task in cfg.blind_test_tasks] == ["heldout"]
 
 
+def test_inventory_benchmark_allows_three_repair_iterations() -> None:
+    cfg = load_benchmark_config("configs/benchmark_inventory.yaml")
+    assert cfg.evolve_iterations == 3
+    assert [task.id for task in cfg.dev_probe_tasks] == ["heldout_inventory_tags", "heldout_inventory_stickers"]
+    assert [task.id for task in cfg.blind_test_tasks] == ["blind_inventory_badges", "blind_inventory_vouchers"]
+
+
 def test_run_task_can_skip_teacher_diagnosis(tmp_path: Path) -> None:
     tools_dir = tmp_path / "tools"
     policies_dir = tmp_path / "runtime_policies"
