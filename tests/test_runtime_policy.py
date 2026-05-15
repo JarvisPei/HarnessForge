@@ -406,6 +406,7 @@ def run(input: dict) -> dict:
     assert result["patch_status"] == "rejected"
     assert result["rejection_reason"] == "harness manifest validation failed"
     assert "code harness bundles must include harness_manifest" in result["contract_validation"][0]["reason"]
+    assert result["rejected_patch_paths"] == [str(tmp_path / "harness" / "tools" / "adder.py")]
     assert not (tmp_path / "harness" / "tools" / "adder.py").exists()
 
 
@@ -448,6 +449,10 @@ def run(input: dict) -> dict:
 
     assert result["patch_status"] == "rejected"
     assert "one or more patch contracts failed" in result["rejection_reason"]
+    assert result["rejected_patch_paths"] == [
+        str(tmp_path / "harness" / "tools" / "adder.py"),
+        str(tmp_path / "harness" / "tests" / "adder.json"),
+    ]
     assert not (tmp_path / "harness" / "tools" / "adder.py").exists()
     assert not (tmp_path / "harness" / "tests" / "adder.json").exists()
 

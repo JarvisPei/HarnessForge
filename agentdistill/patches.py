@@ -23,8 +23,10 @@ def apply_patch_bundles_atomically(
     manifest: HarnessManifest | None = None,
 ) -> dict[str, Any]:
     applied: list[AppliedPatch] = []
+    attempted_paths: list[Path] = []
     contract_results: list[dict[str, Any]] = []
     try:
+        attempted_paths = [_safe_harness_path(repo_root, bundle.target_path) for bundle in bundles]
         manifest_results = validate_harness_manifest(repo_root, bundles, manifest)
         manifest_failures = [result for result in manifest_results if result.get("ok") is not True]
         if manifest_failures:
@@ -69,7 +71,7 @@ def apply_patch_bundles_atomically(
         return {
             "patch_status": "rejected",
             "applied_patch_paths": [],
-            "rejected_patch_paths": [str(patch.path) for patch in applied],
+            "rejected_patch_paths": [str(path) for path in attempted_paths],
             "contract_validation": contract_results,
             "rejection_reason": reason,
             "harness_manifest": manifest.model_dump() if manifest is not None else None,
