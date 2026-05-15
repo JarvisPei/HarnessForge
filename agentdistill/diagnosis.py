@@ -27,7 +27,7 @@ class PatchBundle(BaseModel):
     target_path: str
     action: str = "create_or_replace"
     content: str
-    rationale: str
+    rationale: str = ""
 
 
 def parse_diagnosis(raw: str) -> Diagnosis:

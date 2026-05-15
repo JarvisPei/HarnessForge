@@ -193,6 +193,30 @@ def test_parse_diagnosis_accepts_patch_bundles() -> None:
     assert diagnosis.patch_bundle.target_path == "harness/tests/adder.json"
 
 
+def test_parse_diagnosis_allows_missing_bundle_rationale() -> None:
+    diagnosis = parse_diagnosis(
+        """
+{
+  "diagnosis": "Missing rationale should not break parsing.",
+  "failure_categories": ["tool"],
+  "harness_patch": "Add a tool.",
+  "patch_type": "tool",
+  "regression_test": "Parser should accept omitted rationale.",
+  "patch_bundles": [
+    {
+      "target_path": "harness/tools/adder.py",
+      "action": "create_or_replace",
+      "content": "def run(input: dict) -> dict:\\n    return {\\"ok\\": True}"
+    }
+  ],
+  "confidence": 0.5
+}
+""".strip()
+    )
+
+    assert diagnosis.patch_bundles[0].rationale == ""
+
+
 def test_parse_diagnosis_handles_fenced_and_nested_json() -> None:
     diagnosis = parse_diagnosis(
         """
