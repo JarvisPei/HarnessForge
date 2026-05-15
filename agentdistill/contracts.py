@@ -119,6 +119,105 @@ def validate_runtime_policy_tests(repo_root: Path, policy_path: Path) -> dict[st
     return {"ok": True, "reason": "all policy tests passed", "policy": policy_name, "tests_path": str(tests_path), "num_cases": len(cases)}
 
 
+def validate_runtime_policy_generalization(repo_root: Path, policy_path: Path) -> dict[str, Any]:
+    policy_name = policy_path.stem
+    tests_path, data, error = load_json_test_file(repo_root, policy_name)
+    if error is not None:
+        return {**error, "policy": policy_name}
+    if not isinstance(data, dict) or data.get("policy") != policy_name:
+        return {"ok": False, "reason": "test file must be an object with matching policy name", "policy": policy_name}
+
+    tools = ToolRegistry(repo_root / "harness" / "tools")
+    policies = RuntimePolicyRegistry(policy_path.parent)
+    failures = []
+    audited = 0
+    for idx, case in enumerate(data.get("cases", [])):
+        if not isinstance(case, dict):
+            continue
+        payload = case.get("input", {})
+        expected = case.get("expected", {})
+        expected_tool_result = case.get("expected_tool_result")
+        if not isinstance(payload, dict) or not isinstance(expected, dict):
+            continue
+        if expected.get("requires_tool") is not True or not isinstance(expected.get("tool_name"), str):
+            continue
+        instruction = payload.get("task_instruction")
+        if not isinstance(instruction, str) or not instruction.strip():
+            continue
+        surface_term = _surface_count_noun(payload, expected_tool_result if isinstance(expected_tool_result, dict) else None)
+        if surface_term is None:
+            continue
+        mutated_instruction = _replace_surface_term(instruction, surface_term)
+        if mutated_instruction == instruction:
+            continue
+        audited += 1
+        mutated_payload = {
+            "task_instruction": mutated_instruction,
+            "initial_answer": payload.get("initial_answer", ""),
+            "tool_call": payload.get("tool_call"),
+            "available_tools": payload.get("available_tools", tools.names),
+            "expected_answer": _replace_surface_term(str(payload.get("expected_answer", "")), surface_term)
+            if payload.get("expected_answer") is not None
+            else None,
+            "rubric": payload.get("rubric"),
+        }
+        results = [result for result in policies.evaluate(mutated_payload) if result.get("policy") == policy_name]
+        actual = results[0] if results else {"policy": policy_name, "requires_tool": False}
+        if actual.get("requires_tool") is not True or actual.get("tool_name") != expected.get("tool_name"):
+            failures.append(
+                {
+                    "case_index": idx,
+                    "reason": "policy trigger is not invariant to surface entity renaming",
+                    "surface_term": surface_term,
+                    "mutated_instruction": mutated_instruction,
+                    "expected": {"requires_tool": True, "tool_name": expected.get("tool_name")},
+                    "actual": actual,
+                }
+            )
+            continue
+        if not isinstance(actual.get("tool_input"), dict):
+            failures.append(
+                {
+                    "case_index": idx,
+                    "reason": "policy produced no object tool_input after surface entity renaming",
+                    "surface_term": surface_term,
+                    "mutated_instruction": mutated_instruction,
+                    "actual": actual,
+                }
+            )
+            continue
+        tool_result = tools.call(actual["tool_name"], actual["tool_input"])
+        expected_answer = payload.get("expected_answer")
+        if tool_result.get("ok") is not True or (
+            isinstance(expected_answer, str) and not _tool_result_matches_expected(expected_answer, tool_result)
+        ):
+            failures.append(
+                {
+                    "case_index": idx,
+                    "reason": "forced tool result failed after surface entity renaming",
+                    "surface_term": surface_term,
+                    "mutated_instruction": mutated_instruction,
+                    "actual": actual,
+                    "tool_result": tool_result,
+                }
+            )
+
+    if failures:
+        return {
+            "ok": False,
+            "reason": "one or more policy generalization audits failed",
+            "policy": policy_name,
+            "failures": failures,
+        }
+    return {
+        "ok": True,
+        "reason": "policy generalization audit passed" if audited else "no eligible policy generalization audit cases",
+        "policy": policy_name,
+        "tests_path": str(tests_path),
+        "num_cases": audited,
+    }
+
+
 def validate_tool_contract(repo_root: Path, tool_path: Path) -> dict[str, Any]:
     tool_name = tool_path.stem
     result = validate_tool_tests(repo_root, tool_name)
@@ -144,6 +243,62 @@ def _tool_result_matches_expected(expected_answer: str, tool_result: dict[str, A
 
 def _numbers(text: str) -> list[str]:
     return [match.replace(",", "") for match in re.findall(r"-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?", text)]
+
+
+MEASUREMENT_UNITS = {
+    "cm",
+    "centimeter",
+    "centimeters",
+    "g",
+    "gram",
+    "grams",
+    "kg",
+    "kilogram",
+    "kilograms",
+    "l",
+    "liter",
+    "liters",
+    "metre",
+    "metres",
+    "meter",
+    "meters",
+    "milliliter",
+    "milliliters",
+    "millilitre",
+    "millilitres",
+    "ml",
+}
+
+
+def _surface_count_noun(payload: dict[str, Any], expected_tool_result: dict[str, Any] | None) -> str | None:
+    candidates = []
+    if expected_tool_result is not None and isinstance(expected_tool_result.get("unit"), str):
+        candidates.append(expected_tool_result["unit"])
+    expected_answer = payload.get("expected_answer")
+    if isinstance(expected_answer, str):
+        match = re.search(r"-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s+([A-Za-z][A-Za-z-]*)\s+(?:remain|left)\b", expected_answer, flags=re.I)
+        if match:
+            candidates.append(match.group(1))
+    instruction = payload.get("task_instruction")
+    if isinstance(instruction, str):
+        match = re.search(r"\bhow\s+many\s+([A-Za-z][A-Za-z-]*)\s+(?:remain|are\s+left|left)\b", instruction, flags=re.I)
+        if match:
+            candidates.append(match.group(1))
+    for candidate in candidates:
+        term = candidate.lower().strip()
+        if term and term not in MEASUREMENT_UNITS:
+            return term
+    return None
+
+
+def _replace_surface_term(text: str, term: str) -> str:
+    singular = term[:-1] if term.endswith("s") and len(term) > 3 else term
+    plural = term if term.endswith("s") else f"{term}s"
+    replacements = [(plural, "daxels"), (singular, "daxel")]
+    result = text
+    for source, target in sorted(replacements, key=lambda pair: len(pair[0]), reverse=True):
+        result = re.sub(rf"\b{re.escape(source)}\b", target, result, flags=re.I)
+    return result
 
 
 def _matches_expected(expected: dict[str, Any], actual: dict[str, Any]) -> tuple[bool, str]:

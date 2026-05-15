@@ -5,7 +5,12 @@ from pathlib import Path
 
 from agentdistill.config import TaskConfig, load_benchmark_config
 from agentdistill.benchmark import _build_transfer_context, _run_phase
-from agentdistill.contracts import validate_runtime_policy_contract, validate_runtime_policy_tests, validate_tool_contract
+from agentdistill.contracts import (
+    validate_runtime_policy_contract,
+    validate_runtime_policy_generalization,
+    validate_runtime_policy_tests,
+    validate_tool_contract,
+)
 from agentdistill.diagnosis import PatchBundle, parse_diagnosis
 from agentdistill.feedback import build_patch_feedback, merge_benchmark_context
 from agentdistill.metrics import build_benchmark_metrics
@@ -206,6 +211,127 @@ def evaluate(input: dict) -> dict:
     assert result["ok"] is False
     assert result["reason"] == "one or more policy tests failed"
     assert result["failures"][0]["reason"] == "value mismatch for key: tool_input"
+
+
+def test_runtime_policy_generalization_rejects_surface_noun_overfit(tmp_path: Path) -> None:
+    harness = tmp_path / "harness"
+    tools_dir = harness / "tools"
+    policies_dir = harness / "runtime_policies"
+    tests_dir = harness / "tests"
+    tools_dir.mkdir(parents=True)
+    policies_dir.mkdir(parents=True)
+    tests_dir.mkdir(parents=True)
+
+    (tools_dir / "inventory_arithmetic.py").write_text(
+        """
+def run(input: dict) -> dict:
+    return {"ok": True, "result": 1813, "unit": "tags", "answer": "1,813 tags remain."}
+""".strip()
+    )
+    policy_path = policies_dir / "force_inventory.py"
+    policy_path.write_text(
+        """
+def evaluate(input: dict) -> dict:
+    task = input.get("task_instruction", "").lower()
+    if "tags" in task and "remain" in task:
+        return {
+            "requires_tool": True,
+            "tool_name": "inventory_arithmetic",
+            "tool_input": {"text": input.get("task_instruction", "")},
+            "reason": "narrow trigger"
+        }
+    return {"requires_tool": False}
+""".strip()
+    )
+    (tests_dir / "force_inventory.json").write_text(
+        """
+{
+  "policy": "force_inventory",
+  "cases": [
+    {
+      "input": {
+        "task_instruction": "A store started with 2,050 tags and sold 237 tags. How many tags remain?",
+        "available_tools": ["inventory_arithmetic"],
+        "expected_answer": "1,813 tags remain."
+      },
+      "expected": {
+        "requires_tool": true,
+        "tool_name": "inventory_arithmetic",
+        "tool_input": {"text": "A store started with 2,050 tags and sold 237 tags. How many tags remain?"}
+      },
+      "expected_tool_result": {"ok": true, "result": 1813}
+    }
+  ]
+}
+""".strip()
+    )
+
+    result = validate_runtime_policy_generalization(tmp_path, policy_path)
+
+    assert result["ok"] is False
+    assert result["reason"] == "one or more policy generalization audits failed"
+    assert result["failures"][0]["reason"] == "policy trigger is not invariant to surface entity renaming"
+    assert "daxels" in result["failures"][0]["mutated_instruction"]
+
+
+def test_runtime_policy_generalization_accepts_schema_trigger(tmp_path: Path) -> None:
+    harness = tmp_path / "harness"
+    tools_dir = harness / "tools"
+    policies_dir = harness / "runtime_policies"
+    tests_dir = harness / "tests"
+    tools_dir.mkdir(parents=True)
+    policies_dir.mkdir(parents=True)
+    tests_dir.mkdir(parents=True)
+
+    (tools_dir / "inventory_arithmetic.py").write_text(
+        """
+def run(input: dict) -> dict:
+    return {"ok": True, "result": 1813, "unit": "items", "answer": "1,813 items remain."}
+""".strip()
+    )
+    policy_path = policies_dir / "force_inventory.py"
+    policy_path.write_text(
+        """
+def evaluate(input: dict) -> dict:
+    task = input.get("task_instruction", "").lower()
+    if "started with" in task and "remain" in task:
+        return {
+            "requires_tool": True,
+            "tool_name": "inventory_arithmetic",
+            "tool_input": {"text": input.get("task_instruction", "")},
+            "reason": "schema trigger"
+        }
+    return {"requires_tool": False}
+""".strip()
+    )
+    (tests_dir / "force_inventory.json").write_text(
+        """
+{
+  "policy": "force_inventory",
+  "cases": [
+    {
+      "input": {
+        "task_instruction": "A store started with 2,050 tags and sold 237 tags. How many tags remain?",
+        "available_tools": ["inventory_arithmetic"],
+        "expected_answer": "1,813 tags remain."
+      },
+      "expected": {
+        "requires_tool": true,
+        "tool_name": "inventory_arithmetic",
+        "tool_input": {"text": "A store started with 2,050 tags and sold 237 tags. How many tags remain?"}
+      },
+      "expected_tool_result": {"ok": true, "result": 1813}
+    }
+  ]
+}
+""".strip()
+    )
+
+    result = validate_runtime_policy_generalization(tmp_path, policy_path)
+
+    assert result["ok"] is True
+    assert result["reason"] == "policy generalization audit passed"
+    assert result["num_cases"] == 1
 
 
 def test_tool_contract_validation_runs_json_tests(tmp_path: Path) -> None:
@@ -693,6 +819,7 @@ def test_teacher_prompt_uses_meta_skills_not_domain_scaffolds() -> None:
     assert "Meta-Skill: Parser Design" in prompt
     assert "Meta-Skill: Tool Interface Design" in prompt
     assert "Meta-Skill: Runtime Policy Test Design" in prompt
+    assert "Meta-Skill: Runtime Policy Trigger Design" in prompt
     assert "Meta-Skill: Contract Repair" in prompt
     assert "Meta-Skill: Generalization Discipline" in prompt
     assert "ADD_WORDS" not in prompt

@@ -119,6 +119,10 @@ Design tools around stable domain-neutral schemas: an operation list, normalized
 
 Policy tests must assert the policy decision and the intermediate tool_input. Include the current train case, at least one dev-style variant if benchmark_context exposes one, and at least one adversarial variant based on observed failure modes. Useful adversarial dimensions include numeric formatting, decimals, aliases, reordered clauses, repeated entities, negation, local operation scope, missing optional fields, and final-format constraints.
 
+## Meta-Skill: Runtime Policy Trigger Design
+
+Runtime policies should trigger on the latent task schema, not on a memorized list of surface entities from train or dev examples. If a policy should apply after renaming the counted object, entity label, or domain noun, write the trigger around structural cues such as requested operation, available tool contract, expected output shape, and local clause pattern. Treat a policy generalization audit failure as evidence that the trigger is overfit to observed wording.
+
 ## Meta-Skill: Contract Repair
 
 When patch_feedback is present, repair the specific failing contract. Compare expected vs actual at the smallest useful field, preserve passing files and tests, keep the same bundle_id when repairing the same conceptual bundle, and add a regression test for the failed case. Do not replace an accepted design just because a narrower contract failed; repair the broken piece.
