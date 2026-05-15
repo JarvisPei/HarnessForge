@@ -19,13 +19,79 @@ def build_patch_feedback(train_results: dict[str, dict[str, Any]], iteration: in
     }
 
 
+def build_transfer_feedback(
+    tasks: list[Any],
+    baseline_results: dict[str, dict[str, Any]],
+    probe_results: dict[str, dict[str, Any]],
+    iteration: int,
+    accepted_harness: bool,
+) -> dict[str, Any]:
+    if not accepted_harness:
+        return {"iteration": iteration, "has_transfer_failures": False, "failed_tasks": []}
+    failed_tasks = []
+    for task in tasks:
+        before = baseline_results.get(task.id, {})
+        after = probe_results.get(task.id, {})
+        before_success = _result_success(task.expected_answer, before)
+        after_success = _result_success(task.expected_answer, after)
+        if after_success:
+            continue
+        failed_tasks.append(
+            {
+                "task_id": task.id,
+                "task_instruction": task.instruction,
+                "expected_answer": task.expected_answer,
+                "rubric": task.rubric,
+                "before_success": before_success,
+                "after_success": after_success,
+                "regressed": before_success and not after_success,
+                "before_answer": before.get("weak_answer"),
+                "after_answer": after.get("weak_answer"),
+                "before_tool_call": _compact(before.get("tool_call")),
+                "after_tool_call": _compact(after.get("tool_call")),
+                "before_tool_result": _compact(before.get("tool_result")),
+                "after_tool_result": _compact(after.get("tool_result")),
+                "after_runtime_policy_results": _compact(after.get("runtime_policy_results", [])),
+            }
+        )
+    return {
+        "iteration": iteration,
+        "has_transfer_failures": bool(failed_tasks),
+        "failed_tasks": failed_tasks,
+    }
+
+
 def merge_benchmark_context(
     transfer_context: dict[str, Any],
     patch_feedback: dict[str, Any] | None,
+    transfer_feedback: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    context = dict(transfer_context)
     if not patch_feedback or not patch_feedback.get("has_rejections"):
-        return transfer_context
-    return {**transfer_context, "patch_feedback": patch_feedback}
+        pass
+    else:
+        context["patch_feedback"] = patch_feedback
+    if transfer_feedback and transfer_feedback.get("has_transfer_failures"):
+        context["transfer_feedback"] = transfer_feedback
+    return context
+
+
+def _result_success(expected_answer: str | None, result: dict[str, Any]) -> bool:
+    if not expected_answer:
+        return bool(result.get("weak_answer"))
+    expected_numbers = _numbers(expected_answer)
+    answer_numbers = _numbers(str(result.get("weak_answer", "")))
+    if expected_numbers and not all(num in answer_numbers for num in expected_numbers):
+        return False
+    diagnosis = result.get("teacher_diagnosis", {})
+    categories = diagnosis.get("failure_categories", []) if isinstance(diagnosis, dict) else []
+    return not bool(categories)
+
+
+def _numbers(text: str) -> list[str]:
+    import re
+
+    return [match.replace(",", "") for match in re.findall(r"-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?", text)]
 
 
 def _summarize_rejection(task_id: str, result: dict[str, Any]) -> dict[str, Any]:

@@ -76,6 +76,14 @@ dev_probe_tasks:
     expected_answer: "13,181 stickers remain."
     rubric: |
       Correct computation is 9800 + 12*336 - 2750 - 490 + 17*124 - 36*9 + 805 = 13181.
+  - id: dev_explicit_vouchers_semicolon
+    instruction: |
+      Compute the final count from the explicit signed operations:
+      unit: vouchers; initial: 18,750; operations: +72*31; -906; -10,004; +18*144; -3*205; +4,821.
+      Return the final count in vouchers with one short explanation sentence.
+    expected_answer: "16,870 vouchers remain."
+    rubric: |
+      Correct computation is 18750 + 72*31 - 906 - 10004 + 18*144 - 3*205 + 4821 = 16870.
 blind_test_tasks:
   - id: blind_explicit_badges_reordered_jsonish
     instruction: |
@@ -91,11 +99,11 @@ blind_test_tasks:
     expected_answer: "33,252 badges remain."
     rubric: |
       Correct computation is 34000 + 118*52 - 2140 - 12006 + 41*137 - 875 + 6*420 = 33252.
-  - id: blind_explicit_vouchers_semicolon
+  - id: blind_explicit_tickets_semicolon
     instruction: |
       Compute the final count from the explicit signed operations:
-      unit: vouchers; initial: 18,750; operations: +72*31; -906; -10,004; +18*144; -3*205; +4,821.
-      Return the final count in vouchers with one short explanation sentence.
-    expected_answer: "16,870 vouchers remain."
+      unit: tickets; initial: 27,640; operations: +84*29; -1,705; -8,016; +23*118; -4*206; +3,950.
+      Return the final count in tickets with one short explanation sentence.
+    expected_answer: "26,195 tickets remain."
     rubric: |
-      Correct computation is 18750 + 72*31 - 906 - 10004 + 18*144 - 3*205 + 4821 = 16870.
+      Correct computation is 27640 + 84*29 - 1705 - 8016 + 23*118 - 4*206 + 3950 = 26195.

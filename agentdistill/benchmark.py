@@ -12,7 +12,7 @@ from rich.console import Console
 from agentdistill.config import BenchmarkConfig, TaskConfig, load_benchmark_config
 from agentdistill.critic import request_policy_audit_cases
 from agentdistill.diagnosis import parse_diagnosis, write_patch_artifact
-from agentdistill.feedback import build_patch_feedback, merge_benchmark_context
+from agentdistill.feedback import build_patch_feedback, build_transfer_feedback, merge_benchmark_context
 from agentdistill.harness import load_system_prompt
 from agentdistill.harness_snapshot import list_harness_files, snapshot_harness
 from agentdistill.metrics import build_benchmark_metrics
@@ -85,6 +85,7 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
     )
     transfer_context = _build_transfer_context(cfg.dev_probe_tasks, dev_baseline)
     patch_feedback: dict[str, object] | None = None
+    transfer_feedback: dict[str, object] | None = None
 
     train_summary: list[dict[str, object]] = []
     for iteration in range(1, cfg.evolve_iterations + 1):
@@ -101,9 +102,10 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
             output_dir=output_dir,
             apply_patches=True,
             repo_root=repo_root,
-            benchmark_context=merge_benchmark_context(transfer_context, patch_feedback),
+            benchmark_context=merge_benchmark_context(transfer_context, patch_feedback, transfer_feedback),
         )
         patch_feedback = build_patch_feedback(train_results, iteration)
+        accepted_harness = any(result.get("patch_status") == "accepted" for result in train_results.values())
         train_summary.extend(
             {
                 "iteration": iteration,
@@ -117,6 +119,7 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
                 "harness_manifest": result.get("harness_manifest"),
                 "critic_audits": result.get("critic_audits"),
                 "context_patch_feedback": result.get("context_patch_feedback"),
+                "context_transfer_feedback": result.get("context_transfer_feedback"),
                 "patch_feedback": patch_feedback if result.get("patch_status") == "rejected" else None,
                 "rejection_reason": result.get("rejection_reason"),
                 "failure_categories": (result.get("teacher_diagnosis") or {}).get("failure_categories", []),
@@ -139,6 +142,13 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
             request_teacher_diagnosis=False,
         )
         transfer_context = _build_transfer_context(cfg.dev_probe_tasks, probe_results)
+        transfer_feedback = build_transfer_feedback(
+            cfg.dev_probe_tasks,
+            dev_baseline,
+            probe_results,
+            iteration,
+            accepted_harness=accepted_harness,
+        )
 
     snapshot_harness(repo_root, output_dir / "harness_after")
     dev_after = await _run_phase(
@@ -250,6 +260,8 @@ async def _run_phase(
         )
         if request_teacher_diagnosis and benchmark_context and benchmark_context.get("patch_feedback"):
             result["context_patch_feedback"] = benchmark_context["patch_feedback"]
+        if request_teacher_diagnosis and benchmark_context and benchmark_context.get("transfer_feedback"):
+            result["context_transfer_feedback"] = benchmark_context["transfer_feedback"]
         diagnosis = parse_diagnosis(str(result["teacher_diagnosis_raw"])) if request_teacher_diagnosis else None
         if diagnosis is not None:
             result["teacher_diagnosis"] = diagnosis.model_dump()

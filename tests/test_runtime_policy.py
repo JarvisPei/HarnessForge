@@ -13,7 +13,7 @@ from agentdistill.contracts import (
 )
 from agentdistill.critic import parse_critic_audit, validate_critic_policy_cases
 from agentdistill.diagnosis import PatchBundle, parse_diagnosis
-from agentdistill.feedback import build_patch_feedback, merge_benchmark_context
+from agentdistill.feedback import build_patch_feedback, build_transfer_feedback, merge_benchmark_context
 from agentdistill.metrics import build_benchmark_metrics
 from agentdistill.patches import apply_patch_bundles_atomically
 from agentdistill.models import load_model_settings
@@ -1111,6 +1111,39 @@ def test_patch_feedback_summarizes_rejected_contract_failures() -> None:
     assert rejected["failed_contracts"][0]["failures"][0]["actual"]["tool_input"]["subtractions"] == [138, 1]
 
 
+def test_transfer_feedback_summarizes_failed_accepted_harness_probe() -> None:
+    tasks = [
+        TaskConfig(
+            id="dev_semicolon",
+            instruction="unit: vouchers; initial: 18,750; operations: +72*31; -906",
+            expected_answer="20,076 vouchers remain.",
+            rubric="Use signed operations.",
+        )
+    ]
+    feedback = build_transfer_feedback(
+        tasks,
+        baseline_results={"dev_semicolon": {"weak_answer": "20,076 vouchers remain."}},
+        probe_results={
+            "dev_semicolon": {
+                "weak_answer": "21,191 vouchers remain.",
+                "tool_call": {"name": "signed_inventory_calculator", "input": {"task": "unit: vouchers; initial: 18,750"}},
+                "tool_result": {"ok": False, "error": "Could not find initial/start count"},
+                "runtime_policy_results": [{"requires_tool": True}],
+            }
+        },
+        iteration=2,
+        accepted_harness=True,
+    )
+
+    assert feedback["has_transfer_failures"] is True
+    failed = feedback["failed_tasks"][0]
+    assert failed["task_id"] == "dev_semicolon"
+    assert failed["regressed"] is True
+    assert failed["after_tool_result"]["error"] == "Could not find initial/start count"
+    merged = merge_benchmark_context({"heldout_probe": []}, None, feedback)
+    assert merged["transfer_feedback"] == feedback
+
+
 def test_teacher_prompt_uses_meta_skills_not_domain_scaffolds() -> None:
     prompt = Path("prompts/teacher_diagnosis.md").read_text()
 
@@ -1121,6 +1154,7 @@ def test_teacher_prompt_uses_meta_skills_not_domain_scaffolds() -> None:
     assert "Meta-Skill: Contract Repair" in prompt
     assert "Meta-Skill: Architecture Escalation" in prompt
     assert "Meta-Skill: Generalization Discipline" in prompt
+    assert "benchmark_context.transfer_feedback" in prompt
     assert "keep the runtime policy as a thin router" in prompt
     assert "move that logic into a deterministic tool" in prompt
     assert "ADD_WORDS" not in prompt
@@ -1335,10 +1369,11 @@ def test_explicit_ops_v2_benchmark_config_covers_schema_variants() -> None:
     assert [task.id for task in cfg.dev_probe_tasks] == [
         "dev_explicit_tags_inline",
         "dev_explicit_stickers_table",
+        "dev_explicit_vouchers_semicolon",
     ]
     assert [task.id for task in cfg.blind_test_tasks] == [
         "blind_explicit_badges_reordered_jsonish",
-        "blind_explicit_vouchers_semicolon",
+        "blind_explicit_tickets_semicolon",
     ]
     all_text = "\n".join(task.instruction for task in cfg.train_tasks + cfg.dev_probe_tasks + cfg.blind_test_tasks)
     assert '"updates"' in all_text
@@ -1346,6 +1381,7 @@ def test_explicit_ops_v2_benchmark_config_covers_schema_variants() -> None:
     assert "| sign | value |" in all_text
     assert "operations: +" in all_text
     assert "; -10,004;" in all_text
+    assert "unit: tickets; initial:" in all_text
     assert "handed out" not in all_text
     assert "redeemed" not in all_text
     assert "voided" not in all_text
