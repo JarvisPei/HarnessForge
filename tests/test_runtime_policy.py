@@ -1280,6 +1280,29 @@ def test_benchmark_context_marks_focused_repair_only_when_active() -> None:
     assert context["transfer_feedback"]["has_transfer_failures"] is True
 
 
+def test_explicit_ops_v2_focused_repair_context_can_include_unresolved_transfer_feedback() -> None:
+    cfg = load_benchmark_config("configs/benchmark_explicit_ops_v2.yaml")
+    patch_feedback = {
+        "has_rejections": True,
+        "rejected_bundles": [{"bundle_id": "explicit_ops", "rejected_patch_paths": [], "failed_contracts": []}],
+    }
+    transfer_feedback = {
+        "has_transfer_failures": True,
+        "failed_tasks": [{"task_id": "dev_explicit_vouchers_semicolon"}],
+    }
+    phase_kind = _phase_kind(cfg, patch_feedback)
+    context = _benchmark_context_for_iteration({"heldout_probe": []}, patch_feedback, transfer_feedback, phase_kind)
+    tasks = _tasks_for_evolve_iteration(cfg, patch_feedback, transfer_feedback)
+
+    assert cfg.transfer_context_mode == "feedback_only"
+    assert cfg.repair_mode == "focused"
+    assert phase_kind == "focused_repair"
+    assert [task.id for task in tasks] == ["focused_repair"]
+    assert context["repair_mode"] == "focused"
+    assert context["patch_feedback"] == patch_feedback
+    assert context["transfer_feedback"] == transfer_feedback
+
+
 def test_run_focused_repair_task_calls_teacher_without_weak_model() -> None:
     class TeacherClient:
         def __init__(self) -> None:
@@ -1305,6 +1328,67 @@ def test_run_focused_repair_task_calls_teacher_without_weak_model() -> None:
     assert result["weak_answer"] == ""
     assert teacher.messages is not None
     assert '"repair_mode": "focused"' in teacher.messages[1]["content"]
+
+
+def test_run_phase_focused_repair_skips_weak_and_records_contexts(tmp_path: Path) -> None:
+    class WeakClient:
+        async def complete(self, messages, temperature=0.2):
+            raise AssertionError("focused repair should not call weak model")
+
+    class TeacherClient:
+        async def complete(self, messages, temperature=0.2):
+            return '{"failure_categories":[],"patch_type":"runtime_policy","patch_bundles":[]}'
+
+    class HarnessConfig:
+        system_prompt_path = tmp_path / "weak_system.md"
+        skills_dir = tmp_path / "harness" / "skills"
+        guidelines_dir = tmp_path / "harness" / "guidelines"
+        validators_dir = tmp_path / "harness" / "validators"
+        tools_dir = tmp_path / "harness" / "tools"
+        runtime_policies_dir = tmp_path / "harness" / "runtime_policies"
+
+    class Config:
+        name = "test"
+        harness = HarnessConfig()
+        critic_mode = "off"
+
+    for directory in [
+        HarnessConfig.skills_dir,
+        HarnessConfig.guidelines_dir,
+        HarnessConfig.validators_dir,
+        HarnessConfig.tools_dir,
+        HarnessConfig.runtime_policies_dir,
+    ]:
+        directory.mkdir(parents=True)
+    HarnessConfig.system_prompt_path.write_text("system")
+
+    context = {
+        "repair_mode": "focused",
+        "patch_feedback": {"has_rejections": True, "rejected_bundles": [{"task_id": "train"}]},
+        "transfer_feedback": {"has_transfer_failures": True, "failed_tasks": [{"task_id": "dev"}]},
+    }
+    results = asyncio.run(
+        _run_phase(
+            Config(),
+            "repair",
+            [TaskConfig(id="focused_repair", instruction="repair", expected_answer="1")],
+            WeakClient(),
+            TeacherClient(),
+            None,
+            "teacher",
+            "critic",
+            tmp_path / "outputs",
+            False,
+            tmp_path,
+            benchmark_context=context,
+        )
+    )
+
+    result = results["focused_repair"]
+    assert result["focused_repair"] is True
+    assert result["weak_answer"] == ""
+    assert result["context_patch_feedback"] == context["patch_feedback"]
+    assert result["context_transfer_feedback"] == context["transfer_feedback"]
 
 
 def test_teacher_prompt_uses_meta_skills_not_domain_scaffolds() -> None:
