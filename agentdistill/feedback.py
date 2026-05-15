@@ -25,40 +25,47 @@ def build_transfer_feedback(
     probe_results: dict[str, dict[str, Any]],
     iteration: int,
     accepted_harness: bool,
+    previous_feedback: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    unresolved_by_id = _previous_unresolved_by_id(previous_feedback)
     if not accepted_harness:
-        return {"iteration": iteration, "has_transfer_failures": False, "failed_tasks": []}
-    failed_tasks = []
+        return _transfer_feedback_result(iteration, unresolved_by_id)
+
+    current_failed_by_id = {}
+    current_success_ids = set()
     for task in tasks:
         before = baseline_results.get(task.id, {})
         after = probe_results.get(task.id, {})
         before_success = _result_success(task.expected_answer, before)
         after_success = _result_success(task.expected_answer, after)
         if after_success:
+            current_success_ids.add(task.id)
             continue
-        failed_tasks.append(
-            {
-                "task_id": task.id,
-                "task_instruction": task.instruction,
-                "expected_answer": task.expected_answer,
-                "rubric": task.rubric,
-                "before_success": before_success,
-                "after_success": after_success,
-                "regressed": before_success and not after_success,
-                "before_answer": before.get("weak_answer"),
-                "after_answer": after.get("weak_answer"),
-                "before_tool_call": _compact(before.get("tool_call")),
-                "after_tool_call": _compact(after.get("tool_call")),
-                "before_tool_result": _compact(before.get("tool_result")),
-                "after_tool_result": _compact(after.get("tool_result")),
-                "after_runtime_policy_results": _compact(after.get("runtime_policy_results", [])),
-            }
-        )
-    return {
-        "iteration": iteration,
-        "has_transfer_failures": bool(failed_tasks),
-        "failed_tasks": failed_tasks,
-    }
+        previous = unresolved_by_id.get(task.id, {})
+        first_seen = previous.get("first_seen_iteration", iteration)
+        current_failed_by_id[task.id] = {
+            "task_id": task.id,
+            "task_instruction": task.instruction,
+            "expected_answer": task.expected_answer,
+            "rubric": task.rubric,
+            "before_success": before_success,
+            "after_success": after_success,
+            "regressed": before_success and not after_success,
+            "before_answer": before.get("weak_answer"),
+            "after_answer": after.get("weak_answer"),
+            "before_tool_call": _compact(before.get("tool_call")),
+            "after_tool_call": _compact(after.get("tool_call")),
+            "before_tool_result": _compact(before.get("tool_result")),
+            "after_tool_result": _compact(after.get("tool_result")),
+            "after_runtime_policy_results": _compact(after.get("runtime_policy_results", [])),
+            "first_seen_iteration": first_seen,
+            "last_seen_iteration": iteration,
+        }
+
+    for task_id in current_success_ids:
+        unresolved_by_id.pop(task_id, None)
+    unresolved_by_id.update(current_failed_by_id)
+    return _transfer_feedback_result(iteration, unresolved_by_id)
 
 
 def merge_benchmark_context(
@@ -92,6 +99,28 @@ def _numbers(text: str) -> list[str]:
     import re
 
     return [match.replace(",", "") for match in re.findall(r"-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?", text)]
+
+
+def _previous_unresolved_by_id(feedback: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    if not feedback or not feedback.get("has_transfer_failures"):
+        return {}
+    failed_tasks = feedback.get("failed_tasks", [])
+    if not isinstance(failed_tasks, list):
+        return {}
+    return {
+        str(item["task_id"]): dict(item)
+        for item in failed_tasks
+        if isinstance(item, dict) and item.get("task_id")
+    }
+
+
+def _transfer_feedback_result(iteration: int, unresolved_by_id: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    failed_tasks = list(unresolved_by_id.values())
+    return {
+        "iteration": iteration,
+        "has_transfer_failures": bool(failed_tasks),
+        "failed_tasks": failed_tasks,
+    }
 
 
 def _summarize_rejection(task_id: str, result: dict[str, Any]) -> dict[str, Any]:

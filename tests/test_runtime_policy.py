@@ -1162,6 +1162,49 @@ def test_transfer_feedback_summarizes_failed_accepted_harness_probe() -> None:
     assert merged["transfer_feedback"] == feedback
 
 
+def test_transfer_feedback_persists_until_probe_success_resolves_it() -> None:
+    tasks = [
+        TaskConfig(
+            id="dev_semicolon",
+            instruction="unit: vouchers; initial: 18,750; operations: +72*31; -906",
+            expected_answer="20,076 vouchers remain.",
+            rubric="Use signed operations.",
+        )
+    ]
+    previous = build_transfer_feedback(
+        tasks,
+        baseline_results={"dev_semicolon": {"weak_answer": "20,076 vouchers remain."}},
+        probe_results={"dev_semicolon": {"weak_answer": "21,191 vouchers remain."}},
+        iteration=1,
+        accepted_harness=True,
+    )
+    persisted = build_transfer_feedback(
+        tasks,
+        baseline_results={"dev_semicolon": {"weak_answer": "20,076 vouchers remain."}},
+        probe_results={"dev_semicolon": {"weak_answer": "still wrong"}},
+        iteration=2,
+        accepted_harness=False,
+        previous_feedback=previous,
+    )
+
+    assert persisted["has_transfer_failures"] is True
+    assert persisted["failed_tasks"][0]["task_id"] == "dev_semicolon"
+    assert persisted["failed_tasks"][0]["first_seen_iteration"] == 1
+    assert persisted["failed_tasks"][0]["last_seen_iteration"] == 1
+
+    resolved = build_transfer_feedback(
+        tasks,
+        baseline_results={"dev_semicolon": {"weak_answer": "20,076 vouchers remain."}},
+        probe_results={"dev_semicolon": {"weak_answer": "20,076 vouchers remain."}},
+        iteration=3,
+        accepted_harness=True,
+        previous_feedback=persisted,
+    )
+
+    assert resolved["has_transfer_failures"] is False
+    assert resolved["failed_tasks"] == []
+
+
 def test_teacher_prompt_uses_meta_skills_not_domain_scaffolds() -> None:
     prompt = Path("prompts/teacher_diagnosis.md").read_text()
 

@@ -148,6 +148,7 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
             probe_results,
             iteration,
             accepted_harness=accepted_harness,
+            previous_feedback=transfer_feedback,
         )
 
     snapshot_harness(repo_root, output_dir / "harness_after")
