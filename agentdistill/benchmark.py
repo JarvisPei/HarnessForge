@@ -60,9 +60,9 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
         apply_patches=False,
         repo_root=repo_root,
     )
+    transfer_context = _build_transfer_context(cfg.heldout_tasks, baseline)
 
     train_summary: list[dict[str, object]] = []
-    transfer_context: dict[str, object] | None = None
     for iteration in range(1, cfg.evolve_iterations + 1):
         phase = f"evolve_train_iter_{iteration:02d}"
         train_results = await _run_phase(
@@ -92,6 +92,19 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
             }
             for task_id, result in train_results.items()
         )
+        probe_phase = f"transfer_probe_iter_{iteration:02d}"
+        probe_results = await _run_phase(
+            cfg,
+            phase=probe_phase,
+            tasks=cfg.heldout_tasks,
+            weak=weak,
+            teacher=teacher,
+            teacher_system=teacher_system,
+            output_dir=output_dir,
+            apply_patches=False,
+            repo_root=repo_root,
+        )
+        transfer_context = _build_transfer_context(cfg.heldout_tasks, probe_results)
 
     snapshot_harness(repo_root, output_dir / "harness_after")
     after = await _run_phase(
