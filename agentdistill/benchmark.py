@@ -13,6 +13,7 @@ from agentdistill.config import BenchmarkConfig, TaskConfig, load_benchmark_conf
 from agentdistill.diagnosis import parse_diagnosis, write_patch_artifact
 from agentdistill.harness import load_system_prompt
 from agentdistill.harness_snapshot import list_harness_files, snapshot_harness
+from agentdistill.metrics import build_benchmark_metrics
 from agentdistill.models import ChatClient, load_model_settings
 from agentdistill.patches import apply_patch_bundles_atomically
 from agentdistill.report import build_impact_report, evaluate_success
@@ -129,8 +130,11 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
         tasks=cfg.heldout_tasks,
         output_path=output_dir / "impact_report.json",
     )
+    harness_files_after = list_harness_files(repo_root)
+    metrics = build_benchmark_metrics(train_summary, report_rows, harness_files_after)
     (output_dir / "train_summary.json").write_text(json.dumps(train_summary, indent=2, ensure_ascii=False))
-    (output_dir / "harness_files_after.json").write_text(json.dumps(list_harness_files(repo_root), indent=2))
+    (output_dir / "harness_files_after.json").write_text(json.dumps(harness_files_after, indent=2))
+    (output_dir / "metrics.json").write_text(json.dumps(metrics, indent=2))
 
     improved = sum(1 for row in report_rows if row["improved"])
     regressed = sum(1 for row in report_rows if row["regressed"])

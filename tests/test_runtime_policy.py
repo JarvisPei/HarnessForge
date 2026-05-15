@@ -7,6 +7,7 @@ from agentdistill.config import TaskConfig
 from agentdistill.benchmark import _build_transfer_context
 from agentdistill.contracts import validate_runtime_policy_contract, validate_tool_contract
 from agentdistill.diagnosis import PatchBundle, parse_diagnosis
+from agentdistill.metrics import build_benchmark_metrics
 from agentdistill.patches import apply_patch_bundles_atomically
 from agentdistill.models import load_model_settings
 from agentdistill.run import run_task
@@ -469,3 +470,42 @@ def test_run_task_can_skip_teacher_diagnosis(tmp_path: Path) -> None:
 
     assert result["weak_answer"] == "1"
     assert "teacher_diagnosis_raw" not in result
+
+
+def test_build_benchmark_metrics_counts_patch_quality_and_transfer() -> None:
+    metrics = build_benchmark_metrics(
+        train_summary=[
+            {
+                "patch_status": "accepted",
+                "applied_patch_paths": [
+                    "/repo/harness/tools/inventory.py",
+                    "/repo/harness/tests/inventory.json",
+                    "/repo/harness/runtime_policies/force_inventory.py",
+                    "/repo/harness/guidelines/inventory.md",
+                ],
+                "contract_validation": [{"ok": True}],
+            },
+            {
+                "patch_status": "rejected",
+                "applied_patch_paths": [],
+                "rejected_patch_paths": ["/repo/harness/runtime_policies/bad.py"],
+                "contract_validation": [{"ok": False}],
+            },
+        ],
+        impact_rows=[
+            {"before_success": False, "after_success": True, "improved": True, "regressed": False},
+            {"before_success": True, "after_success": True, "improved": False, "regressed": False},
+        ],
+        harness_files_after=[
+            "harness/tools/inventory.py",
+            "harness/tests/inventory.json",
+            "harness/runtime_policies/force_inventory.py",
+        ],
+    )
+
+    assert metrics["patches"]["accepted"] == 1
+    assert metrics["patches"]["rejected"] == 1
+    assert metrics["patches"]["accepted_tool_test_policy_bundles"] == 1
+    assert metrics["patches"]["contract_failures"] == 1
+    assert metrics["transfer"]["improved"] == 1
+    assert metrics["harness_after"]["type_counts"]["tool"] == 1
