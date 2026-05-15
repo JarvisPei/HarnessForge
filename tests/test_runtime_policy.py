@@ -217,6 +217,21 @@ def test_parse_diagnosis_allows_missing_bundle_rationale() -> None:
     assert diagnosis.patch_bundles[0].rationale == ""
 
 
+def test_parse_diagnosis_allows_lean_patch_payloads() -> None:
+    diagnosis = parse_diagnosis(
+        """
+{
+  "failure_categories": ["prompt_guideline"],
+  "patch_type": "prompt_guideline",
+  "patch_bundles": []
+}
+""".strip()
+    )
+
+    assert diagnosis.diagnosis
+    assert diagnosis.harness_patch == ""
+
+
 def test_parse_diagnosis_handles_fenced_and_nested_json() -> None:
     diagnosis = parse_diagnosis(
         """

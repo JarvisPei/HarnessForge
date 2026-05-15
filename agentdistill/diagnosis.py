@@ -12,9 +12,9 @@ from agentdistill.tools import validate_python_harness_file
 
 
 class Diagnosis(BaseModel):
-    diagnosis: str
+    diagnosis: str = ""
     failure_categories: list[str] = Field(default_factory=list)
-    harness_patch: str
+    harness_patch: str = ""
     patch_type: str
     regression_test: str
     confidence: float | None = None
@@ -45,6 +45,14 @@ def parse_diagnosis(raw: str) -> Diagnosis:
     data = json.loads(payload)
     if "patch_type" not in data:
         data["patch_type"] = _infer_patch_type(data.get("failure_categories", []), data.get("harness_patch", ""))
+    if "diagnosis" not in data:
+        data["diagnosis"] = "Teacher response omitted a diagnosis."
+    elif not isinstance(data["diagnosis"], str):
+        data["diagnosis"] = json.dumps(data["diagnosis"], ensure_ascii=False)
+    if "harness_patch" not in data:
+        data["harness_patch"] = ""
+    elif not isinstance(data["harness_patch"], str):
+        data["harness_patch"] = json.dumps(data["harness_patch"], ensure_ascii=False)
     if "regression_test" not in data:
         data["regression_test"] = "Add a regression test covering the diagnosed failure mode."
     elif not isinstance(data["regression_test"], str):
