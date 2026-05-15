@@ -11,7 +11,9 @@ from agentdistill.benchmark import (
     _build_transfer_context,
     _critic_enabled,
     _initial_transfer_context,
+    _infer_repair_scope,
     _phase_kind,
+    _reject_out_of_scope_repair,
     _run_focused_repair_task,
     _run_inner_repair_attempts,
     _run_phase,
@@ -1251,6 +1253,141 @@ def test_focused_repair_task_preserves_patch_and_transfer_context() -> None:
     assert "harness/tools/inventory.py" in task.instruction
     assert "unit=tags" in task.instruction
     assert "one or more tool tests failed" in task.instruction
+
+
+def test_repair_scope_limits_tool_failures_to_tool_and_tests() -> None:
+    scope = _infer_repair_scope(
+        {
+            "has_rejections": True,
+            "rejected_bundles": [
+                {
+                    "rejected_patch_paths": ["/repo/harness/tools/inventory.py"],
+                    "failed_contracts": [
+                        {
+                            "path": "/repo/harness/tools/inventory.py",
+                            "reason": "one or more tool tests failed",
+                            "tool": "inventory",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert scope["allowed_repair_paths"] == ["harness/tests/inventory.json", "harness/tools/inventory.py"]
+    assert scope["failure_kinds"] == ["tool"]
+
+
+def test_repair_scope_limits_policy_failures_to_policy_and_tests() -> None:
+    scope = _infer_repair_scope(
+        {
+            "has_rejections": True,
+            "rejected_bundles": [
+                {
+                    "failed_contracts": [
+                        {
+                            "path": "/repo/harness/runtime_policies/force_inventory.py",
+                            "reason": "one or more policy tests failed",
+                            "policy": "force_inventory",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert scope["allowed_repair_paths"] == [
+        "harness/runtime_policies/force_inventory.py",
+        "harness/tests/force_inventory.json",
+    ]
+    assert scope["failure_kinds"] == ["runtime_policy"]
+
+
+def test_repair_scope_links_forced_tool_failures_to_policy_tool_pair() -> None:
+    scope = _infer_repair_scope(
+        {
+            "has_rejections": True,
+            "rejected_bundles": [
+                {
+                    "failed_contracts": [
+                        {
+                            "path": "/repo/harness/runtime_policies/force_inventory.py",
+                            "reason": "forced tool result does not match expected answer",
+                            "policy": "force_inventory",
+                            "policy_result": {"requires_tool": True, "tool_name": "inventory_calc", "tool_input": {"text": "..."}},
+                            "tool_result": {"ok": True, "result": 12},
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert scope["allowed_repair_paths"] == [
+        "harness/runtime_policies/force_inventory.py",
+        "harness/tests/force_inventory.json",
+        "harness/tests/inventory_calc.json",
+        "harness/tools/inventory_calc.py",
+    ]
+    assert scope["failure_kinds"] == ["runtime_policy", "tool_policy_pair"]
+
+
+def test_inner_repair_scope_rejects_out_of_scope_patch_targets(tmp_path: Path) -> None:
+    diagnosis = parse_diagnosis(
+        """
+        {
+          "diagnosis": "Repair should stay scoped.",
+          "failure_categories": ["runtime_policy"],
+          "harness_patch": "Touches the wrong file.",
+          "patch_type": "runtime_policy",
+          "regression_test": "Scope rejection should catch this.",
+          "patch_bundles": [
+            {
+              "target_path": "harness/tools/other.py",
+              "action": "create_or_replace",
+              "content": "def run(input):\\n    return {\\\"ok\\\": True}\\n"
+            }
+          ],
+          "harness_manifest": {
+            "bundle_id": "bad_scope",
+            "intent": "bad out-of-scope repair",
+            "allowed_paths": ["harness/tools/other.py"],
+            "artifacts": [{"path": "harness/tools/other.py", "type": "tool", "purpose": "wrong target"}],
+            "contracts": ["scope gate rejects out of scope"]
+          }
+        }
+        """
+    )
+
+    result = _reject_out_of_scope_repair(
+        diagnosis,
+        {"allowed_repair_paths": ["harness/runtime_policies/force_inventory.py", "harness/tests/force_inventory.json"]},
+        tmp_path,
+    )
+
+    assert result is not None
+    assert result["patch_status"] == "rejected"
+    assert result["rejection_reason"] == "inner repair patch targets outside allowed repair scope"
+    assert result["contract_validation"][0]["out_of_scope_paths"] == ["harness/tools/other.py"]
+    assert "harness/runtime_policies/force_inventory.py" in result["contract_validation"][0]["allowed_repair_paths"]
+
+
+def test_focused_repair_task_includes_allowed_repair_paths() -> None:
+    patch_feedback = {
+        "has_rejections": True,
+        "rejected_bundles": [
+            {
+                "bundle_id": "force_inventory",
+                "failed_contracts": [{"policy": "force_inventory", "reason": "one or more policy tests failed"}],
+            }
+        ],
+    }
+    repair_scope = _infer_repair_scope(patch_feedback)
+    task = _build_focused_repair_task(patch_feedback, None, repair_scope)
+
+    assert "allowed_repair_paths" in task.instruction
+    assert "harness/runtime_policies/force_inventory.py" in task.instruction
+    assert "harness/tests/force_inventory.json" in task.instruction
 
 
 def test_focused_repair_mode_uses_single_synthetic_task_after_rejection() -> None:

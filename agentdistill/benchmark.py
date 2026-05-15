@@ -4,6 +4,7 @@ import asyncio
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import typer
 from dotenv import load_dotenv
@@ -438,6 +439,190 @@ async def _apply_diagnosis_with_optional_audit(
     return patch_result
 
 
+def _infer_repair_scope(patch_feedback: dict[str, Any]) -> dict[str, Any]:
+    allowed_paths: set[str] = set()
+    failure_kinds: set[str] = set()
+    rejected_paths: list[str] = []
+
+    for bundle in _as_dicts(patch_feedback.get("rejected_bundles")):
+        for path in _as_strings(bundle.get("rejected_patch_paths")):
+            normalized = _normalize_harness_path(path)
+            if normalized is not None:
+                rejected_paths.append(normalized)
+        for contract in _as_dicts(bundle.get("failed_contracts")):
+            contract_allowed, contract_kinds = _scope_from_failed_contract(contract)
+            allowed_paths.update(contract_allowed)
+            failure_kinds.update(contract_kinds)
+
+    if not allowed_paths:
+        allowed_paths.update(rejected_paths)
+        if rejected_paths:
+            failure_kinds.add("fallback_rejected_paths")
+
+    return {
+        "allowed_repair_paths": sorted(allowed_paths),
+        "failure_kinds": sorted(failure_kinds),
+        "source_rejected_paths": sorted(set(rejected_paths)),
+        "scope_reason": _repair_scope_reason(failure_kinds),
+    }
+
+
+def _scope_from_failed_contract(contract: dict[str, Any]) -> tuple[set[str], set[str]]:
+    allowed_paths: set[str] = set()
+    failure_kinds: set[str] = set()
+
+    path = _normalize_harness_path(contract.get("path"))
+    if path is not None:
+        kind, stem = _artifact_kind_and_stem(path)
+        if kind == "tool":
+            _add_tool_scope(allowed_paths, stem)
+            failure_kinds.add("tool")
+        elif kind == "runtime_policy":
+            _add_policy_scope(allowed_paths, stem)
+            failure_kinds.add("runtime_policy")
+        elif kind == "test":
+            allowed_paths.add(path)
+
+    tool_name = contract.get("tool")
+    if isinstance(tool_name, str) and tool_name:
+        _add_tool_scope(allowed_paths, tool_name)
+        failure_kinds.add("tool")
+
+    policy_name = contract.get("policy")
+    if isinstance(policy_name, str) and policy_name:
+        _add_policy_scope(allowed_paths, policy_name)
+        failure_kinds.add("runtime_policy")
+
+    linked_tools = sorted(set(_extract_nested_tool_names(contract)))
+    is_forced_tool_failure = bool(contract.get("policy_result")) and (
+        bool(contract.get("tool_result")) or "forced tool" in str(contract.get("reason", "")).lower()
+    )
+    if is_forced_tool_failure and linked_tools:
+        failure_kinds.add("tool_policy_pair")
+        for linked_tool in linked_tools:
+            _add_tool_scope(allowed_paths, linked_tool)
+
+    return allowed_paths, failure_kinds
+
+
+def _reject_out_of_scope_repair(
+    diagnosis: Diagnosis,
+    repair_scope: dict[str, Any] | None,
+    repo_root: Path,
+) -> dict[str, Any] | None:
+    if not repair_scope:
+        return None
+    allowed_paths = set(_as_strings(repair_scope.get("allowed_repair_paths")))
+    if not allowed_paths:
+        return None
+
+    target_paths = []
+    out_of_scope = []
+    for bundle in diagnosis.patch_bundles:
+        normalized = _normalize_harness_path(bundle.target_path)
+        target = normalized or bundle.target_path
+        target_paths.append(target)
+        if normalized not in allowed_paths:
+            out_of_scope.append(target)
+
+    if not out_of_scope:
+        return None
+
+    return {
+        "patch_status": "rejected",
+        "applied_patch_paths": [],
+        "rejected_patch_paths": [_absolute_harness_path(repo_root, path) for path in target_paths],
+        "contract_validation": [
+            {
+                "ok": False,
+                "reason": "inner repair patch targets outside allowed repair scope",
+                "allowed_repair_paths": sorted(allowed_paths),
+                "out_of_scope_paths": out_of_scope,
+            }
+        ],
+        "rejection_reason": "inner repair patch targets outside allowed repair scope",
+        "harness_manifest": diagnosis.harness_manifest.model_dump() if diagnosis.harness_manifest is not None else None,
+    }
+
+
+def _add_tool_scope(paths: set[str], tool_name: str) -> None:
+    paths.add(f"harness/tools/{tool_name}.py")
+    paths.add(f"harness/tests/{tool_name}.json")
+
+
+def _add_policy_scope(paths: set[str], policy_name: str) -> None:
+    paths.add(f"harness/runtime_policies/{policy_name}.py")
+    paths.add(f"harness/tests/{policy_name}.json")
+
+
+def _artifact_kind_and_stem(path: str) -> tuple[str | None, str | None]:
+    parts = Path(path).parts
+    if len(parts) != 3 or parts[0] != "harness":
+        return None, None
+    stem = Path(parts[2]).stem
+    if parts[1] == "tools" and parts[2].endswith(".py"):
+        return "tool", stem
+    if parts[1] == "runtime_policies" and parts[2].endswith(".py"):
+        return "runtime_policy", stem
+    if parts[1] == "tests" and parts[2].endswith(".json"):
+        return "test", stem
+    return None, None
+
+
+def _normalize_harness_path(path: Any) -> str | None:
+    if not isinstance(path, str) or not path:
+        return None
+    parts = Path(path).parts
+    if "harness" not in parts:
+        return None
+    harness_index = parts.index("harness")
+    normalized = "/".join(parts[harness_index:])
+    if normalized.startswith("harness/"):
+        return normalized
+    return None
+
+
+def _absolute_harness_path(repo_root: Path, path: str) -> str:
+    normalized = _normalize_harness_path(path)
+    if normalized is None:
+        return path
+    return str((repo_root / normalized).resolve())
+
+
+def _extract_nested_tool_names(value: Any) -> list[str]:
+    names: list[str] = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key == "tool_name" and isinstance(item, str) and item:
+                names.append(item)
+            else:
+                names.extend(_extract_nested_tool_names(item))
+    elif isinstance(value, list):
+        for item in value:
+            names.extend(_extract_nested_tool_names(item))
+    return names
+
+
+def _as_dicts(value: Any) -> list[dict[str, Any]]:
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def _as_strings(value: Any) -> list[str]:
+    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+
+
+def _repair_scope_reason(failure_kinds: set[str]) -> str:
+    if "tool_policy_pair" in failure_kinds:
+        return "forced tool failures may require repairing only the linked runtime policy, tool, and their tests"
+    if failure_kinds == {"tool"}:
+        return "tool contract failures should repair only the tool and matching tests"
+    if failure_kinds == {"runtime_policy"}:
+        return "runtime policy contract failures should repair only the policy and matching tests"
+    if "fallback_rejected_paths" in failure_kinds:
+        return "no structured failing artifact was available, so repair is limited to rejected patch paths"
+    return "repair is limited to artifacts directly named by failed contracts"
+
+
 async def _run_inner_repair_attempts(
     cfg: BenchmarkConfig,
     task: TaskConfig,
@@ -460,24 +645,32 @@ async def _run_inner_repair_attempts(
             break
         repair_context = dict(iteration_context)
         repair_context["patch_feedback"] = patch_feedback
+        repair_context["repair_scope"] = _infer_repair_scope(patch_feedback)
         repair_context["repair_mode"] = "focused"
-        repair_task = _build_focused_repair_task(patch_feedback, repair_context.get("transfer_feedback"))
+        repair_task = _build_focused_repair_task(
+            patch_feedback,
+            repair_context.get("transfer_feedback"),
+            repair_context.get("repair_scope") if isinstance(repair_context.get("repair_scope"), dict) else None,
+        )
         repair_result = await _run_focused_repair_task(repair_task, teacher, teacher_system, weak_system, repair_context)
         repair_result["inner_repair_attempt"] = attempt_index
         repair_result["context_patch_feedback"] = patch_feedback
+        repair_result["context_repair_scope"] = repair_context["repair_scope"]
         if repair_context.get("transfer_feedback"):
             repair_result["context_transfer_feedback"] = repair_context["transfer_feedback"]
         diagnosis = parse_diagnosis(str(repair_result["teacher_diagnosis_raw"]))
         repair_result["teacher_diagnosis"] = diagnosis.model_dump()
         if diagnosis.patch_bundles and diagnosis.failure_categories:
-            patch_result = await _apply_diagnosis_with_optional_audit(
-                cfg,
-                critic,
-                critic_system,
-                repair_task,
-                diagnosis,
-                repo_root,
-            )
+            patch_result = _reject_out_of_scope_repair(diagnosis, repair_context["repair_scope"], repo_root)
+            if patch_result is None:
+                patch_result = await _apply_diagnosis_with_optional_audit(
+                    cfg,
+                    critic,
+                    critic_system,
+                    repair_task,
+                    diagnosis,
+                    repo_root,
+                )
             repair_result.update(patch_result)
         else:
             repair_result["patch_status"] = "skipped"
@@ -580,6 +773,7 @@ def _tasks_for_evolve_iteration(
 def _build_focused_repair_task(
     patch_feedback: dict[str, object],
     transfer_feedback: dict[str, object] | None,
+    repair_scope: dict[str, object] | None = None,
 ) -> TaskConfig:
     rejected = patch_feedback.get("rejected_bundles", [])
     first_rejected = rejected[0] if isinstance(rejected, list) and rejected else {}
@@ -596,6 +790,7 @@ def _build_focused_repair_task(
         "rejected_bundle_id": bundle_id,
         "rejected_patch_paths": failed_paths,
         "failed_contracts": failed_contracts,
+        "repair_scope": repair_scope or {},
         "representative_transfer_failure": first_transfer,
     }
     return TaskConfig(
