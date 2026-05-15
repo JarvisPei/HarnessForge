@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from agentdistill.config import TaskConfig
+from agentdistill.config import TaskConfig, load_benchmark_config
 from agentdistill.benchmark import _build_transfer_context
-from agentdistill.contracts import validate_runtime_policy_contract, validate_tool_contract
+from agentdistill.contracts import validate_runtime_policy_contract, validate_runtime_policy_tests, validate_tool_contract
 from agentdistill.diagnosis import PatchBundle, parse_diagnosis
 from agentdistill.metrics import build_benchmark_metrics
 from agentdistill.patches import apply_patch_bundles_atomically
@@ -148,6 +148,63 @@ def evaluate(input: dict) -> dict:
 
     assert result["ok"] is False
     assert result["reason"] == "forced tool result does not match expected answer"
+
+
+def test_runtime_policy_tests_catch_comma_number_parse_errors(tmp_path: Path) -> None:
+    harness = tmp_path / "harness"
+    tools_dir = harness / "tools"
+    policies_dir = harness / "runtime_policies"
+    tests_dir = harness / "tests"
+    tools_dir.mkdir(parents=True)
+    policies_dir.mkdir(parents=True)
+    tests_dir.mkdir(parents=True)
+
+    (tools_dir / "inventory_arithmetic.py").write_text(
+        """
+def run(input: dict) -> dict:
+    total = input["start"] + sum(input["additions"]) - sum(input["subtractions"])
+    return {"ok": True, "total": total}
+""".strip()
+    )
+    policy_path = policies_dir / "force_inventory.py"
+    policy_path.write_text(
+        """
+def evaluate(input: dict) -> dict:
+    return {
+        "requires_tool": True,
+        "tool_name": "inventory_arithmetic",
+        "tool_input": {"start": 2050, "additions": [720, 288], "subtractions": [138, 1]},
+        "reason": "bad comma parse"
+    }
+""".strip()
+    )
+    (tests_dir / "force_inventory.json").write_text(
+        """
+{
+  "policy": "force_inventory",
+  "cases": [
+    {
+      "input": {
+        "task_instruction": "A store sold 1,107 tags.",
+        "available_tools": ["inventory_arithmetic"],
+        "expected_answer": "1,813 tags remain."
+      },
+      "expected": {
+        "requires_tool": true,
+        "tool_name": "inventory_arithmetic",
+        "tool_input": {"subtractions": [138, 1107]}
+      },
+      "expected_tool_result": {"ok": true, "total": 1813}
+    }
+  ]
+}
+""".strip()
+    )
+
+    result = validate_runtime_policy_tests(tmp_path, policy_path)
+    assert result["ok"] is False
+    assert result["reason"] == "one or more policy tests failed"
+    assert result["failures"][0]["reason"] == "value mismatch for key: tool_input"
 
 
 def test_tool_contract_validation_runs_json_tests(tmp_path: Path) -> None:
@@ -365,6 +422,31 @@ def evaluate(input: dict) -> dict:
 """.strip(),
                 rationale="Forces exact arithmetic.",
             ),
+            PatchBundle(
+                target_path="harness/tests/force_adder.json",
+                action="create_or_replace",
+                content="""
+{
+  "policy": "force_adder",
+  "cases": [
+    {
+      "input": {
+        "task_instruction": "add 2 and 3",
+        "available_tools": ["adder"],
+        "expected_answer": "5"
+      },
+      "expected": {
+        "requires_tool": true,
+        "tool_name": "adder",
+        "tool_input": {"a": 2, "b": 3}
+      },
+      "expected_tool_result": {"ok": true, "total": 5}
+    }
+  ]
+}
+""".strip(),
+                rationale="Covers the runtime policy contract.",
+            ),
         ],
         task,
         _manifest_for(
@@ -372,12 +454,13 @@ def evaluate(input: dict) -> dict:
                 "harness/tools/adder.py",
                 "harness/tests/adder.json",
                 "harness/runtime_policies/force_adder.py",
+                "harness/tests/force_adder.json",
             ]
         ),
     )
 
     assert result["patch_status"] == "accepted"
-    assert len(result["applied_patch_paths"]) == 3
+    assert len(result["applied_patch_paths"]) == 4
     assert all(contract["ok"] is True for contract in result["contract_validation"])
     assert (tmp_path / "harness" / "tools" / "adder.py").exists()
     assert (tmp_path / "outputs" / "harness_workspaces" / "adder_bundle" / "harness" / "tools" / "adder.py").exists()
@@ -408,6 +491,53 @@ def run(input: dict) -> dict:
     assert "code harness bundles must include harness_manifest" in result["contract_validation"][0]["reason"]
     assert result["rejected_patch_paths"] == [str(tmp_path / "harness" / "tools" / "adder.py")]
     assert not (tmp_path / "harness" / "tools" / "adder.py").exists()
+
+
+def test_runtime_policy_patch_requires_matching_policy_tests(tmp_path: Path) -> None:
+    _make_harness_dirs(tmp_path)
+    task = TaskConfig(id="t", instruction="add 2 and 3", expected_answer="5")
+
+    result = apply_patch_bundles_atomically(
+        tmp_path,
+        [
+            PatchBundle(
+                target_path="harness/tools/adder.py",
+                action="create_or_replace",
+                content="""
+def run(input: dict) -> dict:
+    return {"ok": True, "total": input["a"] + input["b"]}
+""".strip(),
+                rationale="Deterministic addition.",
+            ),
+            PatchBundle(
+                target_path="harness/tests/adder.json",
+                action="create_or_replace",
+                content='{"tool":"adder","cases":[{"input":{"a":2,"b":3},"expected":{"ok":true,"total":5}}]}',
+                rationale="Tool tests.",
+            ),
+            PatchBundle(
+                target_path="harness/runtime_policies/force_adder.py",
+                action="create_or_replace",
+                content="""
+def evaluate(input: dict) -> dict:
+    return {"requires_tool": True, "tool_name": "adder", "tool_input": {"a": 2, "b": 3}}
+""".strip(),
+                rationale="Force tool use.",
+            ),
+        ],
+        task,
+        _manifest_for(
+            [
+                "harness/tools/adder.py",
+                "harness/tests/adder.json",
+                "harness/runtime_policies/force_adder.py",
+            ]
+        ),
+    )
+
+    assert result["patch_status"] == "rejected"
+    assert any("no matching JSON test file found" in item.get("reason", "") for item in result["contract_validation"])
+    assert not (tmp_path / "harness" / "runtime_policies" / "force_adder.py").exists()
 
 
 def test_atomic_patch_bundles_roll_back_group_on_failed_tool_tests(tmp_path: Path) -> None:
@@ -518,6 +648,59 @@ def test_build_transfer_context_uses_heldout_probe_results() -> None:
     assert context["heldout_probe"][1]["success"] is False
 
 
+def test_benchmark_config_splits_dev_and_blind_tasks(tmp_path: Path) -> None:
+    config_path = tmp_path / "configs" / "bench.yaml"
+    config_path.parent.mkdir()
+    config_path.write_text(
+        """
+name: split_benchmark
+output_dir: outputs/split
+weak: {role: weak}
+teacher: {role: teacher}
+harness:
+  system_prompt_path: prompts/weak_system.md
+train_tasks:
+  - id: train
+    instruction: train
+dev_probe_tasks:
+  - id: dev
+    instruction: dev
+blind_test_tasks:
+  - id: blind
+    instruction: blind
+""".strip()
+    )
+
+    cfg = load_benchmark_config(config_path)
+    assert [task.id for task in cfg.dev_probe_tasks] == ["dev"]
+    assert [task.id for task in cfg.blind_test_tasks] == ["blind"]
+
+
+def test_benchmark_config_keeps_heldout_fallback(tmp_path: Path) -> None:
+    config_path = tmp_path / "configs" / "bench.yaml"
+    config_path.parent.mkdir()
+    config_path.write_text(
+        """
+name: legacy_benchmark
+output_dir: outputs/legacy
+weak: {role: weak}
+teacher: {role: teacher}
+harness:
+  system_prompt_path: prompts/weak_system.md
+train_tasks:
+  - id: train
+    instruction: train
+heldout_tasks:
+  - id: heldout
+    instruction: heldout
+""".strip()
+    )
+
+    cfg = load_benchmark_config(config_path)
+    assert [task.id for task in cfg.dev_probe_tasks] == ["heldout"]
+    assert [task.id for task in cfg.blind_test_tasks] == ["heldout"]
+
+
 def test_run_task_can_skip_teacher_diagnosis(tmp_path: Path) -> None:
     tools_dir = tmp_path / "tools"
     policies_dir = tmp_path / "runtime_policies"
@@ -593,4 +776,18 @@ def test_build_benchmark_metrics_counts_patch_quality_and_transfer() -> None:
     assert metrics["patches"]["accepted_code_manifest_bundles"] == 1
     assert metrics["patches"]["contract_failures"] == 1
     assert metrics["transfer"]["improved"] == 1
+    assert metrics["dev_transfer"]["improved"] == 1
+    assert metrics["blind_transfer"]["improved"] == 1
     assert metrics["harness_after"]["type_counts"]["tool"] == 1
+
+
+def test_build_benchmark_metrics_separates_blind_transfer() -> None:
+    metrics = build_benchmark_metrics(
+        train_summary=[],
+        impact_rows=[{"before_success": False, "after_success": True, "improved": True, "regressed": False}],
+        harness_files_after=[],
+        blind_impact_rows=[{"before_success": False, "after_success": False, "improved": False, "regressed": False}],
+    )
+
+    assert metrics["dev_transfer"]["improved"] == 1
+    assert metrics["blind_transfer"]["improved"] == 0

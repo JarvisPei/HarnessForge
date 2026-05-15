@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from agentdistill.config import TaskConfig
-from agentdistill.tool_validation import validate_tool_tests
+from agentdistill.tool_validation import load_json_test_file, validate_tool_tests
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
 
 
@@ -56,6 +56,69 @@ def validate_runtime_policy_contract(
     return {"ok": True, "reason": "forced tool call succeeded", "policy_result": forced, "tool_result": tool_result}
 
 
+def validate_runtime_policy_tests(repo_root: Path, policy_path: Path) -> dict[str, Any]:
+    policy_name = policy_path.stem
+    tests_path, data, error = load_json_test_file(repo_root, policy_name)
+    if error is not None:
+        return {**error, "policy": policy_name}
+    if not isinstance(data, dict) or data.get("policy") != policy_name:
+        return {"ok": False, "reason": "test file must be an object with matching policy name", "policy": policy_name}
+    cases = data.get("cases", [])
+    if not isinstance(cases, list) or not cases:
+        return {"ok": False, "reason": "policy test file must contain a non-empty cases list", "policy": policy_name}
+
+    tools = ToolRegistry(repo_root / "harness" / "tools")
+    policies = RuntimePolicyRegistry(policy_path.parent)
+    failures = []
+    for idx, case in enumerate(cases):
+        if not isinstance(case, dict):
+            failures.append({"case_index": idx, "reason": "case must be an object"})
+            continue
+        payload = case.get("input", {})
+        expected = case.get("expected", {})
+        if not isinstance(payload, dict) or not isinstance(expected, dict):
+            failures.append({"case_index": idx, "reason": "case must have input and expected objects"})
+            continue
+        policy_payload = {
+            "task_instruction": payload.get("task_instruction", ""),
+            "initial_answer": payload.get("initial_answer", ""),
+            "tool_call": payload.get("tool_call"),
+            "available_tools": payload.get("available_tools", tools.names),
+            "expected_answer": payload.get("expected_answer"),
+            "rubric": payload.get("rubric"),
+        }
+        results = [result for result in policies.evaluate(policy_payload) if result.get("policy") == policy_name]
+        actual = results[0] if results else {"policy": policy_name, "requires_tool": False}
+        ok, mismatch_reason = _matches_expected(expected, actual)
+        tool_result = None
+        expected_tool_result = case.get("expected_tool_result")
+        if ok and expected_tool_result is not None:
+            if not isinstance(expected_tool_result, dict):
+                ok = False
+                mismatch_reason = "expected_tool_result must be an object"
+            elif actual.get("requires_tool") is not True or not isinstance(actual.get("tool_name"), str) or not isinstance(actual.get("tool_input"), dict):
+                ok = False
+                mismatch_reason = "policy did not produce a valid forced tool call"
+            else:
+                tool_result = tools.call(actual["tool_name"], actual["tool_input"])
+                ok, mismatch_reason = _matches_expected(expected_tool_result, tool_result)
+        if not ok:
+            failures.append(
+                {
+                    "case_index": idx,
+                    "reason": mismatch_reason,
+                    "input": payload,
+                    "expected": expected,
+                    "actual": actual,
+                    "tool_result": tool_result,
+                }
+            )
+
+    if failures:
+        return {"ok": False, "reason": "one or more policy tests failed", "policy": policy_name, "failures": failures}
+    return {"ok": True, "reason": "all policy tests passed", "policy": policy_name, "tests_path": str(tests_path), "num_cases": len(cases)}
+
+
 def validate_tool_contract(repo_root: Path, tool_path: Path) -> dict[str, Any]:
     tool_name = tool_path.stem
     result = validate_tool_tests(repo_root, tool_name)
@@ -81,3 +144,24 @@ def _tool_result_matches_expected(expected_answer: str, tool_result: dict[str, A
 
 def _numbers(text: str) -> list[str]:
     return [match.replace(",", "") for match in re.findall(r"-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?", text)]
+
+
+def _matches_expected(expected: dict[str, Any], actual: dict[str, Any]) -> tuple[bool, str]:
+    for key, exp_value in expected.items():
+        if key not in actual:
+            return False, f"missing key: {key}"
+        if not _subset_match(exp_value, actual[key]):
+            return False, f"value mismatch for key: {key}"
+    return True, "ok"
+
+
+def _subset_match(expected: Any, actual: Any) -> bool:
+    if isinstance(expected, dict):
+        if not isinstance(actual, dict):
+            return False
+        return all(key in actual and _subset_match(value, actual[key]) for key, value in expected.items())
+    if isinstance(expected, list):
+        if not isinstance(actual, list) or len(expected) > len(actual):
+            return False
+        return all(_subset_match(exp_item, actual[idx]) for idx, exp_item in enumerate(expected))
+    return expected == actual

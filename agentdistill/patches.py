@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from agentdistill.config import TaskConfig
-from agentdistill.contracts import validate_runtime_policy_contract, validate_tool_contract
+from agentdistill.contracts import validate_runtime_policy_contract, validate_runtime_policy_tests, validate_tool_contract
 from agentdistill.diagnosis import PatchBundle, _safe_harness_path, apply_patch_bundle
 from agentdistill.manifest import HarnessManifest, validate_harness_manifest
 
@@ -94,6 +94,7 @@ def _validate_patch_group(repo_root: Path, task: TaskConfig, paths: list[Path]) 
             results.append({"path": str(path), **validate_tool_contract(repo_root, path)})
         if path.is_relative_to(policies_root):
             results.append({"path": str(path), **validate_runtime_policy_contract(repo_root, task, path)})
+            results.append({"path": str(path), **validate_runtime_policy_tests(repo_root, path)})
     return results
 
 

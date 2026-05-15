@@ -18,6 +18,7 @@ def build_benchmark_metrics(
     train_summary: list[dict[str, Any]],
     impact_rows: list[dict[str, Any]],
     harness_files_after: list[str],
+    blind_impact_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     accepted = [row for row in train_summary if row.get("patch_status") == "accepted"]
     rejected = [row for row in train_summary if row.get("patch_status") == "rejected"]
@@ -62,13 +63,9 @@ def build_benchmark_metrics(
             ),
             "contract_failures": _count_contract_failures(train_summary),
         },
-        "transfer": {
-            "heldout_tasks": len(impact_rows),
-            "before_success": sum(1 for row in impact_rows if row.get("before_success") is True),
-            "after_success": sum(1 for row in impact_rows if row.get("after_success") is True),
-            "improved": sum(1 for row in impact_rows if row.get("improved") is True),
-            "regressed": sum(1 for row in impact_rows if row.get("regressed") is True),
-        },
+        "transfer": _build_transfer_metrics(impact_rows),
+        "dev_transfer": _build_transfer_metrics(impact_rows),
+        "blind_transfer": _build_transfer_metrics(blind_impact_rows or impact_rows),
         "harness_after": {
             "files": len(harness_files_after),
             "type_counts": harness_type_counts,
@@ -122,3 +119,13 @@ def _manifest_has_code_artifact(manifest: dict[str, Any]) -> bool:
         isinstance(artifact, dict) and artifact.get("type") in {"tool", "runtime_policy", "test"}
         for artifact in artifacts
     )
+
+
+def _build_transfer_metrics(rows: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "heldout_tasks": len(rows),
+        "before_success": sum(1 for row in rows if row.get("before_success") is True),
+        "after_success": sum(1 for row in rows if row.get("after_success") is True),
+        "improved": sum(1 for row in rows if row.get("improved") is True),
+        "regressed": sum(1 for row in rows if row.get("regressed") is True),
+    }

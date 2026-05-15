@@ -50,10 +50,10 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
     console.print(f"[bold]Run:[/bold] {output_dir}")
 
     snapshot_harness(repo_root, output_dir / "harness_before")
-    baseline = await _run_phase(
+    dev_baseline = await _run_phase(
         cfg,
-        phase="baseline_heldout",
-        tasks=cfg.heldout_tasks,
+        phase="baseline_dev_probe",
+        tasks=cfg.dev_probe_tasks,
         weak=weak,
         teacher=teacher,
         teacher_system=teacher_system,
@@ -62,7 +62,19 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
         repo_root=repo_root,
         request_teacher_diagnosis=False,
     )
-    transfer_context = _build_transfer_context(cfg.heldout_tasks, baseline)
+    blind_baseline = await _run_phase(
+        cfg,
+        phase="baseline_blind_test",
+        tasks=cfg.blind_test_tasks,
+        weak=weak,
+        teacher=teacher,
+        teacher_system=teacher_system,
+        output_dir=output_dir,
+        apply_patches=False,
+        repo_root=repo_root,
+        request_teacher_diagnosis=False,
+    )
+    transfer_context = _build_transfer_context(cfg.dev_probe_tasks, dev_baseline)
 
     train_summary: list[dict[str, object]] = []
     for iteration in range(1, cfg.evolve_iterations + 1):
@@ -99,7 +111,7 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
         probe_results = await _run_phase(
             cfg,
             phase=probe_phase,
-            tasks=cfg.heldout_tasks,
+            tasks=cfg.dev_probe_tasks,
             weak=weak,
             teacher=teacher,
             teacher_system=teacher_system,
@@ -108,13 +120,13 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
             repo_root=repo_root,
             request_teacher_diagnosis=False,
         )
-        transfer_context = _build_transfer_context(cfg.heldout_tasks, probe_results)
+        transfer_context = _build_transfer_context(cfg.dev_probe_tasks, probe_results)
 
     snapshot_harness(repo_root, output_dir / "harness_after")
-    after = await _run_phase(
+    dev_after = await _run_phase(
         cfg,
-        phase="after_heldout",
-        tasks=cfg.heldout_tasks,
+        phase="after_dev_probe",
+        tasks=cfg.dev_probe_tasks,
         weak=weak,
         teacher=teacher,
         teacher_system=teacher_system,
@@ -123,24 +135,45 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
         repo_root=repo_root,
         request_teacher_diagnosis=False,
     )
-    transfer_context = _build_transfer_context(cfg.heldout_tasks, after)
-
-    report_rows = build_impact_report(
-        baseline=baseline,
-        after=after,
-        tasks=cfg.heldout_tasks,
-        output_path=output_dir / "impact_report.json",
+    blind_after = await _run_phase(
+        cfg,
+        phase="after_blind_test",
+        tasks=cfg.blind_test_tasks,
+        weak=weak,
+        teacher=teacher,
+        teacher_system=teacher_system,
+        output_dir=output_dir,
+        apply_patches=False,
+        repo_root=repo_root,
+        request_teacher_diagnosis=False,
     )
+
+    dev_report_rows = build_impact_report(
+        baseline=dev_baseline,
+        after=dev_after,
+        tasks=cfg.dev_probe_tasks,
+        output_path=output_dir / "dev_impact_report.json",
+    )
+    blind_report_rows = build_impact_report(
+        baseline=blind_baseline,
+        after=blind_after,
+        tasks=cfg.blind_test_tasks,
+        output_path=output_dir / "blind_impact_report.json",
+    )
+    (output_dir / "impact_report.json").write_text(json.dumps(blind_report_rows, indent=2, ensure_ascii=False), encoding="utf-8")
     harness_files_after = list_harness_files(repo_root)
-    metrics = build_benchmark_metrics(train_summary, report_rows, harness_files_after)
+    metrics = build_benchmark_metrics(train_summary, dev_report_rows, harness_files_after, blind_impact_rows=blind_report_rows)
     (output_dir / "train_summary.json").write_text(json.dumps(train_summary, indent=2, ensure_ascii=False))
     (output_dir / "harness_files_after.json").write_text(json.dumps(harness_files_after, indent=2))
     (output_dir / "metrics.json").write_text(json.dumps(metrics, indent=2))
 
-    improved = sum(1 for row in report_rows if row["improved"])
-    regressed = sum(1 for row in report_rows if row["regressed"])
-    console.print(f"[bold]Impact:[/bold] improved={improved}, regressed={regressed}")
-    console.print(f"[bold]Report:[/bold] {output_dir / 'impact_report.json'}")
+    dev_improved = sum(1 for row in dev_report_rows if row["improved"])
+    dev_regressed = sum(1 for row in dev_report_rows if row["regressed"])
+    blind_improved = sum(1 for row in blind_report_rows if row["improved"])
+    blind_regressed = sum(1 for row in blind_report_rows if row["regressed"])
+    console.print(f"[bold]Dev impact:[/bold] improved={dev_improved}, regressed={dev_regressed}")
+    console.print(f"[bold]Blind impact:[/bold] improved={blind_improved}, regressed={blind_regressed}")
+    console.print(f"[bold]Blind report:[/bold] {output_dir / 'blind_impact_report.json'}")
 
 
 async def _run_phase(

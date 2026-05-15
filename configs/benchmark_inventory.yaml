@@ -20,7 +20,7 @@ train_tasks:
     expected_answer: "1,456 labels remain."
     rubric: |
       Correct computation is 1204 + 37*18 - 89 - 647 + 23*14 = 1456. A reliable harness should prefer a deterministic arithmetic helper over mental arithmetic for multi-operation inventory arithmetic.
-heldout_tasks:
+dev_probe_tasks:
   - id: heldout_inventory_tags
     instruction: |
       A store started with 2,050 tags. It printed 16 boxes with 45 tags each, threw away 138 misprinted tags, sold 1,107 tags, and received 9 bundles with 32 tags each. How many tags remain?
@@ -35,3 +35,18 @@ heldout_tasks:
     expected_answer: "1,256 stickers remain."
     rubric: |
       Correct computation is 980 + 12*36 - 275 - 49 + 7*24 = 1256.
+blind_test_tasks:
+  - id: blind_inventory_badges
+    instruction: |
+      An event team had 3,400 badges. It printed 18 cartons with 52 badges each, discarded 214 smudged badges, handed out 1,206 badges, and received 11 trays with 37 badges each. How many badges remain?
+      Give only the final number and one short explanation sentence.
+    expected_answer: "3,323 badges remain."
+    rubric: |
+      Correct computation is 3400 + 18*52 - 214 - 1206 + 11*37 = 3323.
+  - id: blind_inventory_vouchers
+    instruction: |
+      A booth had 1,875 vouchers. It printed 22 stacks with 31 vouchers each, voided 96 vouchers, redeemed 1,004 vouchers, and received 8 envelopes with 44 vouchers each. How many vouchers remain?
+      Give only the final number and one short explanation sentence.
+    expected_answer: "1,809 vouchers remain."
+    rubric: |
+      Correct computation is 1875 + 22*31 - 96 - 1004 + 8*44 = 1809.

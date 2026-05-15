@@ -8,14 +8,11 @@ from agentdistill.tools import ToolRegistry
 
 
 def validate_tool_tests(repo_root: Path, tool_name: str) -> dict[str, Any]:
-    tests_path = repo_root / "harness" / "tests" / f"{tool_name}.json"
-    if not tests_path.exists():
-        return {"ok": False, "reason": "no matching tool test file found", "tool": tool_name, "expected_tests_path": str(tests_path)}
-
-    try:
-        data = json.loads(tests_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        return {"ok": False, "reason": f"invalid JSON test file: {exc}"}
+    tests_path, data, error = load_json_test_file(repo_root, tool_name)
+    if error is not None:
+        if error["reason"] == "no matching JSON test file found":
+            error = {**error, "reason": "no matching tool test file found", "tool": tool_name}
+        return error
 
     if not isinstance(data, dict) or data.get("tool") != tool_name:
         return {"ok": False, "reason": "test file must be an object with matching tool name"}
@@ -51,6 +48,19 @@ def validate_tool_tests(repo_root: Path, tool_name: str) -> dict[str, Any]:
     if failures:
         return {"ok": False, "reason": "one or more tool tests failed", "failures": failures}
     return {"ok": True, "reason": "all tool tests passed", "num_cases": len(cases)}
+
+
+def load_json_test_file(repo_root: Path, name: str) -> tuple[Path, dict[str, Any] | None, dict[str, Any] | None]:
+    tests_path = repo_root / "harness" / "tests" / f"{name}.json"
+    if not tests_path.exists():
+        return tests_path, None, {"ok": False, "reason": "no matching JSON test file found", "expected_tests_path": str(tests_path)}
+    try:
+        data = json.loads(tests_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return tests_path, None, {"ok": False, "reason": f"invalid JSON test file: {exc}"}
+    if not isinstance(data, dict):
+        return tests_path, None, {"ok": False, "reason": "test file must be a JSON object", "tests_path": str(tests_path)}
+    return tests_path, data, None
 
 
 def _matches_expected(expected: dict[str, Any], actual: dict[str, Any]) -> tuple[bool, str]:
