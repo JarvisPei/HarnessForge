@@ -6,6 +6,7 @@ from agentdistill.config import TaskConfig
 from agentdistill.contracts import validate_runtime_policy_contract, validate_tool_contract
 from agentdistill.diagnosis import PatchBundle, parse_diagnosis
 from agentdistill.patches import apply_patch_bundles_atomically
+from agentdistill.models import load_model_settings
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
 
 
@@ -292,3 +293,15 @@ def run(input: dict) -> dict:
 def _make_harness_dirs(root: Path) -> None:
     for name in ["guidelines", "skills", "validators", "tools", "runtime_policies", "tests"]:
         (root / "harness" / name).mkdir(parents=True, exist_ok=True)
+
+
+def test_load_model_settings_prefers_role_specific_timeout(monkeypatch) -> None:
+    monkeypatch.setenv("REQUEST_TIMEOUT_SECONDS", "10")
+    monkeypatch.setenv("TEACHER_TIMEOUT_SECONDS", "33")
+    monkeypatch.setenv("WEAK_TIMEOUT_SECONDS", "7")
+    monkeypatch.setenv("TEACHER_PROVIDER", "openai")
+    monkeypatch.setenv("TEACHER_BASE_URL", "https://example.com")
+    monkeypatch.setenv("TEACHER_API_KEY", "k")
+    monkeypatch.setenv("TEACHER_MODEL", "m")
+    settings = load_model_settings("teacher")
+    assert settings.timeout_seconds == 33.0

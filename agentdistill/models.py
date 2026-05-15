@@ -74,7 +74,8 @@ class ChatClient:
 def load_model_settings(role: Role, profile: str | None = None) -> ModelSettings:
     prefix = role.upper()
     suffix = f"_{profile.upper()}" if profile else ""
-    timeout = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "120"))
+    default_timeout = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "120"))
+    timeout = float(os.getenv(f"{prefix}_TIMEOUT_SECONDS{suffix}", str(default_timeout)))
     provider = os.getenv(f"{prefix}_PROVIDER{suffix}", "openai").lower()
     if provider not in {"openai", "anthropic"}:
         raise RuntimeError(f"{prefix}_PROVIDER{suffix} must be openai or anthropic, got: {provider}")
