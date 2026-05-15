@@ -232,6 +232,12 @@ def test_parse_diagnosis_allows_lean_patch_payloads() -> None:
     assert diagnosis.harness_patch == ""
 
 
+def test_parse_diagnosis_returns_unparsed_for_malformed_json() -> None:
+    diagnosis = parse_diagnosis('{"diagnosis":"x" "failure_categories":[]}')
+    assert diagnosis.parse_status == "unparsed"
+    assert diagnosis.patch_type == "unparsed"
+
+
 def test_parse_diagnosis_handles_fenced_and_nested_json() -> None:
     diagnosis = parse_diagnosis(
         """

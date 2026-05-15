@@ -42,7 +42,18 @@ def parse_diagnosis(raw: str) -> Diagnosis:
             confidence=None,
             parse_status="unparsed",
         )
-    data = json.loads(payload)
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return Diagnosis(
+            diagnosis="Teacher response contained malformed JSON.",
+            failure_categories=["parser"],
+            harness_patch=raw.strip(),
+            patch_type="unparsed",
+            regression_test="Teacher diagnosis should return a valid JSON object.",
+            confidence=None,
+            parse_status="unparsed",
+        )
     if "patch_type" not in data:
         data["patch_type"] = _infer_patch_type(data.get("failure_categories", []), data.get("harness_patch", ""))
     if "diagnosis" not in data:
