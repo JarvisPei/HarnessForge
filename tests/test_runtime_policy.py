@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import agentdistill.benchmark as benchmark_module
 from agentdistill.config import TaskConfig, load_benchmark_config
 from agentdistill.benchmark import (
     _benchmark_context_for_iteration,
@@ -12,6 +13,7 @@ from agentdistill.benchmark import (
     _initial_transfer_context,
     _phase_kind,
     _run_focused_repair_task,
+    _run_inner_repair_attempts,
     _run_phase,
     _should_request_critic_cases,
     _tasks_for_evolve_iteration,
@@ -1389,6 +1391,84 @@ def test_run_phase_focused_repair_skips_weak_and_records_contexts(tmp_path: Path
     assert result["weak_answer"] == ""
     assert result["context_patch_feedback"] == context["patch_feedback"]
     assert result["context_transfer_feedback"] == context["transfer_feedback"]
+
+
+def test_inner_repair_attempt_retries_rejected_bundle_without_weak_model(tmp_path: Path, monkeypatch) -> None:
+    class Config:
+        name = "test"
+        critic_mode = "off"
+
+    class TeacherClient:
+        async def complete(self, messages, temperature=0.2):
+            return """
+            {
+              "diagnosis": "Repair rejected policy test.",
+              "failure_categories": ["runtime_policy"],
+              "harness_patch": "Repair only the rejected policy.",
+              "patch_type": "runtime_policy",
+              "regression_test": "Rejected policy test should pass.",
+              "patch_bundles": [
+                {
+                  "target_path": "harness/runtime_policies/force_x.py",
+                  "action": "create_or_replace",
+                  "content": "def evaluate(input):\\n    return {\\\"requires_tool\\\": False}\\n"
+                }
+              ],
+              "harness_manifest": {
+                "bundle_id": "repair_x",
+                "intent": "repair rejected policy",
+                "allowed_paths": ["harness/runtime_policies/force_x.py"],
+                "artifacts": [
+                  {"path": "harness/runtime_policies/force_x.py", "type": "runtime_policy", "purpose": "repair policy"}
+                ],
+                "contracts": ["policy tests pass"]
+              }
+            }
+            """
+
+    async def fake_apply(cfg, critic, critic_system, task, diagnosis, repo_root):
+        return {
+            "patch_status": "accepted",
+            "applied_patch_paths": [str(repo_root / "harness/runtime_policies/force_x.py")],
+            "rejected_patch_paths": [],
+            "contract_validation": [{"ok": True}],
+            "harness_manifest": diagnosis.harness_manifest.model_dump(),
+        }
+
+    monkeypatch.setattr(benchmark_module, "_apply_diagnosis_with_optional_audit", fake_apply)
+    original_result = {
+        "patch_status": "rejected",
+        "rejection_reason": "one or more patch contracts failed",
+        "rejected_patch_paths": [str(tmp_path / "harness/runtime_policies/force_x.py")],
+        "contract_validation": [{"ok": False, "reason": "one or more policy tests failed"}],
+        "harness_manifest": {"bundle_id": "repair_x"},
+    }
+
+    attempts = asyncio.run(
+        _run_inner_repair_attempts(
+            cfg=Config(),
+            task=TaskConfig(id="train", instruction="train", expected_answer="1"),
+            original_result=original_result,
+            iteration_context={"transfer_feedback": {"has_transfer_failures": True, "failed_tasks": [{"task_id": "dev"}]}},
+            teacher=TeacherClient(),
+            teacher_system="teacher",
+            weak_system="weak",
+            critic=None,
+            critic_system="critic",
+            repo_root=tmp_path,
+            max_attempts=1,
+            phase_dir=tmp_path / "phase",
+        )
+    )
+
+    assert len(attempts) == 1
+    assert attempts[0]["focused_repair"] is True
+    assert attempts[0]["inner_repair_attempt"] == 1
+    assert attempts[0]["weak_answer"] == ""
+    assert attempts[0]["patch_status"] == "accepted"
+    assert attempts[0]["context_patch_feedback"]["has_rejections"] is True
+    assert attempts[0]["context_transfer_feedback"]["has_transfer_failures"] is True
+    assert (tmp_path / "phase/train.inner_repair_1.json").exists()
 
 
 def test_teacher_prompt_uses_meta_skills_not_domain_scaffolds() -> None:

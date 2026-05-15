@@ -11,7 +11,7 @@ from rich.console import Console
 
 from agentdistill.config import BenchmarkConfig, TaskConfig, load_benchmark_config
 from agentdistill.critic import request_policy_audit_cases
-from agentdistill.diagnosis import parse_diagnosis, write_patch_artifact
+from agentdistill.diagnosis import Diagnosis, parse_diagnosis, write_patch_artifact
 from agentdistill.feedback import build_patch_feedback, build_transfer_feedback, merge_benchmark_context
 from agentdistill.harness import load_system_prompt
 from agentdistill.harness_snapshot import list_harness_files, snapshot_harness
@@ -275,34 +275,62 @@ async def _run_phase(
             result["teacher_diagnosis"] = diagnosis.model_dump()
         applied_patch_paths: list[str] = []
         if apply_patches and diagnosis is not None and diagnosis.patch_bundles and diagnosis.failure_categories:
-            critic_policy_cases: dict[str, list[dict[str, object]]] = {}
-            critic_audits: dict[str, object] = {}
-            if _should_request_critic_cases(cfg.critic_mode, critic):
-                for policy_name in _policy_names_from_patch_bundles(diagnosis.patch_bundles):
-                    existing_policy_tests = _policy_tests_from_patch_bundles(diagnosis.patch_bundles, policy_name)
-                    audit = await request_policy_audit_cases(
-                        critic,
-                        critic_system,
-                        task,
-                        diagnosis.patch_bundles,
-                        policy_name,
-                        existing_policy_tests,
-                    )
-                    critic_audits[policy_name] = audit
-                    critic_policy_cases[policy_name] = list(audit.get("audit_cases", []))
-            if critic_audits:
-                result["critic_audits"] = critic_audits
-            patch_result = apply_patch_bundles_atomically(
-                repo_root,
-                diagnosis.patch_bundles,
+            patch_result = await _apply_diagnosis_with_optional_audit(
+                cfg,
+                critic,
+                critic_system,
                 task,
-                diagnosis.harness_manifest,
-                critic_policy_cases=critic_policy_cases,
+                diagnosis,
+                repo_root,
             )
-            result.update(patch_result)
+            if patch_result.get("critic_audits"):
+                result["critic_audits"] = patch_result["critic_audits"]
+            result.update({key: value for key, value in patch_result.items() if key != "critic_audits"})
+            if result.get("patch_status") == "rejected" and cfg.inner_repair_attempts > 0:
+                repair_attempts = await _run_inner_repair_attempts(
+                    cfg=cfg,
+                    task=task,
+                    original_result=result,
+                    iteration_context=benchmark_context or {},
+                    teacher=teacher,
+                    teacher_system=teacher_system,
+                    weak_system=weak_system,
+                    critic=critic,
+                    critic_system=critic_system,
+                    repo_root=repo_root,
+                    max_attempts=cfg.inner_repair_attempts,
+                    phase_dir=phase_dir,
+                )
+                if repair_attempts:
+                    result["inner_repair_attempts"] = repair_attempts
+                    final_attempt = repair_attempts[-1]
+                    if final_attempt.get("patch_status") == "accepted":
+                        result.update(
+                            {
+                                key: value
+                                for key, value in final_attempt.items()
+                                if key
+                                in {
+                                    "teacher_diagnosis_raw",
+                                    "teacher_diagnosis",
+                                    "patch_status",
+                                    "applied_patch_paths",
+                                    "rejected_patch_paths",
+                                    "contract_validation",
+                                    "harness_manifest",
+                                    "rejection_reason",
+                                    "critic_audits",
+                                }
+                            }
+                        )
+                        result["rejection_reason"] = final_attempt.get("rejection_reason")
             applied_patch_paths = list(patch_result.get("applied_patch_paths", []))
+            if result.get("patch_status") == "accepted":
+                applied_patch_paths = list(result.get("applied_patch_paths", []))
             result["applied_patch_path"] = applied_patch_paths[0] if applied_patch_paths else None
             rejected_paths = list(patch_result.get("rejected_patch_paths", []))
+            if result.get("patch_status") == "accepted":
+                rejected_paths = list(result.get("rejected_patch_paths", []))
             result["rejected_patch_path"] = rejected_paths[0] if rejected_paths else None
         result_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
         patch_path = write_patch_artifact(phase_dir / "patches", task.id, cfg.name, diagnosis) if diagnosis is not None else None
@@ -322,6 +350,7 @@ async def _run_phase(
                 "harness_manifest": result.get("harness_manifest"),
                 "context_patch_feedback": result.get("context_patch_feedback"),
                 "context_transfer_feedback": result.get("context_transfer_feedback"),
+                "inner_repair_attempts": result.get("inner_repair_attempts", []),
                 "rejection_reason": result.get("rejection_reason"),
             }
         )
@@ -371,6 +400,96 @@ async def _run_focused_repair_task(
         "focused_repair": True,
         "teacher_diagnosis_raw": await teacher.complete(messages, temperature=0.1),
     }
+
+
+async def _apply_diagnosis_with_optional_audit(
+    cfg: BenchmarkConfig,
+    critic: ChatClient | None,
+    critic_system: str,
+    task: TaskConfig,
+    diagnosis: Diagnosis,
+    repo_root: Path,
+) -> dict[str, object]:
+    critic_policy_cases: dict[str, list[dict[str, object]]] = {}
+    critic_audits: dict[str, object] = {}
+    if _should_request_critic_cases(cfg.critic_mode, critic):
+        for policy_name in _policy_names_from_patch_bundles(diagnosis.patch_bundles):
+            existing_policy_tests = _policy_tests_from_patch_bundles(diagnosis.patch_bundles, policy_name)
+            audit = await request_policy_audit_cases(
+                critic,
+                critic_system,
+                task,
+                diagnosis.patch_bundles,
+                policy_name,
+                existing_policy_tests,
+            )
+            critic_audits[policy_name] = audit
+            critic_policy_cases[policy_name] = list(audit.get("audit_cases", []))
+    patch_result = apply_patch_bundles_atomically(
+        repo_root,
+        diagnosis.patch_bundles,
+        task,
+        diagnosis.harness_manifest,
+        critic_policy_cases=critic_policy_cases,
+    )
+    if critic_audits:
+        patch_result["critic_audits"] = critic_audits
+    return patch_result
+
+
+async def _run_inner_repair_attempts(
+    cfg: BenchmarkConfig,
+    task: TaskConfig,
+    original_result: dict[str, object],
+    iteration_context: dict[str, object],
+    teacher: ChatClient,
+    teacher_system: str,
+    weak_system: str,
+    critic: ChatClient | None,
+    critic_system: str,
+    repo_root: Path,
+    max_attempts: int,
+    phase_dir: Path,
+) -> list[dict[str, object]]:
+    attempts = []
+    current_result = original_result
+    for attempt_index in range(1, max_attempts + 1):
+        patch_feedback = build_patch_feedback({task.id: current_result}, iteration=attempt_index)
+        if not patch_feedback.get("has_rejections"):
+            break
+        repair_context = dict(iteration_context)
+        repair_context["patch_feedback"] = patch_feedback
+        repair_context["repair_mode"] = "focused"
+        repair_task = _build_focused_repair_task(patch_feedback, repair_context.get("transfer_feedback"))
+        repair_result = await _run_focused_repair_task(repair_task, teacher, teacher_system, weak_system, repair_context)
+        repair_result["inner_repair_attempt"] = attempt_index
+        repair_result["context_patch_feedback"] = patch_feedback
+        if repair_context.get("transfer_feedback"):
+            repair_result["context_transfer_feedback"] = repair_context["transfer_feedback"]
+        diagnosis = parse_diagnosis(str(repair_result["teacher_diagnosis_raw"]))
+        repair_result["teacher_diagnosis"] = diagnosis.model_dump()
+        if diagnosis.patch_bundles and diagnosis.failure_categories:
+            patch_result = await _apply_diagnosis_with_optional_audit(
+                cfg,
+                critic,
+                critic_system,
+                repair_task,
+                diagnosis,
+                repo_root,
+            )
+            repair_result.update(patch_result)
+        else:
+            repair_result["patch_status"] = "skipped"
+        write_patch_artifact(phase_dir / "patches", f"{task.id}-inner-repair-{attempt_index}", cfg.name, diagnosis)
+        (phase_dir / f"{task.id}.inner_repair_{attempt_index}.json").write_text(
+            json.dumps(repair_result, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        attempts.append(repair_result)
+        current_result = repair_result
+        if repair_result.get("patch_status") == "accepted":
+            break
+    return attempts
 
 
 def _policy_names_from_patch_bundles(patch_bundles) -> list[str]:

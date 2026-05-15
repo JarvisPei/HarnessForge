@@ -14,6 +14,7 @@ harness:
 evolve_iterations: 3
 transfer_context_mode: feedback_only
 repair_mode: focused
+inner_repair_attempts: 1
 train_tasks:
   - id: train_explicit_labels_block
     instruction: |
