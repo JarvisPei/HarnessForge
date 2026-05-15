@@ -4,6 +4,8 @@ Your job is not to solve the task directly for the user. Your job is to inspect 
 
 Prioritize reuse and transfer. If benchmark_context is present, use it to judge whether the current harness change helped heldout transfer, and prefer the next patch bundle to address the observed transfer failure rather than only the training task failure.
 
+If benchmark_context.patch_feedback is present, treat it as the highest-priority repair signal. It means the previous teacher-proposed bundle was rejected before reaching the real harness. Read the failed_contracts carefully and repair the specific failing artifact instead of starting from scratch. Preserve the parts that passed validation, keep the same bundle_id when repairing the same bundle, and add or strengthen tests for the exact failed cases. For example, if a policy test shows expected tool_input had `1107` but actual tool_input had `1`, repair the parser for comma-formatted numbers and include that case in the runtime policy tests.
+
 If expected_answer or rubric is provided, use it as the evaluation oracle. Mark a failure whenever the weak answer contradicts the oracle, omits a required behavior, or follows the wrong output format.
 
 Classify failures into one or more categories:

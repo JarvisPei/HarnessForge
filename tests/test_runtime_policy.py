@@ -7,6 +7,7 @@ from agentdistill.config import TaskConfig, load_benchmark_config
 from agentdistill.benchmark import _build_transfer_context
 from agentdistill.contracts import validate_runtime_policy_contract, validate_runtime_policy_tests, validate_tool_contract
 from agentdistill.diagnosis import PatchBundle, parse_diagnosis
+from agentdistill.feedback import build_patch_feedback, merge_benchmark_context
 from agentdistill.metrics import build_benchmark_metrics
 from agentdistill.patches import apply_patch_bundles_atomically
 from agentdistill.models import load_model_settings
@@ -646,6 +647,55 @@ def test_build_transfer_context_uses_heldout_probe_results() -> None:
     assert context["heldout_probe"][0]["success"] is True
     assert context["heldout_probe"][0]["weak_answer"] == "1"
     assert context["heldout_probe"][1]["success"] is False
+
+
+def test_patch_feedback_summarizes_rejected_contract_failures() -> None:
+    feedback = build_patch_feedback(
+        {
+            "train_inventory": {
+                "patch_status": "rejected",
+                "rejection_reason": "one or more patch contracts failed",
+                "rejected_patch_paths": ["/repo/harness/runtime_policies/force_inventory.py"],
+                "harness_manifest": {"bundle_id": "inventory_policy"},
+                "contract_validation": [
+                    {"ok": True, "reason": "manifest matches patch bundle"},
+                    {
+                        "ok": False,
+                        "path": "/repo/harness/runtime_policies/force_inventory.py",
+                        "reason": "one or more policy tests failed",
+                        "policy": "force_inventory",
+                        "failures": [
+                            {
+                                "case_index": 0,
+                                "reason": "value mismatch for key: tool_input",
+                                "expected": {"tool_input": {"subtractions": [138, 1107]}},
+                                "actual": {"tool_input": {"subtractions": [138, 1]}},
+                            }
+                        ],
+                    },
+                ],
+            },
+            "train_ok": {"patch_status": "accepted", "contract_validation": [{"ok": True}]},
+        },
+        iteration=1,
+    )
+
+    assert feedback["has_rejections"] is True
+    rejected = feedback["rejected_bundles"][0]
+    assert rejected["bundle_id"] == "inventory_policy"
+    assert rejected["failed_contracts"][0]["reason"] == "one or more policy tests failed"
+    assert rejected["failed_contracts"][0]["failures"][0]["actual"]["tool_input"]["subtractions"] == [138, 1]
+
+
+def test_merge_benchmark_context_adds_patch_feedback_only_for_rejections() -> None:
+    transfer_context = {"heldout_probe": [{"task_id": "dev"}]}
+    empty_feedback = {"iteration": 1, "has_rejections": False, "rejected_bundles": []}
+    rejected_feedback = {"iteration": 1, "has_rejections": True, "rejected_bundles": [{"task_id": "train"}]}
+
+    assert "patch_feedback" not in merge_benchmark_context(transfer_context, empty_feedback)
+    merged = merge_benchmark_context(transfer_context, rejected_feedback)
+    assert merged["heldout_probe"] == transfer_context["heldout_probe"]
+    assert merged["patch_feedback"] == rejected_feedback
 
 
 def test_benchmark_config_splits_dev_and_blind_tasks(tmp_path: Path) -> None:
