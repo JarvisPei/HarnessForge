@@ -1608,6 +1608,94 @@ def test_inner_repair_attempt_retries_rejected_bundle_without_weak_model(tmp_pat
     assert (tmp_path / "phase/train.inner_repair_1.json").exists()
 
 
+def test_explicit_ops_v2_inner_repair_prompt_includes_scope_and_blocks_out_of_scope_patch(tmp_path: Path) -> None:
+    cfg = load_benchmark_config("configs/benchmark_explicit_ops_v2.yaml")
+
+    class TeacherClient:
+        def __init__(self) -> None:
+            self.messages = None
+
+        async def complete(self, messages, temperature=0.2):
+            self.messages = messages
+            return """
+            {
+              "diagnosis": "Attempted broad repair beyond the failed explicit-ops policy.",
+              "failure_categories": ["runtime_policy"],
+              "harness_patch": "This should be rejected by artifact scope.",
+              "patch_type": "runtime_policy",
+              "regression_test": "Out-of-scope inner repair targets should be blocked.",
+              "patch_bundles": [
+                {
+                  "target_path": "harness/tools/unrelated_explicit_ops.py",
+                  "action": "create_or_replace",
+                  "content": "def run(input):\\n    return {\\\"ok\\\": True}\\n"
+                }
+              ],
+              "harness_manifest": {
+                "bundle_id": "explicit_ops_scope_violation",
+                "intent": "invalid broad repair",
+                "allowed_paths": ["harness/tools/unrelated_explicit_ops.py"],
+                "artifacts": [
+                  {"path": "harness/tools/unrelated_explicit_ops.py", "type": "tool", "purpose": "wrong artifact"}
+                ],
+                "contracts": ["scope gate rejects unrelated target"]
+              }
+            }
+            """
+
+    original_result = {
+        "patch_status": "rejected",
+        "rejection_reason": "one or more patch contracts failed",
+        "rejected_patch_paths": [str(tmp_path / "harness/runtime_policies/force_explicit_ops.py")],
+        "contract_validation": [
+            {
+                "ok": False,
+                "path": str(tmp_path / "harness/runtime_policies/force_explicit_ops.py"),
+                "reason": "forced tool result does not match expected answer",
+                "policy": "force_explicit_ops",
+                "policy_result": {"requires_tool": True, "tool_name": "explicit_ops_calculator", "tool_input": {"text": "..."}},
+                "tool_result": {"ok": True, "result": 100},
+            }
+        ],
+        "harness_manifest": {"bundle_id": "explicit_ops"},
+    }
+    teacher = TeacherClient()
+
+    attempts = asyncio.run(
+        _run_inner_repair_attempts(
+            cfg=cfg,
+            task=cfg.train_tasks[0],
+            original_result=original_result,
+            iteration_context={},
+            teacher=teacher,
+            teacher_system="teacher",
+            weak_system="weak",
+            critic=None,
+            critic_system="critic",
+            repo_root=tmp_path,
+            max_attempts=1,
+            phase_dir=tmp_path / "phase",
+        )
+    )
+
+    assert cfg.inner_repair_attempts == 1
+    assert teacher.messages is not None
+    user_prompt = teacher.messages[1]["content"]
+    assert '"allowed_repair_paths"' in user_prompt
+    assert "harness/runtime_policies/force_explicit_ops.py" in user_prompt
+    assert "harness/tools/explicit_ops_calculator.py" in user_prompt
+    assert attempts[0]["context_repair_scope"]["allowed_repair_paths"] == [
+        "harness/runtime_policies/force_explicit_ops.py",
+        "harness/tests/explicit_ops_calculator.json",
+        "harness/tests/force_explicit_ops.json",
+        "harness/tools/explicit_ops_calculator.py",
+    ]
+    assert attempts[0]["patch_status"] == "rejected"
+    assert attempts[0]["rejection_reason"] == "inner repair patch targets outside allowed repair scope"
+    assert attempts[0]["contract_validation"][0]["out_of_scope_paths"] == ["harness/tools/unrelated_explicit_ops.py"]
+    assert (tmp_path / "phase/train_explicit_labels_block.inner_repair_1.json").exists()
+
+
 def test_teacher_prompt_uses_meta_skills_not_domain_scaffolds() -> None:
     prompt = Path("prompts/teacher_diagnosis.md").read_text()
 
