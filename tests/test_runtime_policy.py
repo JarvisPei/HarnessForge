@@ -4,6 +4,8 @@ from pathlib import Path
 
 from agentdistill.config import TaskConfig
 from agentdistill.contracts import validate_runtime_policy_contract, validate_tool_contract
+from agentdistill.diagnosis import PatchBundle, parse_diagnosis
+from agentdistill.patches import apply_patch_bundles_atomically
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
 
 
@@ -154,3 +156,139 @@ def run(input: dict) -> dict:
     result = validate_tool_contract(tmp_path, tool_path)
     assert result["ok"] is False
     assert "no matching tool test" in result["reason"]
+
+
+def test_parse_diagnosis_accepts_patch_bundles() -> None:
+    diagnosis = parse_diagnosis(
+        """
+{
+  "diagnosis": "Need a grouped harness update.",
+  "failure_categories": ["tool", "runtime_policy"],
+  "harness_patch": "Add a tool, tests, and policy.",
+  "patch_type": "tool",
+  "regression_test": "The grouped patch should parse.",
+  "patch_bundles": [
+    {
+      "target_path": "harness/tests/adder.json",
+      "action": "create_or_replace",
+      "content": "{\\"tool\\": \\"adder\\", \\"cases\\": []}",
+      "rationale": "test"
+    },
+    {
+      "target_path": "harness/tools/adder.py",
+      "action": "create_or_replace",
+      "content": "def run(input: dict) -> dict:\\n    return {\\"ok\\": True}",
+      "rationale": "tool"
+    }
+  ],
+  "confidence": 0.8
+}
+""".strip()
+    )
+
+    assert len(diagnosis.patch_bundles) == 2
+    assert diagnosis.patch_bundle is not None
+    assert diagnosis.patch_bundle.target_path == "harness/tests/adder.json"
+
+
+def test_atomic_patch_bundles_accept_tool_tests_and_policy(tmp_path: Path) -> None:
+    _make_harness_dirs(tmp_path)
+    task = TaskConfig(id="t", instruction="add 2 and 3", expected_answer="5")
+
+    result = apply_patch_bundles_atomically(
+        tmp_path,
+        [
+            PatchBundle(
+                target_path="harness/tools/adder.py",
+                action="create_or_replace",
+                content="""
+def run(input: dict) -> dict:
+    return {"ok": True, "total": input["a"] + input["b"]}
+""".strip(),
+                rationale="Deterministic addition.",
+            ),
+            PatchBundle(
+                target_path="harness/tests/adder.json",
+                action="create_or_replace",
+                content="""
+{
+  "tool": "adder",
+  "cases": [
+    {
+      "input": {"a": 2, "b": 3},
+      "expected": {"ok": true, "total": 5}
+    }
+  ]
+}
+""".strip(),
+                rationale="Covers the tool contract.",
+            ),
+            PatchBundle(
+                target_path="harness/runtime_policies/force_adder.py",
+                action="create_or_replace",
+                content="""
+def evaluate(input: dict) -> dict:
+    return {
+        "requires_tool": True,
+        "tool_name": "adder",
+        "tool_input": {"a": 2, "b": 3},
+        "reason": "Use exact arithmetic."
+    }
+""".strip(),
+                rationale="Forces exact arithmetic.",
+            ),
+        ],
+        task,
+    )
+
+    assert result["patch_status"] == "accepted"
+    assert len(result["applied_patch_paths"]) == 3
+    assert all(contract["ok"] is True for contract in result["contract_validation"])
+    assert (tmp_path / "harness" / "tools" / "adder.py").exists()
+
+
+def test_atomic_patch_bundles_roll_back_group_on_failed_tool_tests(tmp_path: Path) -> None:
+    _make_harness_dirs(tmp_path)
+    task = TaskConfig(id="t", instruction="add 2 and 3", expected_answer="5")
+
+    result = apply_patch_bundles_atomically(
+        tmp_path,
+        [
+            PatchBundle(
+                target_path="harness/tools/adder.py",
+                action="create_or_replace",
+                content="""
+def run(input: dict) -> dict:
+    return {"ok": True, "total": input["a"] + input["b"]}
+""".strip(),
+                rationale="Deterministic addition.",
+            ),
+            PatchBundle(
+                target_path="harness/tests/adder.json",
+                action="create_or_replace",
+                content="""
+{
+  "tool": "adder",
+  "cases": [
+    {
+      "input": {"a": 2, "b": 3},
+      "expected": {"ok": true, "total": 6}
+    }
+  ]
+}
+""".strip(),
+                rationale="Bad test expectation should reject the group.",
+            ),
+        ],
+        task,
+    )
+
+    assert result["patch_status"] == "rejected"
+    assert "one or more patch contracts failed" in result["rejection_reason"]
+    assert not (tmp_path / "harness" / "tools" / "adder.py").exists()
+    assert not (tmp_path / "harness" / "tests" / "adder.json").exists()
+
+
+def _make_harness_dirs(root: Path) -> None:
+    for name in ["guidelines", "skills", "validators", "tools", "runtime_policies", "tests"]:
+        (root / "harness" / name).mkdir(parents=True, exist_ok=True)

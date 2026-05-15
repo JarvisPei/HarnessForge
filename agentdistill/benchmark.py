@@ -10,11 +10,11 @@ from dotenv import load_dotenv
 from rich.console import Console
 
 from agentdistill.config import BenchmarkConfig, TaskConfig, load_benchmark_config
-from agentdistill.contracts import validate_runtime_policy_contract, validate_tool_contract
-from agentdistill.diagnosis import apply_patch_bundle, parse_diagnosis, write_patch_artifact
+from agentdistill.diagnosis import parse_diagnosis, write_patch_artifact
 from agentdistill.harness import load_system_prompt
 from agentdistill.harness_snapshot import list_harness_files, snapshot_harness
 from agentdistill.models import ChatClient, load_model_settings
+from agentdistill.patches import apply_patch_bundles_atomically
 from agentdistill.report import build_impact_report
 from agentdistill.run import run_task
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
@@ -80,9 +80,12 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
                 "iteration": iteration,
                 "task_id": task_id,
                 "applied_patch_path": result.get("applied_patch_path"),
+                "applied_patch_paths": result.get("applied_patch_paths", []),
                 "rejected_patch_path": result.get("rejected_patch_path"),
+                "rejected_patch_paths": result.get("rejected_patch_paths", []),
                 "patch_status": result.get("patch_status"),
                 "contract_validation": result.get("contract_validation"),
+                "rejection_reason": result.get("rejection_reason"),
                 "failure_categories": (result.get("teacher_diagnosis") or {}).get("failure_categories", []),
             }
             for task_id, result in train_results.items()
@@ -154,32 +157,14 @@ async def _run_phase(
         result = await run_task(task, weak, teacher, weak_system, teacher_system, tools, policies)
         diagnosis = parse_diagnosis(str(result["teacher_diagnosis_raw"]))
         result["teacher_diagnosis"] = diagnosis.model_dump()
-        applied_patch_path = None
-        if apply_patches and diagnosis.patch_bundle is not None and diagnosis.failure_categories:
-            applied_patch_path = apply_patch_bundle(repo_root, diagnosis.patch_bundle)
-            result["applied_patch_path"] = str(applied_patch_path)
-            if applied_patch_path.is_relative_to((repo_root / "harness" / "tools").resolve()):
-                contract = validate_tool_contract(repo_root, applied_patch_path)
-                result["contract_validation"] = contract
-                if contract.get("ok") is not True:
-                    applied_patch_path.unlink(missing_ok=True)
-                    result["rejected_patch_path"] = str(applied_patch_path)
-                    result["patch_status"] = "rejected"
-                    result["applied_patch_path"] = None
-                    applied_patch_path = None
-                else:
-                    result["patch_status"] = "accepted"
-            if applied_patch_path.is_relative_to((repo_root / "harness" / "runtime_policies").resolve()):
-                contract = validate_runtime_policy_contract(repo_root, task, applied_patch_path)
-                result["contract_validation"] = contract
-                if contract.get("ok") is not True:
-                    applied_patch_path.unlink(missing_ok=True)
-                    result["rejected_patch_path"] = str(applied_patch_path)
-                    result["patch_status"] = "rejected"
-                    result["applied_patch_path"] = None
-                    applied_patch_path = None
-                else:
-                    result["patch_status"] = "accepted"
+        applied_patch_paths: list[str] = []
+        if apply_patches and diagnosis.patch_bundles and diagnosis.failure_categories:
+            patch_result = apply_patch_bundles_atomically(repo_root, diagnosis.patch_bundles, task)
+            result.update(patch_result)
+            applied_patch_paths = list(patch_result.get("applied_patch_paths", []))
+            result["applied_patch_path"] = applied_patch_paths[0] if applied_patch_paths else None
+            rejected_paths = list(patch_result.get("rejected_patch_paths", []))
+            result["rejected_patch_path"] = rejected_paths[0] if rejected_paths else None
         result_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
         patch_path = write_patch_artifact(phase_dir / "patches", task.id, cfg.name, diagnosis)
         summary.append(
@@ -189,10 +174,13 @@ async def _run_phase(
                 "patch_type": diagnosis.patch_type,
                 "result_path": str(result_path),
                 "patch_path": str(patch_path),
-                "applied_patch_path": str(applied_patch_path) if applied_patch_path else None,
+                "applied_patch_path": applied_patch_paths[0] if applied_patch_paths else None,
+                "applied_patch_paths": applied_patch_paths,
                 "rejected_patch_path": result.get("rejected_patch_path"),
+                "rejected_patch_paths": result.get("rejected_patch_paths", []),
                 "patch_status": result.get("patch_status"),
                 "contract_validation": result.get("contract_validation"),
+                "rejection_reason": result.get("rejection_reason"),
             }
         )
         results[task.id] = result

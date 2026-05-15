@@ -20,6 +20,7 @@ class Diagnosis(BaseModel):
     confidence: float | None = None
     parse_status: str = "parsed"
     patch_bundle: "PatchBundle | None" = None
+    patch_bundles: list["PatchBundle"] = Field(default_factory=list)
 
 
 class PatchBundle(BaseModel):
@@ -48,6 +49,10 @@ def parse_diagnosis(raw: str) -> Diagnosis:
         data["regression_test"] = "Add a regression test covering the diagnosed failure mode."
     elif not isinstance(data["regression_test"], str):
         data["regression_test"] = json.dumps(data["regression_test"], ensure_ascii=False)
+    if "patch_bundles" not in data:
+        data["patch_bundles"] = [data["patch_bundle"]] if data.get("patch_bundle") else []
+    if "patch_bundle" not in data and data["patch_bundles"]:
+        data["patch_bundle"] = data["patch_bundles"][0]
     return Diagnosis.model_validate(data)
 
 
@@ -76,6 +81,10 @@ def write_patch_artifact(
         "## Harness Patch",
         "",
         diagnosis.harness_patch.strip(),
+        "",
+        "## Patch Bundles",
+        "",
+        json.dumps([bundle.model_dump() for bundle in diagnosis.patch_bundles], indent=2, ensure_ascii=False),
         "",
         "## Regression Test",
         "",

@@ -18,14 +18,18 @@ Return JSON only with these fields:
 - harness_patch: concrete patch text or tool/skill spec
 - patch_type: one of prompt_guideline, skill, tool, validator, state_representation, runtime_policy
 - regression_test: a future test that would catch this failure
-- patch_bundle: an object with:
+- patch_bundles: a list of one or more patch objects. Use this when one harness improvement needs multiple files, such as tool code plus tests plus a runtime policy.
+Each patch object has:
   - target_path: one relative path under harness/guidelines, harness/skills, harness/validators, harness/tools, harness/runtime_policies, or harness/tests
   - action: create_or_replace
   - content: the complete markdown or Python content to write
   - rationale: why this harness change helps weak models on future tasks
+- patch_bundle: the first object from patch_bundles, kept for backward compatibility
 - confidence: number from 0 to 1
 
-The patch_bundle is the mechanism for updating the weak model's harness. Prefer narrowly scoped guideline, skill, validator, or tool files. Do not replace harness/guidelines/base.md; create a new focused file instead, such as harness/guidelines/arithmetic_format.md.
+The patch_bundles list is the mechanism for updating the weak model's harness. Prefer narrowly scoped guideline, skill, validator, or tool files. Do not replace harness/guidelines/base.md; create a new focused file instead, such as harness/guidelines/arithmetic_format.md.
+
+The framework applies patch_bundles atomically. If any Python file fails safety checks, any tool test fails, or any runtime policy contract fails, the entire group is rejected and rolled back. When you create or revise a tool, include the matching harness/tests JSON file in the same patch_bundles list. When a task needs both a new tool and a policy that forces that tool, include all related files in one patch_bundles list.
 
 If a deterministic helper would be more reliable than instructions, write a small Python tool under harness/tools. Python tools must be self-contained, deterministic, and avoid network, filesystem, subprocess, eval, exec, and imports outside the standard library. A callable tool must expose exactly this function:
 
@@ -36,7 +40,7 @@ def run(input: dict) -> dict:
 
 Return JSON-serializable dictionaries only.
 
-If you write or revise a tool, you must also write a JSON test file under harness/tests with the same stem name. The framework will reject the tool patch unless the matching test file exists and passes. The test file should be JSON-serializable and use a schema like:
+If you write or revise a tool, you must also write a JSON test file under harness/tests with the same stem name in the same patch_bundles list. The framework will reject the whole patch group unless the matching test file exists and passes. The test file should be JSON-serializable and use a schema like:
 
 ```json
 {

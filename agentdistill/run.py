@@ -10,10 +10,10 @@ from dotenv import load_dotenv
 from rich.console import Console
 
 from agentdistill.config import ExperimentConfig, TaskConfig, load_config
-from agentdistill.contracts import validate_runtime_policy_contract, validate_tool_contract
-from agentdistill.diagnosis import apply_patch_bundle, parse_diagnosis, write_patch_artifact
+from agentdistill.diagnosis import parse_diagnosis, write_patch_artifact
 from agentdistill.harness import load_system_prompt
 from agentdistill.models import ChatClient, load_model_settings
+from agentdistill.patches import apply_patch_bundles_atomically
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
 
 
@@ -78,42 +78,24 @@ async def run_experiment(
             result = await run_task(task, weak, teacher, weak_system, teacher_system, tools, policies)
             diagnosis = parse_diagnosis(str(result["teacher_diagnosis_raw"]))
             result["teacher_diagnosis"] = diagnosis.model_dump()
-            applied_patch_path = None
+            applied_patch_paths: list[str] = []
             if (
                 apply_patches
-                and diagnosis.patch_bundle is not None
+                and diagnosis.patch_bundles
                 and (apply_success_patches or bool(diagnosis.failure_categories))
             ):
-                applied_patch_path = apply_patch_bundle(repo_root, diagnosis.patch_bundle)
-                result["applied_patch_path"] = str(applied_patch_path)
-                if applied_patch_path.is_relative_to((repo_root / "harness" / "tools").resolve()):
-                    contract = validate_tool_contract(repo_root, applied_patch_path)
-                    result["contract_validation"] = contract
-                    if contract.get("ok") is not True:
-                        applied_patch_path.unlink(missing_ok=True)
-                        result["rejected_patch_path"] = str(applied_patch_path)
-                        result["patch_status"] = "rejected"
-                        result["applied_patch_path"] = None
-                        applied_patch_path = None
-                    else:
-                        result["patch_status"] = "accepted"
-                if applied_patch_path.is_relative_to((repo_root / "harness" / "runtime_policies").resolve()):
-                    contract = validate_runtime_policy_contract(repo_root, task, applied_patch_path)
-                    result["contract_validation"] = contract
-                    if contract.get("ok") is not True:
-                        applied_patch_path.unlink(missing_ok=True)
-                        result["rejected_patch_path"] = str(applied_patch_path)
-                        result["patch_status"] = "rejected"
-                        result["applied_patch_path"] = None
-                        applied_patch_path = None
-                    else:
-                        result["patch_status"] = "accepted"
+                patch_result = apply_patch_bundles_atomically(repo_root, diagnosis.patch_bundles, task)
+                result.update(patch_result)
+                applied_patch_paths = list(patch_result.get("applied_patch_paths", []))
+                result["applied_patch_path"] = applied_patch_paths[0] if applied_patch_paths else None
+                rejected_paths = list(patch_result.get("rejected_patch_paths", []))
+                result["rejected_patch_path"] = rejected_paths[0] if rejected_paths else None
             output_path = iteration_dir / f"{task.id}.json"
             output_path.write_text(json.dumps(result, indent=2, ensure_ascii=False))
             patch_path = write_patch_artifact(iteration_dir / "patches", task.id, profile or "default", diagnosis)
             console.print(f"Saved {output_path}")
             console.print(f"Patch {patch_path}")
-            if applied_patch_path is not None:
+            for applied_patch_path in applied_patch_paths:
                 console.print(f"Applied {applied_patch_path}")
             summary.append(
                 {
@@ -125,7 +107,13 @@ async def run_experiment(
                     "confidence": diagnosis.confidence,
                     "output_path": str(output_path),
                     "patch_path": str(patch_path),
-                    "applied_patch_path": str(applied_patch_path) if applied_patch_path else None,
+                    "applied_patch_path": applied_patch_paths[0] if applied_patch_paths else None,
+                    "applied_patch_paths": applied_patch_paths,
+                    "rejected_patch_path": result.get("rejected_patch_path"),
+                    "rejected_patch_paths": result.get("rejected_patch_paths", []),
+                    "patch_status": result.get("patch_status"),
+                    "contract_validation": result.get("contract_validation"),
+                    "rejection_reason": result.get("rejection_reason"),
                 }
             )
 
