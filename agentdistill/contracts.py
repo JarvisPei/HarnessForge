@@ -144,63 +144,56 @@ def validate_runtime_policy_generalization(repo_root: Path, policy_path: Path) -
         instruction = payload.get("task_instruction")
         if not isinstance(instruction, str) or not instruction.strip():
             continue
-        surface_term = _surface_count_noun(payload, expected_tool_result if isinstance(expected_tool_result, dict) else None)
-        if surface_term is None:
-            continue
-        mutated_instruction = _replace_surface_term(instruction, surface_term)
-        if mutated_instruction == instruction:
-            continue
-        audited += 1
-        mutated_payload = {
-            "task_instruction": mutated_instruction,
-            "initial_answer": payload.get("initial_answer", ""),
-            "tool_call": payload.get("tool_call"),
-            "available_tools": payload.get("available_tools", tools.names),
-            "expected_answer": _replace_surface_term(str(payload.get("expected_answer", "")), surface_term)
-            if payload.get("expected_answer") is not None
-            else None,
-            "rubric": payload.get("rubric"),
-        }
-        results = [result for result in policies.evaluate(mutated_payload) if result.get("policy") == policy_name]
-        actual = results[0] if results else {"policy": policy_name, "requires_tool": False}
-        if actual.get("requires_tool") is not True or actual.get("tool_name") != expected.get("tool_name"):
-            failures.append(
-                {
-                    "case_index": idx,
-                    "reason": "policy trigger is not invariant to surface entity renaming",
-                    "surface_term": surface_term,
-                    "mutated_instruction": mutated_instruction,
-                    "expected": {"requires_tool": True, "tool_name": expected.get("tool_name")},
-                    "actual": actual,
-                }
-            )
-            continue
-        if not isinstance(actual.get("tool_input"), dict):
-            failures.append(
-                {
-                    "case_index": idx,
-                    "reason": "policy produced no object tool_input after surface entity renaming",
-                    "surface_term": surface_term,
-                    "mutated_instruction": mutated_instruction,
-                    "actual": actual,
-                }
-            )
-            continue
-        tool_result = tools.call(actual["tool_name"], actual["tool_input"])
-        expected_answer = payload.get("expected_answer")
-        if tool_result.get("ok") is not True or (
-            isinstance(expected_answer, str) and not _tool_result_matches_expected(expected_answer, tool_result)
-        ):
-            failures.append(
-                {
-                    "case_index": idx,
-                    "reason": "forced tool result failed after surface entity renaming",
-                    "surface_term": surface_term,
-                    "mutated_instruction": mutated_instruction,
-                    "actual": actual,
-                    "tool_result": tool_result,
-                }
-            )
+        for mutation in _policy_generalization_mutations(payload, expected_tool_result if isinstance(expected_tool_result, dict) else None):
+            audited += 1
+            mutated_payload = {
+                "task_instruction": mutation["task_instruction"],
+                "initial_answer": payload.get("initial_answer", ""),
+                "tool_call": payload.get("tool_call"),
+                "available_tools": payload.get("available_tools", tools.names),
+                "expected_answer": mutation.get("expected_answer", payload.get("expected_answer")),
+                "rubric": payload.get("rubric"),
+            }
+            results = [result for result in policies.evaluate(mutated_payload) if result.get("policy") == policy_name]
+            actual = results[0] if results else {"policy": policy_name, "requires_tool": False}
+            if actual.get("requires_tool") is not True or actual.get("tool_name") != expected.get("tool_name"):
+                failures.append(
+                    {
+                        "case_index": idx,
+                        "mutation": mutation["mutation"],
+                        "reason": "policy trigger is not invariant to schema-preserving wording changes",
+                        "mutated_instruction": mutation["task_instruction"],
+                        "expected": {"requires_tool": True, "tool_name": expected.get("tool_name")},
+                        "actual": actual,
+                    }
+                )
+                continue
+            if not isinstance(actual.get("tool_input"), dict):
+                failures.append(
+                    {
+                        "case_index": idx,
+                        "mutation": mutation["mutation"],
+                        "reason": "policy produced no object tool_input after schema-preserving wording changes",
+                        "mutated_instruction": mutation["task_instruction"],
+                        "actual": actual,
+                    }
+                )
+                continue
+            tool_result = tools.call(actual["tool_name"], actual["tool_input"])
+            expected_answer = payload.get("expected_answer")
+            if tool_result.get("ok") is not True or (
+                isinstance(expected_answer, str) and not _tool_result_matches_expected(expected_answer, tool_result)
+            ):
+                failures.append(
+                    {
+                        "case_index": idx,
+                        "mutation": mutation["mutation"],
+                        "reason": "forced tool result failed after schema-preserving wording changes",
+                        "mutated_instruction": mutation["task_instruction"],
+                        "actual": actual,
+                        "tool_result": tool_result,
+                    }
+                )
 
     if failures:
         return {
@@ -270,6 +263,38 @@ MEASUREMENT_UNITS = {
 }
 
 
+def _policy_generalization_mutations(payload: dict[str, Any], expected_tool_result: dict[str, Any] | None) -> list[dict[str, str]]:
+    instruction = payload.get("task_instruction")
+    if not isinstance(instruction, str):
+        return []
+
+    mutations: list[dict[str, str]] = []
+    surface_term = _surface_count_noun(payload, expected_tool_result)
+    if surface_term is not None:
+        mutated_instruction = _replace_surface_term(instruction, surface_term)
+        if mutated_instruction != instruction:
+            mutation = {
+                "mutation": "surface_entity_rename",
+                "task_instruction": mutated_instruction,
+            }
+            if payload.get("expected_answer") is not None:
+                mutation["expected_answer"] = _replace_surface_term(str(payload.get("expected_answer", "")), surface_term)
+            mutations.append(mutation)
+
+    for mutation_name, mutated_instruction in _schema_preserving_paraphrases(instruction):
+        if mutated_instruction != instruction:
+            mutations.append({"mutation": mutation_name, "task_instruction": mutated_instruction})
+
+    deduped = []
+    seen = set()
+    for mutation in mutations:
+        key = (mutation["mutation"], mutation["task_instruction"])
+        if key not in seen:
+            seen.add(key)
+            deduped.append(mutation)
+    return deduped
+
+
 def _surface_count_noun(payload: dict[str, Any], expected_tool_result: dict[str, Any] | None) -> str | None:
     candidates = []
     if expected_tool_result is not None and isinstance(expected_tool_result.get("unit"), str):
@@ -289,6 +314,27 @@ def _surface_count_noun(payload: dict[str, Any], expected_tool_result: dict[str,
         if term and term not in MEASUREMENT_UNITS:
             return term
     return None
+
+
+def _schema_preserving_paraphrases(text: str) -> list[tuple[str, str]]:
+    rewrites = [
+        ("initial_cue", r"\bhad\s+(\d)", r"started with \1"),
+        ("initial_cue", r"\bbegan\s+with\s+(\d)", r"started with \1"),
+        ("product_container", r"\bsheets?\s+with\s+", "crates with "),
+        ("product_container", r"\bpacks?\s+with\s+", "bags with "),
+        ("direct_subtract_verb", r"\bshipped\s+(\d)", r"gave away \1"),
+        ("direct_subtract_verb", r"\bsold\s+(\d)", r"gave away \1"),
+        ("direct_subtract_verb", r"\bused\s+(\d)", r"removed \1"),
+        ("direct_subtract_verb", r"\blost\s+(\d)", r"removed \1"),
+        ("direct_add_verb", r"\breceived\s+(\d)", r"got \1"),
+        ("direct_add_verb", r"\bbought\s+(\d)", r"acquired \1"),
+    ]
+    variants = []
+    for name, pattern, replacement in rewrites:
+        mutated, count = re.subn(pattern, replacement, text, count=1, flags=re.I)
+        if count:
+            variants.append((name, mutated))
+    return variants
 
 
 def _replace_surface_term(text: str, term: str) -> str:

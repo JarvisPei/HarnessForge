@@ -270,8 +270,73 @@ def evaluate(input: dict) -> dict:
 
     assert result["ok"] is False
     assert result["reason"] == "one or more policy generalization audits failed"
-    assert result["failures"][0]["reason"] == "policy trigger is not invariant to surface entity renaming"
+    assert result["failures"][0]["reason"] == "policy trigger is not invariant to schema-preserving wording changes"
+    assert result["failures"][0]["mutation"] == "surface_entity_rename"
     assert "daxels" in result["failures"][0]["mutated_instruction"]
+
+
+def test_runtime_policy_generalization_rejects_operation_verb_overfit(tmp_path: Path) -> None:
+    harness = tmp_path / "harness"
+    tools_dir = harness / "tools"
+    policies_dir = harness / "runtime_policies"
+    tests_dir = harness / "tests"
+    tools_dir.mkdir(parents=True)
+    policies_dir.mkdir(parents=True)
+    tests_dir.mkdir(parents=True)
+
+    (tools_dir / "inventory_arithmetic.py").write_text(
+        """
+def run(input: dict) -> dict:
+    return {"ok": True, "result": 1813, "unit": "tags", "answer": "1,813 tags remain."}
+""".strip()
+    )
+    policy_path = policies_dir / "force_inventory.py"
+    policy_path.write_text(
+        """
+def evaluate(input: dict) -> dict:
+    task = input.get("task_instruction", "").lower()
+    if "sold" in task and "remain" in task:
+        return {
+            "requires_tool": True,
+            "tool_name": "inventory_arithmetic",
+            "tool_input": {"text": input.get("task_instruction", "")},
+            "reason": "narrow verb trigger"
+        }
+    return {"requires_tool": False}
+""".strip()
+    )
+    (tests_dir / "force_inventory.json").write_text(
+        """
+{
+  "policy": "force_inventory",
+  "cases": [
+    {
+      "input": {
+        "task_instruction": "A store started with 2,050 tags and sold 237 tags. How many tags remain?",
+        "available_tools": ["inventory_arithmetic"],
+        "expected_answer": "1,813 tags remain."
+      },
+      "expected": {
+        "requires_tool": true,
+        "tool_name": "inventory_arithmetic",
+        "tool_input": {"text": "A store started with 2,050 tags and sold 237 tags. How many tags remain?"}
+      },
+      "expected_tool_result": {"ok": true, "result": 1813}
+    }
+  ]
+}
+""".strip()
+    )
+
+    result = validate_runtime_policy_generalization(tmp_path, policy_path)
+
+    assert result["ok"] is False
+    assert any(
+        failure["mutation"] == "direct_subtract_verb"
+        and "policy trigger is not invariant" in failure["reason"]
+        and "gave away 237" in failure["mutated_instruction"]
+        for failure in result["failures"]
+    )
 
 
 def test_runtime_policy_generalization_accepts_schema_trigger(tmp_path: Path) -> None:
@@ -331,7 +396,7 @@ def evaluate(input: dict) -> dict:
 
     assert result["ok"] is True
     assert result["reason"] == "policy generalization audit passed"
-    assert result["num_cases"] == 1
+    assert result["num_cases"] >= 2
 
 
 def test_tool_contract_validation_runs_json_tests(tmp_path: Path) -> None:
