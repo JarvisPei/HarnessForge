@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import py_compile
 from pathlib import Path
 from typing import Any
