@@ -687,6 +687,23 @@ def test_patch_feedback_summarizes_rejected_contract_failures() -> None:
     assert rejected["failed_contracts"][0]["failures"][0]["actual"]["tool_input"]["subtractions"] == [138, 1]
 
 
+def test_teacher_prompt_uses_meta_skills_not_domain_scaffolds() -> None:
+    prompt = Path("prompts/teacher_diagnosis.md").read_text()
+
+    assert "Meta-Skill: Parser Design" in prompt
+    assert "Meta-Skill: Tool Interface Design" in prompt
+    assert "Meta-Skill: Runtime Policy Test Design" in prompt
+    assert "Meta-Skill: Contract Repair" in prompt
+    assert "Meta-Skill: Generalization Discipline" in prompt
+    assert "ADD_WORDS" not in prompt
+    assert "SUBTRACT_WORDS" not in prompt
+    assert "_parse_inventory" not in prompt
+    assert "For inventory arithmetic runtime policies" not in prompt
+    assert "Inventory policy tests must include" not in prompt
+    assert "For unit conversion tasks" not in prompt
+    assert "Unit conversion policy tests must include" not in prompt
+
+
 def test_merge_benchmark_context_adds_patch_feedback_only_for_rejections() -> None:
     transfer_context = {"heldout_probe": [{"task_id": "dev"}]}
     empty_feedback = {"iteration": 1, "has_rejections": False, "rejected_bundles": []}

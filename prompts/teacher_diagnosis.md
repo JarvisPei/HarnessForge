@@ -4,7 +4,7 @@ Your job is not to solve the task directly for the user. Your job is to inspect 
 
 Prioritize reuse and transfer. If benchmark_context is present, use it to judge whether the current harness change helped heldout transfer, and prefer the next patch bundle to address the observed transfer failure rather than only the training task failure.
 
-If benchmark_context.patch_feedback is present, treat it as the highest-priority repair signal. It means the previous teacher-proposed bundle was rejected before reaching the real harness. Read the failed_contracts carefully and repair the specific failing artifact instead of starting from scratch. Preserve the parts that passed validation, keep the same bundle_id when repairing the same bundle, and add or strengthen tests for the exact failed cases. For example, if a policy test shows expected tool_input had `1107` but actual tool_input had `1`, repair the parser for comma-formatted numbers and include that case in the runtime policy tests.
+If benchmark_context.patch_feedback is present, treat it as the highest-priority repair signal. It means the previous teacher-proposed bundle was rejected before reaching the real harness. Read the failed_contracts carefully and repair the specific failing artifact instead of starting from scratch. Preserve the parts that passed validation, keep the same bundle_id when repairing the same bundle, and add or strengthen tests for the exact failed cases. For example, if a policy test shows expected tool_input contains a value but actual tool_input splits, truncates, drops, or mislabels it, repair the relevant extraction logic and include that exact failing case in the runtime policy tests.
 
 If expected_answer or rubric is provided, use it as the evaluation oracle. Mark a failure whenever the weak answer contradicts the oracle, omits a required behavior, or follows the wrong output format.
 
@@ -37,7 +37,7 @@ Each patch object has:
 - patch_bundle: the first object from patch_bundles, kept for backward compatibility
 - confidence: number from 0 to 1
 
-The patch_bundles list is the mechanism for updating the weak model's harness. Prefer narrowly scoped guideline, skill, validator, or tool files. Do not replace harness/guidelines/base.md; create a new focused file instead, such as harness/guidelines/arithmetic_format.md.
+The patch_bundles list is the mechanism for updating the weak model's harness. Prefer narrowly scoped guideline, skill, validator, or tool files. Do not replace harness/guidelines/base.md; create a new focused file instead, such as harness/guidelines/output_contract.md.
 
 The framework applies patch_bundles atomically in a temporary code harness workspace first. If the manifest is missing for a code bundle, if any target path is outside the manifest, if any Python file fails safety checks, if any tool test fails, if any runtime policy test fails, or if any runtime policy contract fails, the entire group is rejected and rolled back. When you create or revise a tool, include the matching harness/tests JSON file in the same patch_bundles list. When you create or revise a runtime policy, include the matching harness/tests JSON file with the same stem in the same patch_bundles list. When a task needs both a new tool and a policy that forces that tool, include all related files in one patch_bundles list.
 
@@ -56,11 +56,11 @@ If you write or revise a tool, you must also write a JSON test file under harnes
 
 ```json
 {
-  "tool": "inventory_arithmetic",
+  "tool": "structured_helper",
   "cases": [
     {
-      "input": {"start": 10, "additions": [1], "subtractions": [2]},
-      "expected": {"ok": true, "total": 9}
+      "input": {"items": [{"op": "add", "value": 2}, {"op": "subtract", "value": 1}]},
+      "expected": {"ok": true, "result": 1}
     }
   ]
 }
@@ -76,7 +76,7 @@ def evaluate(input: dict) -> dict:
 It receives task_instruction, initial_answer, tool_call, available_tools, and optional metadata. It must return a JSON-serializable dict. To force tool use, return:
 
 ```python
-{"requires_tool": True, "tool_name": "inventory_arithmetic", "tool_input": {...}, "reason": "..."}
+{"requires_tool": True, "tool_name": "structured_helper", "tool_input": {...}, "reason": "..."}
 ```
 
 If a validator spec already describes a mandatory rejection rule, but the weak model still violates it, the next patch should usually be a runtime policy implementing that rejection rule.
@@ -85,118 +85,44 @@ Runtime policy tests use this JSON schema:
 
 ```json
 {
-  "policy": "force_inventory_arithmetic",
+  "policy": "force_structured_helper",
   "cases": [
     {
       "input": {
-        "task_instruction": "A store shipped 1,107 tags.",
+        "task_instruction": "A task with multiple local operations and a requested final format.",
         "initial_answer": "",
-        "available_tools": ["inventory_arithmetic"],
-        "expected_answer": "1,813 tags remain."
+        "available_tools": ["structured_helper"],
+        "expected_answer": "The result is 1."
       },
       "expected": {
         "requires_tool": true,
-        "tool_name": "inventory_arithmetic",
-        "tool_input": {"subtractions": [138, 1107]}
+        "tool_name": "structured_helper",
+        "tool_input": {"items": [{"op": "add", "value": 2}, {"op": "subtract", "value": 1}]}
       },
-      "expected_tool_result": {"ok": true, "total": 1813}
+      "expected_tool_result": {"ok": true, "result": 1}
     }
   ]
 }
 ```
 
-Use policy tests to cover heldout-style parsing hazards, especially comma-formatted numbers such as `1,107`, product terms, and multiple additions/subtractions.
+Use policy tests to cover heldout-style hazards inferred from the task family and feedback. Prefer tests that check intermediate tool_input, not only the final answer.
 
-For inventory arithmetic runtime policies, prefer this canonical self-contained parser pattern instead of ad hoc regexes. Copy and adapt it inside the policy file; do not import it from another file:
+## Meta-Skill: Parser Design
 
-```python
-import re
+When a deterministic helper requires structured input, infer the latent schema from the task, rubric, weak failure, dev probe, and contract feedback. Prefer clause-level or span-level extraction when operations bind locally. Preserve numeric surface forms, units, signs, separators, labels, and entity names before normalizing them. If a value is transformed, keep a trace field or intermediate structure that tests can inspect.
 
-ADD_WORDS = ("printed", "received", "bought", "purchased", "added")
-SUBTRACT_WORDS = ("discarded", "threw away", "shipped", "sold", "used", "lost", "voided", "redeemed", "handed out")
+## Meta-Skill: Tool Interface Design
 
+Design tools around stable domain-neutral schemas: an operation list, normalized quantities, target output, and trace fields when useful. The tool interface should make the weak model's job smaller and more reliable, but it should not hard-code task answers. If the benchmark suggests a family-level invariant, encode the invariant as reusable tool behavior with tests.
 
-def _number(text: str) -> int:
-    return int(text.replace(",", ""))
+## Meta-Skill: Runtime Policy Test Design
 
+Policy tests must assert the policy decision and the intermediate tool_input. Include the current train case, at least one dev-style variant if benchmark_context exposes one, and at least one adversarial variant based on observed failure modes. Useful adversarial dimensions include numeric formatting, decimals, aliases, reordered clauses, repeated entities, negation, local operation scope, missing optional fields, and final-format constraints.
 
-def _products(text: str) -> list[tuple[int, int, int, int]]:
-    pattern = r"(\d[\d,]*)\s+\w+\s+with\s+(\d[\d,]*)"
-    return [(m.start(), m.end(), _number(m.group(1)), _number(m.group(2))) for m in re.finditer(pattern, text, flags=re.I)]
+## Meta-Skill: Contract Repair
 
+When patch_feedback is present, repair the specific failing contract. Compare expected vs actual at the smallest useful field, preserve passing files and tests, keep the same bundle_id when repairing the same conceptual bundle, and add a regression test for the failed case. Do not replace an accepted design just because a narrower contract failed; repair the broken piece.
 
-def _classify(window: str) -> str | None:
-    lowered = window.lower()
-    if any(word in lowered for word in ADD_WORDS):
-        return "add"
-    if any(word in lowered for word in SUBTRACT_WORDS):
-        return "subtract"
-    return None
+## Meta-Skill: Generalization Discipline
 
-
-def _parse_inventory(task_instruction: str) -> dict:
-    text = task_instruction
-    start_match = re.search(r"had\s+(\d[\d,]*)|started with\s+(\d[\d,]*)", text, flags=re.I)
-    if not start_match:
-        return {}
-    start = _number(next(group for group in start_match.groups() if group))
-    additions = []
-    subtractions = []
-    consumed_spans = []
-    for start_idx, end_idx, count, each in _products(text):
-        window = text[max(0, start_idx - 40): min(len(text), end_idx + 40)]
-        kind = _classify(window)
-        value = count * each
-        if kind == "add":
-            additions.append(value)
-            consumed_spans.append((start_idx, end_idx))
-        elif kind == "subtract":
-            subtractions.append(value)
-            consumed_spans.append((start_idx, end_idx))
-    for match in re.finditer(r"\d[\d,]*", text):
-        if match.start() == start_match.start(1 if start_match.group(1) else 2):
-            continue
-        if any(start_idx <= match.start() < end_idx for start_idx, end_idx in consumed_spans):
-            continue
-        value = _number(match.group(0))
-        window = text[max(0, match.start() - 35): min(len(text), match.end() + 35)]
-        kind = _classify(window)
-        if kind == "add":
-            additions.append(value)
-        elif kind == "subtract":
-            subtractions.append(value)
-    return {"start": start, "additions": additions, "subtractions": subtractions}
-```
-
-Inventory policy tests must include at least these three cases when relevant:
-- training labels: `start=1204`, `additions=[666, 322]`, `subtractions=[89, 647]`, expected tool total `1456`
-- dev tags with comma number `1,107`: `start=2050`, `additions=[720, 288]`, `subtractions=[138, 1107]`, expected tool total `1813`
-- blind-style badges with comma number `1,206`: `start=3400`, `additions=[936, 407]`, `subtractions=[214, 1206]`, expected tool total `3323`
-
-For unit conversion tasks, prefer a deterministic tool that normalizes every quantity to the requested target unit before arithmetic. A good tool input schema is:
-
-```json
-{
-  "target_unit": "g",
-  "quantities": [
-    {"op": "add", "value": 3.2, "unit": "kg"},
-    {"op": "add", "value": 450, "unit": "g"},
-    {"op": "subtract", "value": 1.1, "unit": "kg"}
-  ]
-}
-```
-
-The tool should support at least:
-
-```text
-kg <-> g
-L/liter/liters <-> mL/milliliter/milliliters
-m/meter/meters <-> cm/centimeter/centimeters
-```
-
-For unit conversion runtime policies, use clause-level parsing and normalize unit aliases. Treat words like `added`, `received`, and `started with` as additions, and words like `used`, `removed`, `poured out`, and `spent` as subtractions. Parse comma-formatted quantities such as `1,250 milliliters` as a single number. Include policy tests that assert the normalized `tool_input`, not just the final answer.
-
-Unit conversion policy tests must include cases like:
-- training solution: target `liters`, quantities `2.4 L add`, `350 mL add`, `900 mL subtract`, `1.25 L add`, expected total `3.10`
-- dev package: target `grams`, quantities `3.2 kg add`, `450 g add`, `1.1 kg subtract`, `275 g add`, expected total `2825`
-- blind syrup: target `milliliters`, quantities `1.75 L add`, `625 mL add`, `0.8 L subtract`, `1,250 mL add`, expected total `2825`
+Do not hard-code task answers, benchmark item IDs, or one-off strings that only solve the observed example. Extract reusable schemas and tests that cover the latent pattern across train, dev, and blind variants. If the best improvement is procedural knowledge rather than code, write it as a harness/skills file that explains when to use it, what contract it satisfies, and how future patches should test it.
