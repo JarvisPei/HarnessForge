@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agentdistill.config import TaskConfig
-from agentdistill.contracts import validate_runtime_policy_contract
+from agentdistill.contracts import validate_runtime_policy_contract, validate_tool_contract
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
 
 
@@ -105,3 +105,35 @@ def evaluate(input: dict) -> dict:
 
     assert result["ok"] is False
     assert "tool_result" in result
+
+
+def test_tool_contract_validation_runs_json_tests(tmp_path: Path) -> None:
+    harness = tmp_path / "harness"
+    tools_dir = harness / "tools"
+    tests_dir = harness / "tests"
+    tools_dir.mkdir(parents=True)
+    tests_dir.mkdir(parents=True)
+
+    tool_path = tools_dir / "adder.py"
+    tool_path.write_text(
+        """
+def run(input: dict) -> dict:
+    return {"ok": True, "total": input["a"] + input["b"]}
+""".strip()
+    )
+    (tests_dir / "adder.json").write_text(
+        """
+{
+  "tool": "adder",
+  "cases": [
+    {
+      "input": {"a": 2, "b": 3},
+      "expected": {"ok": true, "total": 5}
+    }
+  ]
+}
+""".strip()
+    )
+
+    result = validate_tool_contract(tmp_path, tool_path)
+    assert result["ok"] is True

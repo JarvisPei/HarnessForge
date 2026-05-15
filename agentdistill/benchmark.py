@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from rich.console import Console
 
 from agentdistill.config import BenchmarkConfig, TaskConfig, load_benchmark_config
-from agentdistill.contracts import validate_runtime_policy_contract
+from agentdistill.contracts import validate_runtime_policy_contract, validate_tool_contract
 from agentdistill.diagnosis import apply_patch_bundle, parse_diagnosis, write_patch_artifact
 from agentdistill.harness import load_system_prompt
 from agentdistill.harness_snapshot import list_harness_files, snapshot_harness
@@ -155,6 +155,14 @@ async def _run_phase(
         if apply_patches and diagnosis.patch_bundle is not None and diagnosis.failure_categories:
             applied_patch_path = apply_patch_bundle(repo_root, diagnosis.patch_bundle)
             result["applied_patch_path"] = str(applied_patch_path)
+            if applied_patch_path.is_relative_to((repo_root / "harness" / "tools").resolve()):
+                contract = validate_tool_contract(repo_root, applied_patch_path)
+                result["contract_validation"] = contract
+                if contract.get("ok") is not True:
+                    applied_patch_path.unlink(missing_ok=True)
+                    result["rejected_patch_path"] = str(applied_patch_path)
+                    result["applied_patch_path"] = None
+                    applied_patch_path = None
             if applied_patch_path.is_relative_to((repo_root / "harness" / "runtime_policies").resolve()):
                 contract = validate_runtime_policy_contract(repo_root, task, applied_patch_path)
                 result["contract_validation"] = contract

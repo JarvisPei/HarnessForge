@@ -19,7 +19,7 @@ Return JSON only with these fields:
 - patch_type: one of prompt_guideline, skill, tool, validator, state_representation, runtime_policy
 - regression_test: a future test that would catch this failure
 - patch_bundle: an object with:
-  - target_path: one relative path under harness/guidelines, harness/skills, harness/validators, harness/tools, or harness/runtime_policies
+  - target_path: one relative path under harness/guidelines, harness/skills, harness/validators, harness/tools, harness/runtime_policies, or harness/tests
   - action: create_or_replace
   - content: the complete markdown or Python content to write
   - rationale: why this harness change helps weak models on future tasks
@@ -35,6 +35,20 @@ def run(input: dict) -> dict:
 ```
 
 Return JSON-serializable dictionaries only.
+
+If you write or revise a tool, prefer also writing a JSON test file under harness/tests that exercises the tool on at least one representative input and checks the expected output. The test file should be JSON-serializable and use a schema like:
+
+```json
+{
+  "tool": "inventory_arithmetic",
+  "cases": [
+    {
+      "input": {"start": 10, "additions": [1], "subtractions": [2]},
+      "expected": {"ok": true, "total": 9}
+    }
+  ]
+}
+```
 
 If the weak model ignores an available required tool, write a runtime policy under harness/runtime_policies. A runtime policy must expose exactly this function:
 

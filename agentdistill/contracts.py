@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from agentdistill.config import TaskConfig
+from agentdistill.tool_validation import validate_tool_tests
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
 
 
@@ -44,3 +45,8 @@ def validate_runtime_policy_contract(
             "tool_result": tool_result,
         }
     return {"ok": True, "reason": "forced tool call succeeded", "policy_result": forced, "tool_result": tool_result}
+
+
+def validate_tool_contract(repo_root: Path, tool_path: Path) -> dict[str, Any]:
+    tool_name = tool_path.stem
+    return validate_tool_tests(repo_root, tool_name)

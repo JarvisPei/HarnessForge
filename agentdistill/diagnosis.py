@@ -108,13 +108,16 @@ def _safe_harness_path(repo_root: Path, target_path: str) -> Path:
         (repo_root / "harness" / "validators").resolve(),
         (repo_root / "harness" / "tools").resolve(),
         (repo_root / "harness" / "runtime_policies").resolve(),
+        (repo_root / "harness" / "tests").resolve(),
     ]
-    if target.suffix not in {".md", ".py"}:
-        raise RuntimeError(f"Patch target must be a markdown or Python file: {target_path}")
+    if target.suffix not in {".md", ".py", ".json"}:
+        raise RuntimeError(f"Patch target must be a markdown, Python, or JSON file: {target_path}")
     if target.suffix == ".py" and not target.is_relative_to((repo_root / "harness" / "tools").resolve()):
         runtime_root = (repo_root / "harness" / "runtime_policies").resolve()
         if not target.is_relative_to(runtime_root):
             raise RuntimeError(f"Python patch targets are only allowed under harness/tools or harness/runtime_policies: {target_path}")
+    if target.suffix == ".json" and not target.is_relative_to((repo_root / "harness" / "tests").resolve()):
+        raise RuntimeError(f"JSON patch targets are only allowed under harness/tests: {target_path}")
     if target == (repo_root / "harness" / "guidelines" / "base.md").resolve():
         raise RuntimeError("Teacher patches may not replace harness/guidelines/base.md; create a focused guideline file instead.")
     if not any(target.is_relative_to(root) for root in allowed_roots):
