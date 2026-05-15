@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 
 
-HARNESS_SUBDIRS = ["guidelines", "skills", "validators", "tools", "runtime_policies"]
+HARNESS_SUBDIRS = ["guidelines", "skills", "validators", "tools", "runtime_policies", "tests"]
 
 
 def snapshot_harness(repo_root: Path, destination: Path) -> None:

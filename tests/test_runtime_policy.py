@@ -222,6 +222,16 @@ def test_parse_diagnosis_accepts_patch_bundles() -> None:
       "rationale": "tool"
     }
   ],
+  "harness_manifest": {
+    "bundle_id": "adder_bundle",
+    "intent": "Add a deterministic addition tool.",
+    "allowed_paths": ["harness/tests/adder.json", "harness/tools/adder.py"],
+    "artifacts": [
+      {"path": "harness/tests/adder.json", "type": "test", "purpose": "tool tests"},
+      {"path": "harness/tools/adder.py", "type": "tool", "purpose": "addition helper"}
+    ],
+    "contracts": ["tool tests pass"]
+  },
   "confidence": 0.8
 }
 """.strip()
@@ -230,6 +240,8 @@ def test_parse_diagnosis_accepts_patch_bundles() -> None:
     assert len(diagnosis.patch_bundles) == 2
     assert diagnosis.patch_bundle is not None
     assert diagnosis.patch_bundle.target_path == "harness/tests/adder.json"
+    assert diagnosis.harness_manifest is not None
+    assert diagnosis.harness_manifest.bundle_id == "adder_bundle"
 
 
 def test_parse_diagnosis_allows_missing_bundle_rationale() -> None:
@@ -355,12 +367,46 @@ def evaluate(input: dict) -> dict:
             ),
         ],
         task,
+        _manifest_for(
+            [
+                "harness/tools/adder.py",
+                "harness/tests/adder.json",
+                "harness/runtime_policies/force_adder.py",
+            ]
+        ),
     )
 
     assert result["patch_status"] == "accepted"
     assert len(result["applied_patch_paths"]) == 3
     assert all(contract["ok"] is True for contract in result["contract_validation"])
     assert (tmp_path / "harness" / "tools" / "adder.py").exists()
+    assert (tmp_path / "outputs" / "harness_workspaces" / "adder_bundle" / "harness" / "tools" / "adder.py").exists()
+
+
+def test_code_patch_bundles_require_manifest(tmp_path: Path) -> None:
+    _make_harness_dirs(tmp_path)
+    task = TaskConfig(id="t", instruction="add 2 and 3", expected_answer="5")
+
+    result = apply_patch_bundles_atomically(
+        tmp_path,
+        [
+            PatchBundle(
+                target_path="harness/tools/adder.py",
+                action="create_or_replace",
+                content="""
+def run(input: dict) -> dict:
+    return {"ok": True, "total": input["a"] + input["b"]}
+""".strip(),
+                rationale="Deterministic addition.",
+            )
+        ],
+        task,
+    )
+
+    assert result["patch_status"] == "rejected"
+    assert result["rejection_reason"] == "harness manifest validation failed"
+    assert "code harness bundles must include harness_manifest" in result["contract_validation"][0]["reason"]
+    assert not (tmp_path / "harness" / "tools" / "adder.py").exists()
 
 
 def test_atomic_patch_bundles_roll_back_group_on_failed_tool_tests(tmp_path: Path) -> None:
@@ -397,6 +443,7 @@ def run(input: dict) -> dict:
             ),
         ],
         task,
+        _manifest_for(["harness/tools/adder.py", "harness/tests/adder.json"]),
     )
 
     assert result["patch_status"] == "rejected"
@@ -408,6 +455,31 @@ def run(input: dict) -> dict:
 def _make_harness_dirs(root: Path) -> None:
     for name in ["guidelines", "skills", "validators", "tools", "runtime_policies", "tests"]:
         (root / "harness" / name).mkdir(parents=True, exist_ok=True)
+
+
+def _manifest_for(paths: list[str]):
+    from agentdistill.manifest import HarnessManifest
+
+    artifact_types = {
+        "guidelines": "guideline",
+        "skills": "skill",
+        "validators": "validator",
+        "tools": "tool",
+        "tests": "test",
+        "runtime_policies": "runtime_policy",
+    }
+    return HarnessManifest.model_validate(
+        {
+            "bundle_id": "adder_bundle",
+            "intent": "Add deterministic addition as a reusable harness tool.",
+            "allowed_paths": paths,
+            "artifacts": [
+                {"path": path, "type": artifact_types[Path(path).parts[1]], "purpose": "test artifact"}
+                for path in paths
+            ],
+            "contracts": ["tool tests pass", "runtime policy forced tool result matches expected answer"],
+        }
+    )
 
 
 def test_load_model_settings_prefers_role_specific_timeout(monkeypatch) -> None:
@@ -484,6 +556,13 @@ def test_build_benchmark_metrics_counts_patch_quality_and_transfer() -> None:
                     "/repo/harness/guidelines/inventory.md",
                 ],
                 "contract_validation": [{"ok": True}],
+                "harness_manifest": {
+                    "bundle_id": "inventory_bundle",
+                    "artifacts": [
+                        {"path": "/repo/harness/tools/inventory.py", "type": "tool"},
+                        {"path": "/repo/harness/tests/inventory.json", "type": "test"},
+                    ],
+                },
             },
             {
                 "patch_status": "rejected",
@@ -506,6 +585,7 @@ def test_build_benchmark_metrics_counts_patch_quality_and_transfer() -> None:
     assert metrics["patches"]["accepted"] == 1
     assert metrics["patches"]["rejected"] == 1
     assert metrics["patches"]["accepted_tool_test_policy_bundles"] == 1
+    assert metrics["patches"]["accepted_code_manifest_bundles"] == 1
     assert metrics["patches"]["contract_failures"] == 1
     assert metrics["transfer"]["improved"] == 1
     assert metrics["harness_after"]["type_counts"]["tool"] == 1

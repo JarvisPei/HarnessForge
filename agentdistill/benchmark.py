@@ -89,6 +89,7 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
                 "rejected_patch_paths": result.get("rejected_patch_paths", []),
                 "patch_status": result.get("patch_status"),
                 "contract_validation": result.get("contract_validation"),
+                "harness_manifest": result.get("harness_manifest"),
                 "rejection_reason": result.get("rejection_reason"),
                 "failure_categories": (result.get("teacher_diagnosis") or {}).get("failure_categories", []),
             }
@@ -195,7 +196,7 @@ async def _run_phase(
             result["teacher_diagnosis"] = diagnosis.model_dump()
         applied_patch_paths: list[str] = []
         if apply_patches and diagnosis is not None and diagnosis.patch_bundles and diagnosis.failure_categories:
-            patch_result = apply_patch_bundles_atomically(repo_root, diagnosis.patch_bundles, task)
+            patch_result = apply_patch_bundles_atomically(repo_root, diagnosis.patch_bundles, task, diagnosis.harness_manifest)
             result.update(patch_result)
             applied_patch_paths = list(patch_result.get("applied_patch_paths", []))
             result["applied_patch_path"] = applied_patch_paths[0] if applied_patch_paths else None
@@ -216,6 +217,7 @@ async def _run_phase(
                 "rejected_patch_paths": result.get("rejected_patch_paths", []),
                 "patch_status": result.get("patch_status"),
                 "contract_validation": result.get("contract_validation"),
+                "harness_manifest": result.get("harness_manifest"),
                 "rejection_reason": result.get("rejection_reason"),
             }
         )

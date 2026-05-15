@@ -33,6 +33,8 @@ def build_benchmark_metrics(
         for path in row.get("rejected_patch_paths", [])
         if isinstance(path, str)
     ]
+    manifest_rows = [row for row in train_summary if isinstance(row.get("harness_manifest"), dict)]
+    code_bundle_rows = [row for row in manifest_rows if _manifest_has_code_artifact(row["harness_manifest"])]
     type_counts = _count_path_types(applied_paths)
     harness_type_counts = _count_path_types(harness_files_after)
     return {
@@ -50,6 +52,13 @@ def build_benchmark_metrics(
                 1
                 for row in accepted
                 if _row_has_type(row, "tool") and _row_has_type(row, "test") and _row_has_type(row, "runtime_policy")
+            ),
+            "manifest_bundles": len(manifest_rows),
+            "code_manifest_bundles": len(code_bundle_rows),
+            "accepted_code_manifest_bundles": sum(
+                1
+                for row in accepted
+                if isinstance(row.get("harness_manifest"), dict) and _manifest_has_code_artifact(row["harness_manifest"])
             ),
             "contract_failures": _count_contract_failures(train_summary),
         },
@@ -103,3 +112,13 @@ def _count_contract_failures(train_summary: list[dict[str, Any]]) -> int:
         if isinstance(validation, list):
             failures += sum(1 for item in validation if isinstance(item, dict) and item.get("ok") is not True)
     return failures
+
+
+def _manifest_has_code_artifact(manifest: dict[str, Any]) -> bool:
+    artifacts = manifest.get("artifacts", [])
+    if not isinstance(artifacts, list):
+        return False
+    return any(
+        isinstance(artifact, dict) and artifact.get("type") in {"tool", "runtime_policy", "test"}
+        for artifact in artifacts
+    )

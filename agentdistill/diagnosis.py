@@ -21,6 +21,7 @@ class Diagnosis(BaseModel):
     parse_status: str = "parsed"
     patch_bundle: "PatchBundle | None" = None
     patch_bundles: list["PatchBundle"] = Field(default_factory=list)
+    harness_manifest: "HarnessManifest | None" = None
 
 
 class PatchBundle(BaseModel):
@@ -104,6 +105,10 @@ def write_patch_artifact(
         "## Patch Bundles",
         "",
         json.dumps([bundle.model_dump() for bundle in diagnosis.patch_bundles], indent=2, ensure_ascii=False),
+        "",
+        "## Harness Manifest",
+        "",
+        json.dumps(diagnosis.harness_manifest.model_dump() if diagnosis.harness_manifest is not None else None, indent=2, ensure_ascii=False),
         "",
         "## Regression Test",
         "",
@@ -231,3 +236,6 @@ def _infer_patch_type(categories: list[Any], patch: str) -> str:
         if candidate in lowered:
             return candidate
     return "prompt_guideline"
+
+
+from agentdistill.manifest import HarnessManifest  # noqa: E402
