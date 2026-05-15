@@ -4,7 +4,7 @@ import asyncio
 from pathlib import Path
 
 from agentdistill.config import TaskConfig, load_benchmark_config
-from agentdistill.benchmark import _build_transfer_context
+from agentdistill.benchmark import _build_transfer_context, _run_phase
 from agentdistill.contracts import validate_runtime_policy_contract, validate_runtime_policy_tests, validate_tool_contract
 from agentdistill.diagnosis import PatchBundle, parse_diagnosis
 from agentdistill.feedback import build_patch_feedback, merge_benchmark_context
@@ -696,6 +696,56 @@ def test_merge_benchmark_context_adds_patch_feedback_only_for_rejections() -> No
     merged = merge_benchmark_context(transfer_context, rejected_feedback)
     assert merged["heldout_probe"] == transfer_context["heldout_probe"]
     assert merged["patch_feedback"] == rejected_feedback
+
+
+def test_run_phase_records_context_patch_feedback(tmp_path: Path) -> None:
+    class WeakClient:
+        async def complete(self, messages, temperature=0.2):
+            return "0"
+
+    class TeacherClient:
+        async def complete(self, messages, temperature=0.2):
+            return '{"failure_categories":[],"patch_type":"prompt_guideline","patch_bundles":[]}'
+
+    class HarnessConfig:
+        system_prompt_path = tmp_path / "weak_system.md"
+        skills_dir = tmp_path / "harness" / "skills"
+        guidelines_dir = tmp_path / "harness" / "guidelines"
+        validators_dir = tmp_path / "harness" / "validators"
+        tools_dir = tmp_path / "harness" / "tools"
+        runtime_policies_dir = tmp_path / "harness" / "runtime_policies"
+
+    class Config:
+        name = "test"
+        harness = HarnessConfig()
+
+    for directory in [
+        HarnessConfig.skills_dir,
+        HarnessConfig.guidelines_dir,
+        HarnessConfig.validators_dir,
+        HarnessConfig.tools_dir,
+        HarnessConfig.runtime_policies_dir,
+    ]:
+        directory.mkdir(parents=True)
+    HarnessConfig.system_prompt_path.write_text("system")
+
+    context = {"heldout_probe": [], "patch_feedback": {"has_rejections": True, "rejected_bundles": [{"task_id": "t"}]}}
+    results = asyncio.run(
+        _run_phase(
+            Config(),
+            "train",
+            [TaskConfig(id="t", instruction="answer", expected_answer="1")],
+            WeakClient(),
+            TeacherClient(),
+            "teacher",
+            tmp_path / "outputs",
+            False,
+            tmp_path,
+            benchmark_context=context,
+        )
+    )
+
+    assert results["t"]["context_patch_feedback"] == context["patch_feedback"]
 
 
 def test_benchmark_config_splits_dev_and_blind_tasks(tmp_path: Path) -> None:

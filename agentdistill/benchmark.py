@@ -228,6 +228,8 @@ async def _run_phase(
             benchmark_context=benchmark_context,
             request_teacher_diagnosis=request_teacher_diagnosis,
         )
+        if request_teacher_diagnosis and benchmark_context and benchmark_context.get("patch_feedback"):
+            result["context_patch_feedback"] = benchmark_context["patch_feedback"]
         diagnosis = parse_diagnosis(str(result["teacher_diagnosis_raw"])) if request_teacher_diagnosis else None
         if diagnosis is not None:
             result["teacher_diagnosis"] = diagnosis.model_dump()
@@ -255,6 +257,7 @@ async def _run_phase(
                 "patch_status": result.get("patch_status"),
                 "contract_validation": result.get("contract_validation"),
                 "harness_manifest": result.get("harness_manifest"),
+                "context_patch_feedback": result.get("context_patch_feedback"),
                 "rejection_reason": result.get("rejection_reason"),
             }
         )
