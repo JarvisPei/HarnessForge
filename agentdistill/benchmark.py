@@ -15,7 +15,7 @@ from agentdistill.harness import load_system_prompt
 from agentdistill.harness_snapshot import list_harness_files, snapshot_harness
 from agentdistill.models import ChatClient, load_model_settings
 from agentdistill.patches import apply_patch_bundles_atomically
-from agentdistill.report import build_impact_report
+from agentdistill.report import build_impact_report, evaluate_success
 from agentdistill.run import run_task
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
 
@@ -59,6 +59,7 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
         output_dir=output_dir,
         apply_patches=False,
         repo_root=repo_root,
+        request_teacher_diagnosis=False,
     )
     transfer_context = _build_transfer_context(cfg.heldout_tasks, baseline)
 
@@ -103,6 +104,7 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
             output_dir=output_dir,
             apply_patches=False,
             repo_root=repo_root,
+            request_teacher_diagnosis=False,
         )
         transfer_context = _build_transfer_context(cfg.heldout_tasks, probe_results)
 
@@ -117,6 +119,7 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
         output_dir=output_dir,
         apply_patches=False,
         repo_root=repo_root,
+        request_teacher_diagnosis=False,
     )
     transfer_context = _build_transfer_context(cfg.heldout_tasks, after)
 
@@ -146,6 +149,7 @@ async def _run_phase(
     apply_patches: bool,
     repo_root: Path,
     benchmark_context: dict[str, object] | None = None,
+    request_teacher_diagnosis: bool = True,
 ) -> dict[str, dict[str, object]]:
     phase_dir = output_dir / phase
     phase_dir.mkdir(parents=True, exist_ok=True)
@@ -180,11 +184,13 @@ async def _run_phase(
             tools,
             policies,
             benchmark_context=benchmark_context,
+            request_teacher_diagnosis=request_teacher_diagnosis,
         )
-        diagnosis = parse_diagnosis(str(result["teacher_diagnosis_raw"]))
-        result["teacher_diagnosis"] = diagnosis.model_dump()
+        diagnosis = parse_diagnosis(str(result["teacher_diagnosis_raw"])) if request_teacher_diagnosis else None
+        if diagnosis is not None:
+            result["teacher_diagnosis"] = diagnosis.model_dump()
         applied_patch_paths: list[str] = []
-        if apply_patches and diagnosis.patch_bundles and diagnosis.failure_categories:
+        if apply_patches and diagnosis is not None and diagnosis.patch_bundles and diagnosis.failure_categories:
             patch_result = apply_patch_bundles_atomically(repo_root, diagnosis.patch_bundles, task)
             result.update(patch_result)
             applied_patch_paths = list(patch_result.get("applied_patch_paths", []))
@@ -192,14 +198,14 @@ async def _run_phase(
             rejected_paths = list(patch_result.get("rejected_patch_paths", []))
             result["rejected_patch_path"] = rejected_paths[0] if rejected_paths else None
         result_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
-        patch_path = write_patch_artifact(phase_dir / "patches", task.id, cfg.name, diagnosis)
+        patch_path = write_patch_artifact(phase_dir / "patches", task.id, cfg.name, diagnosis) if diagnosis is not None else None
         summary.append(
             {
                 "task_id": task.id,
-                "failure_categories": diagnosis.failure_categories,
-                "patch_type": diagnosis.patch_type,
+                "failure_categories": diagnosis.failure_categories if diagnosis is not None else [],
+                "patch_type": diagnosis.patch_type if diagnosis is not None else None,
                 "result_path": str(result_path),
-                "patch_path": str(patch_path),
+                "patch_path": str(patch_path) if patch_path is not None else None,
                 "applied_patch_path": applied_patch_paths[0] if applied_patch_paths else None,
                 "applied_patch_paths": applied_patch_paths,
                 "rejected_patch_path": result.get("rejected_patch_path"),
@@ -222,6 +228,11 @@ def _build_transfer_context(tasks: list[TaskConfig], results: dict[str, dict[str
             {
                 "task_id": task.id,
                 "expected_answer": task.expected_answer,
+                "success": evaluate_success(task, result),
+                "weak_answer": result.get("weak_answer"),
+                "tool_call": result.get("tool_call"),
+                "tool_result": result.get("tool_result"),
+                "runtime_policy_results": result.get("runtime_policy_results", []),
                 "before_success": result.get("before_success"),
                 "after_success": result.get("after_success"),
                 "before_answer": result.get("before_answer"),

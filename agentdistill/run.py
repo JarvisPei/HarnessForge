@@ -131,6 +131,7 @@ async def run_task(
     tools: ToolRegistry,
     policies: RuntimePolicyRegistry,
     benchmark_context: dict[str, object] | None = None,
+    request_teacher_diagnosis: bool = True,
 ) -> dict[str, object]:
     weak_messages = [
         {"role": "system", "content": weak_system},
@@ -188,6 +189,18 @@ async def run_task(
                 ]
             )
 
+    result: dict[str, object] = {
+        "task_id": task.id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "weak_answer": final_answer,
+        "initial_weak_answer": weak_answer,
+        "tool_call": tool_call,
+        "tool_result": tool_result,
+        "runtime_policy_results": policy_results,
+    }
+    if not request_teacher_diagnosis:
+        return result
+
     teacher_messages = [
         {"role": "system", "content": teacher_system},
         {
@@ -211,18 +224,8 @@ async def run_task(
             ),
         },
     ]
-    diagnosis = await teacher.complete(teacher_messages, temperature=0.1)
-
-    return {
-        "task_id": task.id,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "weak_answer": final_answer,
-        "initial_weak_answer": weak_answer,
-        "tool_call": tool_call,
-        "tool_result": tool_result,
-        "runtime_policy_results": policy_results,
-        "teacher_diagnosis_raw": diagnosis,
-    }
+    result["teacher_diagnosis_raw"] = await teacher.complete(teacher_messages, temperature=0.1)
+    return result
 
 
 def _parse_tool_call(content: str) -> dict[str, object] | None:

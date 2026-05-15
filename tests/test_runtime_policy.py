@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from agentdistill.config import TaskConfig
@@ -8,6 +9,7 @@ from agentdistill.contracts import validate_runtime_policy_contract, validate_to
 from agentdistill.diagnosis import PatchBundle, parse_diagnosis
 from agentdistill.patches import apply_patch_bundles_atomically
 from agentdistill.models import load_model_settings
+from agentdistill.run import run_task
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
 
 
@@ -390,15 +392,44 @@ def test_build_transfer_context_uses_heldout_probe_results() -> None:
     ]
     results = {
         "heldout_a": {
-            "before_success": False,
-            "after_success": True,
-            "before_answer": "0",
-            "after_answer": "1",
-            "before_failures": ["tool"],
-            "after_failures": [],
+            "weak_answer": "1",
+            "tool_call": {"name": "adder", "input": {"a": 1}},
+            "runtime_policy_results": [{"requires_tool": False}],
         }
     }
 
     context = _build_transfer_context(tasks, results)
-    assert context["heldout_probe"][0]["after_success"] is True
-    assert context["heldout_probe"][1]["after_success"] is None
+    assert context["heldout_probe"][0]["success"] is True
+    assert context["heldout_probe"][0]["weak_answer"] == "1"
+    assert context["heldout_probe"][1]["success"] is False
+
+
+def test_run_task_can_skip_teacher_diagnosis(tmp_path: Path) -> None:
+    tools_dir = tmp_path / "tools"
+    policies_dir = tmp_path / "runtime_policies"
+    tools_dir.mkdir()
+    policies_dir.mkdir()
+
+    class WeakClient:
+        async def complete(self, messages, temperature=0.2):
+            return "1"
+
+    class TeacherClient:
+        async def complete(self, messages, temperature=0.2):
+            raise AssertionError("teacher should not be called for weak-only probes")
+
+    result = asyncio.run(
+        run_task(
+            TaskConfig(id="heldout", instruction="answer 1", expected_answer="1"),
+            WeakClient(),
+            TeacherClient(),
+            "system",
+            "teacher",
+            ToolRegistry(tools_dir),
+            RuntimePolicyRegistry(policies_dir),
+            request_teacher_diagnosis=False,
+        )
+    )
+
+    assert result["weak_answer"] == "1"
+    assert "teacher_diagnosis_raw" not in result
