@@ -7,7 +7,7 @@ from typing import Any, Literal
 import httpx
 
 
-Role = Literal["weak", "teacher"]
+Role = Literal["weak", "teacher", "critic"]
 Provider = Literal["openai", "anthropic"]
 
 
@@ -73,20 +73,33 @@ class ChatClient:
 
 def load_model_settings(role: Role, profile: str | None = None) -> ModelSettings:
     prefix = role.upper()
+    fallback_prefix = "TEACHER" if role == "critic" else prefix
     suffix = f"_{profile.upper()}" if profile else ""
     default_timeout = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "120"))
-    timeout = float(os.getenv(f"{prefix}_TIMEOUT_SECONDS{suffix}", str(default_timeout)))
-    provider = os.getenv(f"{prefix}_PROVIDER{suffix}", "openai").lower()
+    timeout = float(
+        os.getenv(
+            f"{prefix}_TIMEOUT_SECONDS{suffix}",
+            os.getenv(f"{fallback_prefix}_TIMEOUT_SECONDS{suffix}", str(default_timeout)),
+        )
+    )
+    provider = os.getenv(f"{prefix}_PROVIDER{suffix}", os.getenv(f"{fallback_prefix}_PROVIDER{suffix}", "openai")).lower()
     if provider not in {"openai", "anthropic"}:
         raise RuntimeError(f"{prefix}_PROVIDER{suffix} must be openai or anthropic, got: {provider}")
     return ModelSettings(
         role=role,
         provider=provider,  # type: ignore[arg-type]
-        base_url=_required_env(f"{prefix}_BASE_URL{suffix}"),
-        api_key=_required_env(f"{prefix}_API_KEY{suffix}"),
-        model=_required_env(f"{prefix}_MODEL{suffix}"),
+        base_url=_env_with_fallback(f"{prefix}_BASE_URL{suffix}", f"{fallback_prefix}_BASE_URL{suffix}"),
+        api_key=_env_with_fallback(f"{prefix}_API_KEY{suffix}", f"{fallback_prefix}_API_KEY{suffix}"),
+        model=_env_with_fallback(f"{prefix}_MODEL{suffix}", f"{fallback_prefix}_MODEL{suffix}"),
         timeout_seconds=timeout,
     )
+
+
+def _env_with_fallback(name: str, fallback_name: str) -> str:
+    value = os.getenv(name) or os.getenv(fallback_name)
+    if not value:
+        raise RuntimeError(f"Missing required environment variable: {name}")
+    return value
 
 
 def _required_env(name: str) -> str:

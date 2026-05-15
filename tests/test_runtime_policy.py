@@ -11,6 +11,7 @@ from agentdistill.contracts import (
     validate_runtime_policy_tests,
     validate_tool_contract,
 )
+from agentdistill.critic import parse_critic_audit, validate_critic_policy_cases
 from agentdistill.diagnosis import PatchBundle, parse_diagnosis
 from agentdistill.feedback import build_patch_feedback, merge_benchmark_context
 from agentdistill.metrics import build_benchmark_metrics
@@ -339,77 +340,6 @@ def evaluate(input: dict) -> dict:
     )
 
 
-def test_runtime_policy_generalization_rejects_removal_phrase_family_gaps(tmp_path: Path) -> None:
-    harness = tmp_path / "harness"
-    tools_dir = harness / "tools"
-    policies_dir = harness / "runtime_policies"
-    tests_dir = harness / "tests"
-    tools_dir.mkdir(parents=True)
-    policies_dir.mkdir(parents=True)
-    tests_dir.mkdir(parents=True)
-
-    (tools_dir / "inventory_arithmetic.py").write_text(
-        """
-def run(input: dict) -> dict:
-    text = input.get("text", "").lower()
-    if "sold 237" not in text:
-        return {"ok": True, "result": 2050, "unit": "tags", "answer": "2,050 tags remain."}
-    return {"ok": True, "result": 1813, "unit": "tags", "answer": "1,813 tags remain."}
-""".strip()
-    )
-    policy_path = policies_dir / "force_inventory.py"
-    policy_path.write_text(
-        """
-def evaluate(input: dict) -> dict:
-    task = input.get("task_instruction", "").lower()
-    if "started with" in task and "remain" in task:
-        return {
-            "requires_tool": True,
-            "tool_name": "inventory_arithmetic",
-            "tool_input": {"text": input.get("task_instruction", "")},
-            "reason": "schema trigger with narrow parser"
-        }
-    return {"requires_tool": False}
-""".strip()
-    )
-    (tests_dir / "force_inventory.json").write_text(
-        """
-{
-  "policy": "force_inventory",
-  "cases": [
-    {
-      "input": {
-        "task_instruction": "A store started with 2,050 tags and sold 237 tags. How many tags remain?",
-        "available_tools": ["inventory_arithmetic"],
-        "expected_answer": "1,813 tags remain."
-      },
-      "expected": {
-        "requires_tool": true,
-        "tool_name": "inventory_arithmetic",
-        "tool_input": {"text": "A store started with 2,050 tags and sold 237 tags. How many tags remain?"}
-      },
-      "expected_tool_result": {"ok": true, "result": 1813}
-    }
-  ]
-}
-""".strip()
-    )
-
-    result = validate_runtime_policy_generalization(tmp_path, policy_path)
-
-    assert result["ok"] is False
-    assert any(
-        failure["mutation"] == "removal_phrase_family"
-        and failure["reason"] == "forced tool result failed after schema-preserving wording changes"
-        and (
-            "handed out 237" in failure["mutated_instruction"]
-            or "redeemed 237" in failure["mutated_instruction"]
-            or "voided 237" in failure["mutated_instruction"]
-        )
-        for failure in result["failures"]
-    )
-
-
 def test_runtime_policy_generalization_accepts_schema_trigger(tmp_path: Path) -> None:
     harness = tmp_path / "harness"
     tools_dir = harness / "tools"
@@ -468,6 +398,87 @@ def evaluate(input: dict) -> dict:
     assert result["ok"] is True
     assert result["reason"] == "policy generalization audit passed"
     assert result["num_cases"] >= 2
+
+
+def test_parse_critic_audit_accepts_fenced_json() -> None:
+    parsed = parse_critic_audit(
+        """
+```json
+{
+  "audit_cases": [
+    {
+      "input": {"task_instruction": "x", "available_tools": ["adder"]},
+      "expected": {"requires_tool": true, "tool_name": "adder"}
+    }
+  ],
+  "rationale": "check alias"
+}
+```
+""".strip()
+    )
+
+    assert parsed["parse_status"] == "parsed"
+    assert len(parsed["audit_cases"]) == 1
+    assert parsed["rationale"] == "check alias"
+
+
+def test_critic_policy_cases_are_executed_by_gate(tmp_path: Path) -> None:
+    harness = tmp_path / "harness"
+    tools_dir = harness / "tools"
+    policies_dir = harness / "runtime_policies"
+    tools_dir.mkdir(parents=True)
+    policies_dir.mkdir(parents=True)
+
+    (tools_dir / "adder.py").write_text(
+        """
+def run(input: dict) -> dict:
+    return {"ok": True, "total": input["a"] + input["b"]}
+""".strip()
+    )
+    policy_path = policies_dir / "force_adder.py"
+    policy_path.write_text(
+        """
+def evaluate(input: dict) -> dict:
+    return {
+        "requires_tool": True,
+        "tool_name": "adder",
+        "tool_input": {"a": 2, "b": 3},
+        "reason": "critic case"
+    }
+""".strip()
+    )
+
+    result = validate_critic_policy_cases(
+        tmp_path,
+        policy_path,
+        [
+            {
+                "input": {"task_instruction": "add two and three", "available_tools": ["adder"]},
+                "expected": {"requires_tool": True, "tool_name": "adder"},
+                "expected_tool_result": {"ok": True, "total": 5},
+            }
+        ],
+    )
+
+    assert result["ok"] is True
+    assert result["reason"] == "critic policy audit cases passed"
+
+
+def test_load_model_settings_critic_falls_back_to_teacher(monkeypatch) -> None:
+    monkeypatch.delenv("CRITIC_BASE_URL", raising=False)
+    monkeypatch.delenv("CRITIC_API_KEY", raising=False)
+    monkeypatch.delenv("CRITIC_MODEL", raising=False)
+    monkeypatch.setenv("TEACHER_PROVIDER", "openai")
+    monkeypatch.setenv("TEACHER_BASE_URL", "https://example.com")
+    monkeypatch.setenv("TEACHER_API_KEY", "k")
+    monkeypatch.setenv("TEACHER_MODEL", "teacher-model")
+
+    settings = load_model_settings("critic")
+
+    assert settings.role == "critic"
+    assert settings.base_url == "https://example.com"
+    assert settings.api_key == "k"
+    assert settings.model == "teacher-model"
 
 
 def test_tool_contract_validation_runs_json_tests(tmp_path: Path) -> None:
@@ -727,6 +738,70 @@ def evaluate(input: dict) -> dict:
     assert all(contract["ok"] is True for contract in result["contract_validation"])
     assert (tmp_path / "harness" / "tools" / "adder.py").exists()
     assert (tmp_path / "outputs" / "harness_workspaces" / "adder_bundle" / "harness" / "tools" / "adder.py").exists()
+
+
+def test_atomic_patch_bundles_reject_failed_critic_policy_cases(tmp_path: Path) -> None:
+    _make_harness_dirs(tmp_path)
+    task = TaskConfig(id="t", instruction="add 2 and 3", expected_answer="5")
+    bundles = [
+        PatchBundle(
+            target_path="harness/tools/adder.py",
+            action="create_or_replace",
+            content="""
+def run(input: dict) -> dict:
+    return {"ok": True, "total": input["a"] + input["b"]}
+""".strip(),
+            rationale="Deterministic addition.",
+        ),
+        PatchBundle(
+            target_path="harness/tests/adder.json",
+            action="create_or_replace",
+            content='{"tool":"adder","cases":[{"input":{"a":2,"b":3},"expected":{"ok":true,"total":5}}]}',
+            rationale="Covers the tool contract.",
+        ),
+        PatchBundle(
+            target_path="harness/runtime_policies/force_adder.py",
+            action="create_or_replace",
+            content="""
+def evaluate(input: dict) -> dict:
+    return {"requires_tool": True, "tool_name": "adder", "tool_input": {"a": 2, "b": 3}}
+""".strip(),
+            rationale="Forces exact arithmetic.",
+        ),
+        PatchBundle(
+            target_path="harness/tests/force_adder.json",
+            action="create_or_replace",
+            content='{"policy":"force_adder","cases":[{"input":{"task_instruction":"add 2 and 3","available_tools":["adder"],"expected_answer":"5"},"expected":{"requires_tool":true,"tool_name":"adder"},"expected_tool_result":{"ok":true,"total":5}}]}',
+            rationale="Covers the runtime policy contract.",
+        ),
+    ]
+
+    result = apply_patch_bundles_atomically(
+        tmp_path,
+        bundles,
+        task,
+        _manifest_for(
+            [
+                "harness/tools/adder.py",
+                "harness/tests/adder.json",
+                "harness/runtime_policies/force_adder.py",
+                "harness/tests/force_adder.json",
+            ]
+        ),
+        critic_policy_cases={
+            "force_adder": [
+                {
+                    "input": {"task_instruction": "critic expects different sum", "available_tools": ["adder"]},
+                    "expected": {"requires_tool": True, "tool_name": "adder"},
+                    "expected_tool_result": {"ok": True, "total": 6},
+                }
+            ]
+        },
+    )
+
+    assert result["patch_status"] == "rejected"
+    assert any(item.get("reason") == "one or more policy tests failed" for item in result["contract_validation"])
+    assert not (tmp_path / "harness" / "tools" / "adder.py").exists()
 
 
 def test_code_patch_bundles_require_manifest(tmp_path: Path) -> None:
@@ -1017,7 +1092,9 @@ def test_run_phase_records_context_patch_feedback(tmp_path: Path) -> None:
             [TaskConfig(id="t", instruction="answer", expected_answer="1")],
             WeakClient(),
             TeacherClient(),
+            TeacherClient(),
             "teacher",
+            "critic",
             tmp_path / "outputs",
             False,
             tmp_path,

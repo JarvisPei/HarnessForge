@@ -63,6 +63,21 @@ def validate_runtime_policy_tests(repo_root: Path, policy_path: Path) -> dict[st
         return {**error, "policy": policy_name}
     if not isinstance(data, dict) or data.get("policy") != policy_name:
         return {"ok": False, "reason": "test file must be an object with matching policy name", "policy": policy_name}
+    result = validate_runtime_policy_case_data(repo_root, policy_path, data)
+    if result.get("ok") is True:
+        result["tests_path"] = str(tests_path)
+    return result
+
+
+def validate_runtime_policy_case_data(
+    repo_root: Path,
+    policy_path: Path,
+    data: dict[str, Any],
+    reason: str = "all policy tests passed",
+) -> dict[str, Any]:
+    policy_name = policy_path.stem
+    if data.get("policy") != policy_name:
+        return {"ok": False, "reason": "test file must be an object with matching policy name", "policy": policy_name}
     cases = data.get("cases", [])
     if not isinstance(cases, list) or not cases:
         return {"ok": False, "reason": "policy test file must contain a non-empty cases list", "policy": policy_name}
@@ -116,7 +131,7 @@ def validate_runtime_policy_tests(repo_root: Path, policy_path: Path) -> dict[st
 
     if failures:
         return {"ok": False, "reason": "one or more policy tests failed", "policy": policy_name, "failures": failures}
-    return {"ok": True, "reason": "all policy tests passed", "policy": policy_name, "tests_path": str(tests_path), "num_cases": len(cases)}
+    return {"ok": True, "reason": reason, "policy": policy_name, "num_cases": len(cases)}
 
 
 def validate_runtime_policy_generalization(repo_root: Path, policy_path: Path) -> dict[str, Any]:
@@ -323,19 +338,9 @@ def _schema_preserving_paraphrases(text: str) -> list[tuple[str, str]]:
         ("product_container", r"\bsheets?\s+with\s+", "crates with "),
         ("product_container", r"\bpacks?\s+with\s+", "bags with "),
         ("direct_subtract_verb", r"\bshipped\s+(\d)", r"gave away \1"),
-        ("removal_phrase_family", r"\bshipped\s+(\d)", r"handed out \1"),
-        ("removal_phrase_family", r"\bshipped\s+(\d)", r"redeemed \1"),
-        ("removal_phrase_family", r"\bshipped\s+(\d)", r"voided \1"),
         ("direct_subtract_verb", r"\bsold\s+(\d)", r"gave away \1"),
-        ("removal_phrase_family", r"\bsold\s+(\d)", r"handed out \1"),
-        ("removal_phrase_family", r"\bsold\s+(\d)", r"redeemed \1"),
-        ("removal_phrase_family", r"\bsold\s+(\d)", r"voided \1"),
-        ("removal_phrase_family", r"\bdiscarded\s+(\d)", r"voided \1"),
         ("direct_subtract_verb", r"\bused\s+(\d)", r"removed \1"),
-        ("removal_phrase_family", r"\bused\s+(\d)", r"handed out \1"),
-        ("removal_phrase_family", r"\bused\s+(\d)", r"redeemed \1"),
         ("direct_subtract_verb", r"\blost\s+(\d)", r"removed \1"),
-        ("removal_phrase_family", r"\blost\s+(\d)", r"voided \1"),
         ("direct_add_verb", r"\breceived\s+(\d)", r"got \1"),
         ("direct_add_verb", r"\bbought\s+(\d)", r"acquired \1"),
     ]

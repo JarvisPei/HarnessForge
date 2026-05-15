@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from rich.console import Console
 
 from agentdistill.config import BenchmarkConfig, TaskConfig, load_benchmark_config
+from agentdistill.critic import request_policy_audit_cases
 from agentdistill.diagnosis import parse_diagnosis, write_patch_artifact
 from agentdistill.feedback import build_patch_feedback, merge_benchmark_context
 from agentdistill.harness import load_system_prompt
@@ -45,7 +46,9 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
 
     weak = ChatClient(load_model_settings("weak", profile))
     teacher = ChatClient(load_model_settings("teacher", profile))
+    critic = ChatClient(load_model_settings("critic", profile))
     teacher_system = (repo_root / "prompts/teacher_diagnosis.md").read_text().strip()
+    critic_system = (repo_root / "prompts/critic_policy_audit.md").read_text().strip()
 
     console.print(f"[bold]Benchmark:[/bold] {cfg.name}")
     console.print(f"[bold]Run:[/bold] {output_dir}")
@@ -57,7 +60,9 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
         tasks=cfg.dev_probe_tasks,
         weak=weak,
         teacher=teacher,
+        critic=critic,
         teacher_system=teacher_system,
+        critic_system=critic_system,
         output_dir=output_dir,
         apply_patches=False,
         repo_root=repo_root,
@@ -69,7 +74,9 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
         tasks=cfg.blind_test_tasks,
         weak=weak,
         teacher=teacher,
+        critic=critic,
         teacher_system=teacher_system,
+        critic_system=critic_system,
         output_dir=output_dir,
         apply_patches=False,
         repo_root=repo_root,
@@ -87,7 +94,9 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
             tasks=cfg.train_tasks,
             weak=weak,
             teacher=teacher,
+            critic=critic,
             teacher_system=teacher_system,
+            critic_system=critic_system,
             output_dir=output_dir,
             apply_patches=True,
             repo_root=repo_root,
@@ -118,7 +127,9 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
             tasks=cfg.dev_probe_tasks,
             weak=weak,
             teacher=teacher,
+            critic=critic,
             teacher_system=teacher_system,
+            critic_system=critic_system,
             output_dir=output_dir,
             apply_patches=False,
             repo_root=repo_root,
@@ -133,7 +144,9 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
         tasks=cfg.dev_probe_tasks,
         weak=weak,
         teacher=teacher,
+        critic=critic,
         teacher_system=teacher_system,
+        critic_system=critic_system,
         output_dir=output_dir,
         apply_patches=False,
         repo_root=repo_root,
@@ -145,7 +158,9 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
         tasks=cfg.blind_test_tasks,
         weak=weak,
         teacher=teacher,
+        critic=critic,
         teacher_system=teacher_system,
+        critic_system=critic_system,
         output_dir=output_dir,
         apply_patches=False,
         repo_root=repo_root,
@@ -186,7 +201,9 @@ async def _run_phase(
     tasks: list[TaskConfig],
     weak: ChatClient,
     teacher: ChatClient,
+    critic: ChatClient,
     teacher_system: str,
+    critic_system: str,
     output_dir: Path,
     apply_patches: bool,
     repo_root: Path,
@@ -235,7 +252,29 @@ async def _run_phase(
             result["teacher_diagnosis"] = diagnosis.model_dump()
         applied_patch_paths: list[str] = []
         if apply_patches and diagnosis is not None and diagnosis.patch_bundles and diagnosis.failure_categories:
-            patch_result = apply_patch_bundles_atomically(repo_root, diagnosis.patch_bundles, task, diagnosis.harness_manifest)
+            critic_policy_cases: dict[str, list[dict[str, object]]] = {}
+            critic_audits: dict[str, object] = {}
+            for policy_name in _policy_names_from_patch_bundles(diagnosis.patch_bundles):
+                existing_policy_tests = _policy_tests_from_patch_bundles(diagnosis.patch_bundles, policy_name)
+                audit = await request_policy_audit_cases(
+                    critic,
+                    critic_system,
+                    task,
+                    diagnosis.patch_bundles,
+                    policy_name,
+                    existing_policy_tests,
+                )
+                critic_audits[policy_name] = audit
+                critic_policy_cases[policy_name] = list(audit.get("audit_cases", []))
+            if critic_audits:
+                result["critic_audits"] = critic_audits
+            patch_result = apply_patch_bundles_atomically(
+                repo_root,
+                diagnosis.patch_bundles,
+                task,
+                diagnosis.harness_manifest,
+                critic_policy_cases=critic_policy_cases,
+            )
             result.update(patch_result)
             applied_patch_paths = list(patch_result.get("applied_patch_paths", []))
             result["applied_patch_path"] = applied_patch_paths[0] if applied_patch_paths else None
@@ -264,6 +303,28 @@ async def _run_phase(
         results[task.id] = result
     (phase_dir / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     return results
+
+
+def _policy_names_from_patch_bundles(patch_bundles) -> list[str]:
+    names = []
+    for bundle in patch_bundles:
+        parts = Path(bundle.target_path).parts
+        if len(parts) == 3 and parts[0] == "harness" and parts[1] == "runtime_policies" and parts[2].endswith(".py"):
+            names.append(Path(parts[2]).stem)
+    return sorted(set(names))
+
+
+def _policy_tests_from_patch_bundles(patch_bundles, policy_name: str) -> dict[str, object] | None:
+    target = f"harness/tests/{policy_name}.json"
+    for bundle in patch_bundles:
+        if bundle.target_path != target:
+            continue
+        try:
+            data = json.loads(bundle.content)
+        except json.JSONDecodeError:
+            return None
+        return data if isinstance(data, dict) else None
+    return None
 
 
 def _build_transfer_context(tasks: list[TaskConfig], results: dict[str, dict[str, object]]) -> dict[str, object]:

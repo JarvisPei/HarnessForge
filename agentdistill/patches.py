@@ -13,6 +13,7 @@ from agentdistill.contracts import (
 )
 from agentdistill.diagnosis import PatchBundle, _safe_harness_path, apply_patch_bundle
 from agentdistill.manifest import HarnessManifest, validate_harness_manifest
+from agentdistill.critic import validate_critic_policy_cases
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,7 @@ def apply_patch_bundles_atomically(
     bundles: list[PatchBundle],
     task: TaskConfig,
     manifest: HarnessManifest | None = None,
+    critic_policy_cases: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     applied: list[AppliedPatch] = []
     attempted_paths: list[Path] = []
@@ -47,7 +49,12 @@ def apply_patch_bundles_atomically(
             path = apply_patch_bundle(staging_root, bundle)
             staged_applied[-1] = AppliedPatch(path=path, previous_content=previous)
 
-        contract_results = manifest_results + _validate_patch_group(staging_root, task, [patch.path for patch in staged_applied])
+        contract_results = manifest_results + _validate_patch_group(
+            staging_root,
+            task,
+            [patch.path for patch in staged_applied],
+            critic_policy_cases=critic_policy_cases,
+        )
         failures = [result for result in contract_results if result.get("ok") is not True]
         if failures:
             raise PatchGroupRejected("one or more patch contracts failed", contract_results)
@@ -90,7 +97,12 @@ class PatchGroupRejected(RuntimeError):
         self.contract_results = contract_results
 
 
-def _validate_patch_group(repo_root: Path, task: TaskConfig, paths: list[Path]) -> list[dict[str, Any]]:
+def _validate_patch_group(
+    repo_root: Path,
+    task: TaskConfig,
+    paths: list[Path],
+    critic_policy_cases: dict[str, list[dict[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     tools_root = (repo_root / "harness" / "tools").resolve()
     policies_root = (repo_root / "harness" / "runtime_policies").resolve()
@@ -101,6 +113,15 @@ def _validate_patch_group(repo_root: Path, task: TaskConfig, paths: list[Path]) 
             results.append({"path": str(path), **validate_runtime_policy_contract(repo_root, task, path)})
             results.append({"path": str(path), **validate_runtime_policy_tests(repo_root, path)})
             results.append({"path": str(path), **validate_runtime_policy_generalization(repo_root, path)})
+            policy_cases = (critic_policy_cases or {}).get(path.stem, [])
+            if policy_cases:
+                results.append(
+                    {
+                        "path": str(path),
+                        "critic_policy_cases": policy_cases,
+                        **validate_critic_policy_cases(repo_root, path, policy_cases),
+                    }
+                )
     return results
 
 
