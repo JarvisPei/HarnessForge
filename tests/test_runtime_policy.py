@@ -1306,6 +1306,21 @@ def test_inventory_benchmark_allows_three_repair_iterations() -> None:
     assert [task.id for task in cfg.blind_test_tasks] == ["blind_inventory_badges", "blind_inventory_vouchers"]
 
 
+def test_explicit_ops_benchmark_config() -> None:
+    cfg = load_benchmark_config("configs/benchmark_explicit_ops.yaml")
+    assert cfg.name == "benchmark_explicit_ops"
+    assert cfg.evolve_iterations == 3
+    assert cfg.critic_mode == "off"
+    assert [task.id for task in cfg.train_tasks] == ["train_explicit_labels"]
+    assert [task.id for task in cfg.dev_probe_tasks] == ["dev_explicit_tags_inline", "dev_explicit_stickers_table"]
+    assert [task.id for task in cfg.blind_test_tasks] == [
+        "blind_explicit_badges_jsonish",
+        "blind_explicit_vouchers_semicolon",
+    ]
+    assert "+18*52" in cfg.blind_test_tasks[0].instruction
+    assert "handed out" not in cfg.blind_test_tasks[0].instruction
+
+
 def test_unit_conversion_benchmark_config() -> None:
     cfg = load_benchmark_config("configs/benchmark_unit_conversion.yaml")
     assert cfg.name == "benchmark_unit_conversion"
