@@ -350,7 +350,9 @@ def _build_transfer_context(tasks: list[TaskConfig], results: dict[str, dict[str
         rows.append(
             {
                 "task_id": task.id,
+                "task_instruction": task.instruction,
                 "expected_answer": task.expected_answer,
+                "rubric": task.rubric,
                 "success": evaluate_success(task, result),
                 "weak_answer": result.get("weak_answer"),
                 "tool_call": result.get("tool_call"),

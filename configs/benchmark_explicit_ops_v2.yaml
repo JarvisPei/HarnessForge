@@ -1,0 +1,97 @@
+name: benchmark_explicit_ops_v2
+output_dir: outputs/benchmark_explicit_ops_v2
+weak:
+  role: weak
+teacher:
+  role: teacher
+harness:
+  system_prompt_path: prompts/weak_system.md
+  skills_dir: harness/skills
+  guidelines_dir: harness/guidelines
+  validators_dir: harness/validators
+  tools_dir: harness/tools
+  runtime_policies_dir: harness/runtime_policies
+evolve_iterations: 3
+train_tasks:
+  - id: train_explicit_labels_block
+    instruction: |
+      Compute the final inventory count from this explicit operation log.
+
+      Unit: labels
+      Initial: 1,204
+      Operations:
+      + 37 * 18
+      - 89
+      - 647
+      + 23 * 14
+
+      Return the final count in labels with one short explanation sentence.
+    expected_answer: "1,456 labels remain."
+    rubric: |
+      Correct computation is 1204 + 37*18 - 89 - 647 + 23*14 = 1456. A reliable harness should parse explicit signed operations and use deterministic arithmetic rather than weak-model mental arithmetic.
+  - id: train_explicit_cards_jsonish
+    instruction: |
+      Determine the final count from this explicit signed update object.
+
+      {
+        "unit": "cards",
+        "initial": "760",
+        "updates": ["+14*22", "-135", "+6*18", "-41"]
+      }
+
+      Return the final count in cards with one short explanation sentence.
+    expected_answer: "1,000 cards remain."
+    rubric: |
+      Correct computation is 760 + 14*22 - 135 + 6*18 - 41 = 1000. A reliable harness should treat JSON-like signed operation lists as the same latent schema as block logs.
+dev_probe_tasks:
+  - id: dev_explicit_tags_inline
+    instruction: |
+      Use the explicit signed update list to compute the final count.
+      unit=tags
+      start=2,050
+      updates=[+16*45, -138, -1,107, +9*32]
+      Return the final count in tags with one short explanation sentence.
+    expected_answer: "1,813 tags remain."
+    rubric: |
+      Correct computation is 2050 + 16*45 - 138 - 1107 + 9*32 = 1813.
+  - id: dev_explicit_stickers_table
+    instruction: |
+      Calculate the final count from this signed-operation table.
+
+      unit: stickers
+      initial: 980
+
+      | sign | value |
+      | --- | --- |
+      | + | 12 * 36 |
+      | - | 275 |
+      | - | 49 |
+      | + | 7 * 24 |
+
+      Return the final count in stickers with one short explanation sentence.
+    expected_answer: "1,256 stickers remain."
+    rubric: |
+      Correct computation is 980 + 12*36 - 275 - 49 + 7*24 = 1256.
+blind_test_tasks:
+  - id: blind_explicit_badges_reordered_jsonish
+    instruction: |
+      Determine the final inventory count.
+
+      {
+        "updates": ["+18*52", "-214", "-1,206", "+11*37"],
+        "initial": "3,400",
+        "unit": "badges"
+      }
+
+      Return the final count in badges with one short explanation sentence.
+    expected_answer: "3,323 badges remain."
+    rubric: |
+      Correct computation is 3400 + 18*52 - 214 - 1206 + 11*37 = 3323.
+  - id: blind_explicit_vouchers_semicolon
+    instruction: |
+      Compute the final count from the explicit signed operations:
+      unit: vouchers; initial: 1,875; operations: +22*31; -96; -1,004; +8*44.
+      Return the final count in vouchers with one short explanation sentence.
+    expected_answer: "1,809 vouchers remain."
+    rubric: |
+      Correct computation is 1875 + 22*31 - 96 - 1004 + 8*44 = 1809.

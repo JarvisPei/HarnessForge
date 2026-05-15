@@ -1067,6 +1067,8 @@ def test_build_transfer_context_uses_heldout_probe_results() -> None:
 
     context = _build_transfer_context(tasks, results)
     assert context["heldout_probe"][0]["success"] is True
+    assert context["heldout_probe"][0]["task_instruction"] == "a"
+    assert context["heldout_probe"][0]["expected_answer"] == "1"
     assert context["heldout_probe"][0]["weak_answer"] == "1"
     assert context["heldout_probe"][1]["success"] is False
 
@@ -1319,6 +1321,33 @@ def test_explicit_ops_benchmark_config() -> None:
     ]
     assert "+18*52" in cfg.blind_test_tasks[0].instruction
     assert "handed out" not in cfg.blind_test_tasks[0].instruction
+
+
+def test_explicit_ops_v2_benchmark_config_covers_schema_variants() -> None:
+    cfg = load_benchmark_config("configs/benchmark_explicit_ops_v2.yaml")
+    assert cfg.name == "benchmark_explicit_ops_v2"
+    assert cfg.evolve_iterations == 3
+    assert cfg.critic_mode == "off"
+    assert [task.id for task in cfg.train_tasks] == [
+        "train_explicit_labels_block",
+        "train_explicit_cards_jsonish",
+    ]
+    assert [task.id for task in cfg.dev_probe_tasks] == [
+        "dev_explicit_tags_inline",
+        "dev_explicit_stickers_table",
+    ]
+    assert [task.id for task in cfg.blind_test_tasks] == [
+        "blind_explicit_badges_reordered_jsonish",
+        "blind_explicit_vouchers_semicolon",
+    ]
+    all_text = "\n".join(task.instruction for task in cfg.train_tasks + cfg.dev_probe_tasks + cfg.blind_test_tasks)
+    assert '"updates"' in all_text
+    assert "updates=[" in all_text
+    assert "| sign | value |" in all_text
+    assert "operations: +22*31" in all_text
+    assert "handed out" not in all_text
+    assert "redeemed" not in all_text
+    assert "voided" not in all_text
 
 
 def test_unit_conversion_benchmark_config() -> None:
