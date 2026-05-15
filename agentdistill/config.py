@@ -49,6 +49,7 @@ class BenchmarkConfig(BaseModel):
     evolve_iterations: int = 2
     critic_mode: Literal["off", "always"] = "off"
     transfer_context_mode: Literal["heldout_probe", "feedback_only"] = "heldout_probe"
+    repair_mode: Literal["full_train", "focused"] = "full_train"
 
 
 def load_config(path: str | Path) -> ExperimentConfig:

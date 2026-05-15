@@ -5,11 +5,16 @@ from pathlib import Path
 
 from agentdistill.config import TaskConfig, load_benchmark_config
 from agentdistill.benchmark import (
+    _benchmark_context_for_iteration,
+    _build_focused_repair_task,
     _build_transfer_context,
     _critic_enabled,
     _initial_transfer_context,
+    _phase_kind,
+    _run_focused_repair_task,
     _run_phase,
     _should_request_critic_cases,
+    _tasks_for_evolve_iteration,
 )
 from agentdistill.contracts import (
     validate_runtime_policy_contract,
@@ -1205,6 +1210,103 @@ def test_transfer_feedback_persists_until_probe_success_resolves_it() -> None:
     assert resolved["failed_tasks"] == []
 
 
+def test_focused_repair_task_preserves_patch_and_transfer_context() -> None:
+    patch_feedback = {
+        "iteration": 2,
+        "has_rejections": True,
+        "rejected_bundles": [
+            {
+                "task_id": "train",
+                "bundle_id": "inventory_parser",
+                "rejected_patch_paths": ["harness/tools/inventory.py"],
+                "failed_contracts": [
+                    {
+                        "path": "harness/tools/inventory.py",
+                        "reason": "one or more tool tests failed",
+                        "failures": [{"case_index": 0, "actual": {"result": 30553}}],
+                    }
+                ],
+            }
+        ],
+    }
+    transfer_feedback = {
+        "iteration": 2,
+        "has_transfer_failures": True,
+        "failed_tasks": [
+            {
+                "task_id": "dev_tags",
+                "task_instruction": "unit=tags start=20,500 updates=[+116*45, -3,138]",
+                "expected_answer": "22,582 tags remain.",
+            }
+        ],
+    }
+
+    task = _build_focused_repair_task(patch_feedback, transfer_feedback)
+
+    assert task.id == "focused_repair"
+    assert task.expected_answer == "22,582 tags remain."
+    assert "inventory_parser" in task.instruction
+    assert "harness/tools/inventory.py" in task.instruction
+    assert "unit=tags" in task.instruction
+    assert "one or more tool tests failed" in task.instruction
+
+
+def test_focused_repair_mode_uses_single_synthetic_task_after_rejection() -> None:
+    class Config:
+        repair_mode = "focused"
+        train_tasks = [TaskConfig(id="train_a", instruction="a"), TaskConfig(id="train_b", instruction="b")]
+
+    patch_feedback = {
+        "has_rejections": True,
+        "rejected_bundles": [{"bundle_id": "b", "rejected_patch_paths": [], "failed_contracts": []}],
+    }
+
+    tasks = _tasks_for_evolve_iteration(Config(), patch_feedback, None)
+
+    assert _phase_kind(Config(), patch_feedback) == "focused_repair"
+    assert [task.id for task in tasks] == ["focused_repair"]
+
+
+def test_benchmark_context_marks_focused_repair_only_when_active() -> None:
+    context = _benchmark_context_for_iteration(
+        {"heldout_probe": []},
+        {"has_rejections": True, "rejected_bundles": [{"task_id": "train"}]},
+        {"has_transfer_failures": True, "failed_tasks": [{"task_id": "dev"}]},
+        "focused_repair",
+    )
+
+    assert context["repair_mode"] == "focused"
+    assert context["patch_feedback"]["has_rejections"] is True
+    assert context["transfer_feedback"]["has_transfer_failures"] is True
+
+
+def test_run_focused_repair_task_calls_teacher_without_weak_model() -> None:
+    class TeacherClient:
+        def __init__(self) -> None:
+            self.messages = None
+
+        async def complete(self, messages, temperature=0.2):
+            self.messages = messages
+            return '{"failure_categories":[],"patch_type":"runtime_policy","patch_bundles":[]}'
+
+    teacher = TeacherClient()
+    context = {"repair_mode": "focused", "patch_feedback": {"has_rejections": True}}
+    result = asyncio.run(
+        _run_focused_repair_task(
+            TaskConfig(id="focused_repair", instruction="repair", expected_answer="1"),
+            teacher,
+            "teacher system",
+            "weak system",
+            context,
+        )
+    )
+
+    assert result["focused_repair"] is True
+    assert result["weak_answer"] == ""
+    assert teacher.messages is not None
+    assert '"repair_mode": "focused"' in teacher.messages[1]["content"]
+
+
 def test_teacher_prompt_uses_meta_skills_not_domain_scaffolds() -> None:
     prompt = Path("prompts/teacher_diagnosis.md").read_text()
 
@@ -1369,6 +1471,7 @@ train_tasks:
     cfg = load_benchmark_config(config_path)
     assert cfg.critic_mode == "off"
     assert cfg.transfer_context_mode == "heldout_probe"
+    assert cfg.repair_mode == "full_train"
     assert _critic_enabled(cfg.critic_mode) is False
     assert _should_request_critic_cases(cfg.critic_mode, None) is False
 
@@ -1425,6 +1528,7 @@ def test_explicit_ops_v2_benchmark_config_covers_schema_variants() -> None:
     assert cfg.evolve_iterations == 3
     assert cfg.critic_mode == "off"
     assert cfg.transfer_context_mode == "feedback_only"
+    assert cfg.repair_mode == "focused"
     assert [task.id for task in cfg.train_tasks] == [
         "train_explicit_labels_block",
         "train_explicit_cards_jsonish",

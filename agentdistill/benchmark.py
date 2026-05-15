@@ -90,10 +90,13 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
     train_summary: list[dict[str, object]] = []
     for iteration in range(1, cfg.evolve_iterations + 1):
         phase = f"evolve_train_iter_{iteration:02d}"
+        phase_kind = _phase_kind(cfg, patch_feedback)
+        benchmark_context = _benchmark_context_for_iteration(transfer_context, patch_feedback, transfer_feedback, phase_kind)
+        tasks = _tasks_for_evolve_iteration(cfg, patch_feedback, transfer_feedback)
         train_results = await _run_phase(
             cfg,
             phase=phase,
-            tasks=cfg.train_tasks,
+            tasks=tasks,
             weak=weak,
             teacher=teacher,
             critic=critic,
@@ -102,13 +105,14 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
             output_dir=output_dir,
             apply_patches=True,
             repo_root=repo_root,
-            benchmark_context=merge_benchmark_context(transfer_context, patch_feedback, transfer_feedback),
+            benchmark_context=benchmark_context,
         )
         patch_feedback = build_patch_feedback(train_results, iteration)
         accepted_harness = any(result.get("patch_status") == "accepted" for result in train_results.values())
         train_summary.extend(
             {
                 "iteration": iteration,
+                "phase_kind": phase_kind,
                 "task_id": task_id,
                 "applied_patch_path": result.get("applied_patch_path"),
                 "applied_patch_paths": result.get("applied_patch_paths", []),
@@ -248,17 +252,20 @@ async def _run_phase(
         )
         if tools.names:
             weak_system = weak_system + "\n\n" + tools.describe()
-        result = await run_task(
-            task,
-            weak,
-            teacher,
-            weak_system,
-            teacher_system,
-            tools,
-            policies,
-            benchmark_context=benchmark_context,
-            request_teacher_diagnosis=request_teacher_diagnosis,
-        )
+        if request_teacher_diagnosis and benchmark_context and benchmark_context.get("repair_mode") == "focused":
+            result = await _run_focused_repair_task(task, teacher, teacher_system, weak_system, benchmark_context)
+        else:
+            result = await run_task(
+                task,
+                weak,
+                teacher,
+                weak_system,
+                teacher_system,
+                tools,
+                policies,
+                benchmark_context=benchmark_context,
+                request_teacher_diagnosis=request_teacher_diagnosis,
+            )
         if request_teacher_diagnosis and benchmark_context and benchmark_context.get("patch_feedback"):
             result["context_patch_feedback"] = benchmark_context["patch_feedback"]
         if request_teacher_diagnosis and benchmark_context and benchmark_context.get("transfer_feedback"):
@@ -314,12 +321,56 @@ async def _run_phase(
                 "contract_validation": result.get("contract_validation"),
                 "harness_manifest": result.get("harness_manifest"),
                 "context_patch_feedback": result.get("context_patch_feedback"),
+                "context_transfer_feedback": result.get("context_transfer_feedback"),
                 "rejection_reason": result.get("rejection_reason"),
             }
         )
         results[task.id] = result
     (phase_dir / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     return results
+
+
+async def _run_focused_repair_task(
+    task: TaskConfig,
+    teacher: ChatClient,
+    teacher_system: str,
+    weak_system: str,
+    benchmark_context: dict[str, object],
+) -> dict[str, object]:
+    messages = [
+        {"role": "system", "content": teacher_system},
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "task_id": task.id,
+                    "task_instruction": task.instruction,
+                    "expected_answer": task.expected_answer,
+                    "rubric": task.rubric,
+                    "weak_system_prompt": weak_system,
+                    "weak_answer": "",
+                    "initial_weak_answer": "",
+                    "tool_call": None,
+                    "tool_result": None,
+                    "runtime_policy_results": [],
+                    "benchmark_context": benchmark_context,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+        },
+    ]
+    return {
+        "task_id": task.id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "weak_answer": "",
+        "initial_weak_answer": "",
+        "tool_call": None,
+        "tool_result": None,
+        "runtime_policy_results": [],
+        "focused_repair": True,
+        "teacher_diagnosis_raw": await teacher.complete(messages, temperature=0.1),
+    }
 
 
 def _policy_names_from_patch_bundles(patch_bundles) -> list[str]:
@@ -388,6 +439,67 @@ def _initial_transfer_context(cfg: BenchmarkConfig, dev_baseline: dict[str, dict
     if cfg.transfer_context_mode == "feedback_only":
         return {"heldout_probe": []}
     raise ValueError(f"Unsupported transfer_context_mode: {cfg.transfer_context_mode}")
+
+
+def _phase_kind(cfg: BenchmarkConfig, patch_feedback: dict[str, object] | None) -> str:
+    if cfg.repair_mode == "focused" and patch_feedback and patch_feedback.get("has_rejections"):
+        return "focused_repair"
+    return "full_train"
+
+
+def _tasks_for_evolve_iteration(
+    cfg: BenchmarkConfig,
+    patch_feedback: dict[str, object] | None,
+    transfer_feedback: dict[str, object] | None,
+) -> list[TaskConfig]:
+    if _phase_kind(cfg, patch_feedback) != "focused_repair":
+        return cfg.train_tasks
+    return [_build_focused_repair_task(patch_feedback or {}, transfer_feedback)]
+
+
+def _build_focused_repair_task(
+    patch_feedback: dict[str, object],
+    transfer_feedback: dict[str, object] | None,
+) -> TaskConfig:
+    rejected = patch_feedback.get("rejected_bundles", [])
+    first_rejected = rejected[0] if isinstance(rejected, list) and rejected else {}
+    failed_contracts = first_rejected.get("failed_contracts", []) if isinstance(first_rejected, dict) else []
+    failed_paths = first_rejected.get("rejected_patch_paths", []) if isinstance(first_rejected, dict) else []
+    bundle_id = first_rejected.get("bundle_id") if isinstance(first_rejected, dict) else None
+    transfer_tasks = (transfer_feedback or {}).get("failed_tasks", []) if isinstance(transfer_feedback, dict) else []
+    first_transfer = transfer_tasks[0] if isinstance(transfer_tasks, list) and transfer_tasks else {}
+    expected_answer = first_transfer.get("expected_answer") if isinstance(first_transfer, dict) else None
+    task_instruction = first_transfer.get("task_instruction") if isinstance(first_transfer, dict) else None
+    instruction = {
+        "repair_mode": "focused",
+        "objective": "Repair the rejected harness bundle/artifacts. Do not solve a new user task. Preserve the original transfer repair intent while fixing the failed contract.",
+        "rejected_bundle_id": bundle_id,
+        "rejected_patch_paths": failed_paths,
+        "failed_contracts": failed_contracts,
+        "representative_transfer_failure": first_transfer,
+    }
+    return TaskConfig(
+        id="focused_repair",
+        instruction=json.dumps(instruction, ensure_ascii=False, indent=2),
+        expected_answer=expected_answer if isinstance(expected_answer, str) else None,
+        rubric=(
+            "Repair only the rejected harness artifacts needed to satisfy failed contracts and unresolved transfer failures. "
+            "Prefer preserving bundle intent over inventing a new architecture."
+            + (f"\nRepresentative failed transfer task:\n{task_instruction}" if isinstance(task_instruction, str) else "")
+        ),
+    )
+
+
+def _benchmark_context_for_iteration(
+    transfer_context: dict[str, object],
+    patch_feedback: dict[str, object] | None,
+    transfer_feedback: dict[str, object] | None,
+    phase_kind: str,
+) -> dict[str, object]:
+    context = merge_benchmark_context(transfer_context, patch_feedback, transfer_feedback)
+    if phase_kind == "focused_repair":
+        context["repair_mode"] = "focused"
+    return context
 
 
 if __name__ == "__main__":
