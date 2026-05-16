@@ -49,6 +49,7 @@ def build_transfer_feedback(
             "expected_answer": task.expected_answer,
             "rubric": task.rubric,
             "failure_mode": _classify_transfer_failure(before, after),
+            "recommended_repair_target": _recommend_transfer_repair_target(before, after),
             "before_success": before_success,
             "after_success": after_success,
             "regressed": before_success and not after_success,
@@ -142,6 +143,15 @@ def _classify_transfer_failure(before: dict[str, Any], after: dict[str, Any]) ->
     if after.get("tool_call") is None:
         return "policy_or_routing_failure"
     return "finalization_failure"
+
+
+def _recommend_transfer_repair_target(before: dict[str, Any], after: dict[str, Any]) -> str:
+    failure_mode = _classify_transfer_failure(before, after)
+    if failure_mode == "tool_failure":
+        return "tool"
+    if failure_mode == "policy_or_routing_failure":
+        return "runtime_policy"
+    return "finalization"
 
 
 def _summarize_rejection(task_id: str, result: dict[str, Any]) -> dict[str, Any]:
