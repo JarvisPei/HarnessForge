@@ -14,7 +14,6 @@ from agentdistill.benchmark import _build_focused_repair_task, _infer_repair_sco
 from agentdistill.config import TaskConfig
 from agentdistill.diagnosis import parse_diagnosis
 from agentdistill.feedback import build_patch_feedback, merge_benchmark_context
-from agentdistill.harness import load_system_prompt
 from agentdistill.models import ChatClient, load_model_settings
 from agentdistill.patches import apply_patch_bundles_atomically
 from agentdistill.repair_fixture import build_repair_fixture_case
@@ -50,13 +49,7 @@ async def run_repair_probe(
     case = build_repair_fixture_case()
     teacher = teacher or ChatClient(load_model_settings("teacher", profile))
     teacher_system = (repo_root / "prompts/teacher_diagnosis.md").read_text().strip()
-    weak_system = load_system_prompt(
-        repo_root / "prompts/weak_system.md",
-        repo_root / "harness" / "skills",
-        repo_root / "harness" / "guidelines",
-        repo_root / "harness" / "validators",
-        repo_root / "harness" / "tools",
-    )
+    weak_system = (repo_root / "prompts/weak_system.md").read_text().strip()
 
     seed_result = apply_patch_bundles_atomically(repo_root, case.bad_policy_bundles, case.task, case.manifest)
     patch_feedback = build_patch_feedback({case.task.id: seed_result}, iteration=1)
