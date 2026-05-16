@@ -15,6 +15,7 @@ evolve_iterations: 2
 transfer_context_mode: feedback_only
 repair_mode: focused
 inner_repair_attempts: 1
+policy_generalization_audit: true
 train_tasks:
   - id: train_mechanism_block_log
     instruction: |

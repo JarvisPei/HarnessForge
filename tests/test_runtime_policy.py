@@ -1734,6 +1734,7 @@ def test_repair_mechanism_config_loads() -> None:
     assert cfg.transfer_context_mode == "feedback_only"
     assert cfg.repair_mode == "focused"
     assert cfg.inner_repair_attempts == 1
+    assert cfg.policy_generalization_audit is True
     assert len(cfg.train_tasks) == 1
     assert len(cfg.dev_probe_tasks) == 2
     assert len(cfg.blind_test_tasks) == 1

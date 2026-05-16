@@ -444,6 +444,7 @@ async def _apply_diagnosis_with_optional_audit(
         task,
         diagnosis.harness_manifest,
         critic_policy_cases=critic_policy_cases,
+        enable_policy_generalization_audit=cfg.policy_generalization_audit,
     )
     if critic_audits:
         patch_result["critic_audits"] = critic_audits
