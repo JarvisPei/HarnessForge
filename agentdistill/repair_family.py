@@ -26,7 +26,7 @@ from agentdistill.run import run_task
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
 
 
-app = typer.Typer(add_completion=False)
+app = typer.Typer(add_completion=False, pretty_exceptions_show_locals=False)
 console = Console()
 
 
@@ -47,7 +47,7 @@ def main(
     load_dotenv(override=True)
     try:
         report = asyncio.run(run_repair_family(output_dir, profile))
-    except RuntimeError as exc:
+    except Exception as exc:
         console.print(f"[bold red]Error:[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
     console.print(json.dumps(report, indent=2, ensure_ascii=False))
@@ -72,22 +72,36 @@ async def run_repair_family(
     for case in cases:
         case_dir = output_dir / case.case_id
         case_dir.mkdir(parents=True, exist_ok=True)
-        report = await _run_case(
-            repo_root=repo_root,
-            case=case,
-            case_dir=case_dir,
-            transfer_cfg=transfer_cfg,
-            weak=weak,
-            teacher=teacher,
-            teacher_system=teacher_system,
-        )
+        console.print(f"[bold]Running repair family case:[/bold] {case.case_id}")
+        try:
+            report = await _run_case(
+                repo_root=repo_root,
+                case=case,
+                case_dir=case_dir,
+                transfer_cfg=transfer_cfg,
+                weak=weak,
+                teacher=teacher,
+                teacher_system=teacher_system,
+            )
+        except Exception as exc:
+            report = {
+                "case_id": case.case_id,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "repair_success": False,
+                "repair_success_via": "error",
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
+            (case_dir / "case_report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+            console.print(f"[bold red]Case failed:[/bold red] {case.case_id}: {type(exc).__name__}: {exc}")
         case_reports.append(report)
 
     summary = {
         "cases": len(case_reports),
         "repair_successes": sum(1 for report in case_reports if report["repair_success"]),
-        "dev_improved": sum(report["dev_transfer"]["improved"] for report in case_reports),
-        "blind_improved": sum(report["blind_transfer"]["improved"] for report in case_reports),
+        "errors": sum(1 for report in case_reports if "error_type" in report),
+        "dev_improved": sum(report.get("dev_transfer", {}).get("improved", 0) for report in case_reports),
+        "blind_improved": sum(report.get("blind_transfer", {}).get("improved", 0) for report in case_reports),
     }
     report = {"cases": case_reports, "summary": summary}
     (output_dir / "repair_family_report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -147,12 +161,18 @@ async def _run_case(
     try:
         _copy_workspace(repo_root, workspace_root)
         weak_system = _weak_system(workspace_root)
+        console.print(f"  - baseline transfer: {case.case_id}")
         baseline = await _run_transfer_suite(workspace_root, transfer_cfg.dev_probe_tasks + transfer_cfg.blind_test_tasks, weak, teacher, teacher_system, weak_system)
+        (case_dir / "baseline_results.json").write_text(json.dumps(baseline, indent=2, ensure_ascii=False), encoding="utf-8")
+        console.print(f"  - applying rejected seed patch: {case.case_id}")
         seed_result = apply_patch_bundles_atomically(workspace_root, case.bad_policy_bundles, case.task, case.manifest)
+        (case_dir / "seed_patch_result.json").write_text(json.dumps(seed_result, indent=2, ensure_ascii=False), encoding="utf-8")
         patch_feedback = build_patch_feedback({case.task.id: seed_result}, iteration=1)
         repair_scope = _infer_repair_scope(patch_feedback)
         repair_task = _build_focused_repair_task(patch_feedback, None, repair_scope)
         repair_context = {"repair_mode": "focused", "patch_feedback": patch_feedback, "repair_scope": repair_scope}
+        (case_dir / "repair_context.json").write_text(json.dumps(repair_context, indent=2, ensure_ascii=False), encoding="utf-8")
+        console.print(f"  - teacher scoped repair: {case.case_id}")
         repair_run = await _run_focused_repair_task(repair_task, teacher, teacher_system, weak_system, repair_context)
         diagnosis = parse_diagnosis(str(repair_run["teacher_diagnosis_raw"]))
         repair_run["teacher_diagnosis"] = diagnosis.model_dump()
@@ -170,6 +190,8 @@ async def _run_case(
                 "contract_validation": [],
                 "harness_manifest": diagnosis.harness_manifest.model_dump() if diagnosis.harness_manifest is not None else None,
             }
+        (case_dir / "final_patch_result.json").write_text(json.dumps(final_patch, indent=2, ensure_ascii=False), encoding="utf-8")
+        console.print(f"  - after-transfer: {case.case_id}")
         after = await _run_transfer_suite(workspace_root, transfer_cfg.dev_probe_tasks + transfer_cfg.blind_test_tasks, weak, teacher, teacher_system, _weak_system(workspace_root))
         dev_report = build_impact_report(
             {task.id: baseline[task.id] for task in transfer_cfg.dev_probe_tasks},
