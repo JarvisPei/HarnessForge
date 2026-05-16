@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from datetime import datetime
 
 
 HARNESS_BUCKETS = {
@@ -66,6 +67,7 @@ def build_benchmark_metrics(
         "transfer": _build_transfer_metrics(impact_rows),
         "dev_transfer": _build_transfer_metrics(impact_rows),
         "blind_transfer": _build_transfer_metrics(blind_impact_rows or impact_rows),
+        "repair_efficiency": _build_repair_efficiency_metrics(train_summary, impact_rows, blind_impact_rows or impact_rows),
         "harness_after": {
             "files": len(harness_files_after),
             "type_counts": harness_type_counts,
@@ -129,3 +131,98 @@ def _build_transfer_metrics(rows: list[dict[str, Any]]) -> dict[str, int]:
         "improved": sum(1 for row in rows if row.get("improved") is True),
         "regressed": sum(1 for row in rows if row.get("regressed") is True),
     }
+
+
+def _build_repair_efficiency_metrics(
+    train_summary: list[dict[str, Any]],
+    dev_rows: list[dict[str, Any]],
+    blind_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    patch_rows = [row for row in train_summary if row.get("patch_status") in {"accepted", "rejected"}]
+    accepted = [row for row in patch_rows if row.get("patch_status") == "accepted"]
+    rejected = [row for row in patch_rows if row.get("patch_status") == "rejected"]
+    inner_attempts = [
+        attempt
+        for row in train_summary
+        for attempt in row.get("inner_repair_attempts", [])
+        if isinstance(attempt, dict)
+    ]
+    scoped_attempts = [attempt for attempt in inner_attempts if isinstance(attempt.get("context_repair_scope"), dict)]
+    out_of_scope_rejections = [
+        attempt
+        for attempt in inner_attempts
+        if attempt.get("rejection_reason") == "inner repair patch targets outside allowed repair scope"
+    ]
+    touched_paths = [_normalize_harness_path(path) for row in patch_rows for path in _row_patch_paths(row)]
+    touched_paths = [path for path in touched_paths if path is not None]
+    return {
+        "patch_attempts": len(patch_rows),
+        "accepted": len(accepted),
+        "rejected": len(rejected),
+        "accepted_rate": _safe_ratio(len(accepted), len(patch_rows)),
+        "inner_repair_attempts": len(inner_attempts),
+        "inner_repair_accepted": sum(1 for attempt in inner_attempts if attempt.get("patch_status") == "accepted"),
+        "inner_repair_rejected": sum(1 for attempt in inner_attempts if attempt.get("patch_status") == "rejected"),
+        "scoped_inner_repair_attempts": len(scoped_attempts),
+        "out_of_scope_rejections": len(out_of_scope_rejections),
+        "total_patch_paths": len(touched_paths),
+        "unique_patch_paths": len(set(touched_paths)),
+        "avg_paths_per_patch_attempt": _safe_ratio(len(touched_paths), len(patch_rows)),
+        "path_type_counts": _count_path_types(touched_paths),
+        "cost_proxies": _build_cost_proxies(train_summary, inner_attempts),
+        "dev": _build_transfer_metrics(dev_rows),
+        "blind": _build_transfer_metrics(blind_rows),
+    }
+
+
+def _row_patch_paths(row: dict[str, Any]) -> list[str]:
+    paths = []
+    for key in ("applied_patch_paths", "rejected_patch_paths"):
+        value = row.get(key, [])
+        if isinstance(value, list):
+            paths.extend(path for path in value if isinstance(path, str))
+    return paths
+
+
+def _normalize_harness_path(path: str) -> str | None:
+    parts = Path(path).parts
+    if "harness" not in parts:
+        return None
+    index = parts.index("harness")
+    return "/".join(parts[index:])
+
+
+def _safe_ratio(numerator: int, denominator: int) -> float:
+    return round(numerator / denominator, 4) if denominator else 0.0
+
+
+def _build_cost_proxies(train_summary: list[dict[str, Any]], inner_attempts: list[dict[str, Any]]) -> dict[str, Any]:
+    teacher_calls = sum(1 for row in train_summary if row.get("patch_status") in {"accepted", "rejected", "skipped"})
+    teacher_calls += len(inner_attempts)
+    focused_rows = [row for row in train_summary if row.get("phase_kind") == "focused_repair"]
+    focused_inner = [attempt for attempt in inner_attempts if attempt.get("focused_repair") is True]
+    created_at_values = [
+        value
+        for row in train_summary
+        for value in [row.get("created_at")]
+        if isinstance(value, str)
+    ]
+    span_seconds = _created_at_span_seconds(created_at_values)
+    return {
+        "teacher_call_proxy": teacher_calls,
+        "weak_call_proxy": max(0, len(train_summary) - len(focused_rows)),
+        "focused_repair_weak_calls_skipped": len(focused_rows) + len(focused_inner),
+        "train_created_at_span_seconds": span_seconds,
+    }
+
+
+def _created_at_span_seconds(values: list[str]) -> float | None:
+    timestamps = []
+    for value in values:
+        try:
+            timestamps.append(datetime.fromisoformat(value.replace("Z", "+00:00")))
+        except ValueError:
+            continue
+    if len(timestamps) < 2:
+        return None
+    return round((max(timestamps) - min(timestamps)).total_seconds(), 3)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import agentdistill.benchmark as benchmark_module
@@ -31,6 +32,7 @@ from agentdistill.diagnosis import PatchBundle, parse_diagnosis
 from agentdistill.feedback import build_patch_feedback, build_transfer_feedback, merge_benchmark_context
 from agentdistill.metrics import build_benchmark_metrics
 from agentdistill.patches import apply_patch_bundles_atomically
+from agentdistill.repair_efficiency import build_repair_efficiency_report
 from agentdistill.models import load_model_settings
 from agentdistill.run import run_task
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
@@ -1988,6 +1990,8 @@ def test_build_benchmark_metrics_counts_patch_quality_and_transfer() -> None:
         train_summary=[
             {
                 "patch_status": "accepted",
+                "phase_kind": "full_train",
+                "created_at": "2026-01-01T00:00:00+00:00",
                 "applied_patch_paths": [
                     "/repo/harness/tools/inventory.py",
                     "/repo/harness/tests/inventory.json",
@@ -2005,6 +2009,8 @@ def test_build_benchmark_metrics_counts_patch_quality_and_transfer() -> None:
             },
             {
                 "patch_status": "rejected",
+                "phase_kind": "focused_repair",
+                "created_at": "2026-01-01T00:00:10+00:00",
                 "applied_patch_paths": [],
                 "rejected_patch_paths": ["/repo/harness/runtime_policies/bad.py"],
                 "contract_validation": [{"ok": False}],
@@ -2030,6 +2036,12 @@ def test_build_benchmark_metrics_counts_patch_quality_and_transfer() -> None:
     assert metrics["dev_transfer"]["improved"] == 1
     assert metrics["blind_transfer"]["improved"] == 1
     assert metrics["harness_after"]["type_counts"]["tool"] == 1
+    assert metrics["repair_efficiency"]["patch_attempts"] == 2
+    assert metrics["repair_efficiency"]["accepted_rate"] == 0.5
+    assert metrics["repair_efficiency"]["avg_paths_per_patch_attempt"] == 2.5
+    assert metrics["repair_efficiency"]["dev"]["improved"] == 1
+    assert metrics["repair_efficiency"]["cost_proxies"]["weak_call_proxy"] == 1
+    assert metrics["repair_efficiency"]["cost_proxies"]["train_created_at_span_seconds"] == 10.0
 
 
 def test_build_benchmark_metrics_separates_blind_transfer() -> None:
@@ -2042,3 +2054,109 @@ def test_build_benchmark_metrics_separates_blind_transfer() -> None:
 
     assert metrics["dev_transfer"]["improved"] == 1
     assert metrics["blind_transfer"]["improved"] == 0
+
+
+def test_build_benchmark_metrics_counts_scoped_inner_repair_efficiency() -> None:
+    metrics = build_benchmark_metrics(
+        train_summary=[
+            {
+                "patch_status": "rejected",
+                "rejected_patch_paths": ["/repo/harness/runtime_policies/force_inventory.py"],
+                "contract_validation": [{"ok": False}],
+                "inner_repair_attempts": [
+                    {
+                        "patch_status": "rejected",
+                        "focused_repair": True,
+                        "rejection_reason": "inner repair patch targets outside allowed repair scope",
+                        "context_repair_scope": {
+                            "allowed_repair_paths": [
+                                "harness/runtime_policies/force_inventory.py",
+                                "harness/tests/force_inventory.json",
+                            ]
+                        },
+                    },
+                    {
+                        "patch_status": "accepted",
+                        "focused_repair": True,
+                        "context_repair_scope": {
+                            "allowed_repair_paths": [
+                                "harness/runtime_policies/force_inventory.py",
+                                "harness/tests/force_inventory.json",
+                            ]
+                        },
+                    },
+                ],
+            }
+        ],
+        impact_rows=[{"before_success": False, "after_success": False, "improved": False, "regressed": False}],
+        harness_files_after=[],
+        blind_impact_rows=[{"before_success": True, "after_success": False, "improved": False, "regressed": True}],
+    )
+
+    repair = metrics["repair_efficiency"]
+    assert repair["inner_repair_attempts"] == 2
+    assert repair["inner_repair_accepted"] == 1
+    assert repair["scoped_inner_repair_attempts"] == 2
+    assert repair["out_of_scope_rejections"] == 1
+    assert repair["blind"]["regressed"] == 1
+    assert repair["cost_proxies"]["teacher_call_proxy"] == 3
+    assert repair["cost_proxies"]["focused_repair_weak_calls_skipped"] == 2
+
+
+def test_repair_efficiency_report_aggregates_runs(tmp_path: Path) -> None:
+    run_a = tmp_path / "run_a"
+    run_b = tmp_path / "run_b"
+    run_a.mkdir()
+    run_b.mkdir()
+    (run_a / "metrics.json").write_text(
+        json.dumps(
+            {
+                "repair_efficiency": {
+                    "patch_attempts": 2,
+                    "accepted": 1,
+                    "rejected": 1,
+                    "inner_repair_attempts": 1,
+                    "scoped_inner_repair_attempts": 1,
+                    "out_of_scope_rejections": 0,
+                    "total_patch_paths": 3,
+                    "unique_patch_paths": 2,
+                    "cost_proxies": {
+                        "teacher_call_proxy": 2,
+                        "weak_call_proxy": 1,
+                        "focused_repair_weak_calls_skipped": 1,
+                    },
+                    "dev": {"improved": 1, "regressed": 0},
+                    "blind": {"improved": 0, "regressed": 0},
+                },
+                "patches": {"accepted": 1},
+                "dev_transfer": {"improved": 1},
+                "blind_transfer": {"improved": 0},
+            }
+        )
+    )
+    (run_b / "train_summary.json").write_text(
+        json.dumps(
+            [
+                {
+                    "patch_status": "accepted",
+                    "applied_patch_paths": ["/repo/harness/tools/calc.py", "/repo/harness/tests/calc.json"],
+                    "inner_repair_attempts": [],
+                }
+            ]
+        )
+    )
+    (run_b / "dev_impact_report.json").write_text(json.dumps([{"improved": False, "regressed": False}]))
+    (run_b / "blind_impact_report.json").write_text(json.dumps([{"improved": True, "regressed": False}]))
+    (run_b / "harness_files_after.json").write_text(json.dumps(["harness/tools/calc.py"]))
+
+    report = build_repair_efficiency_report([run_a, run_b])
+
+    assert len(report["runs"]) == 2
+    assert report["aggregate"]["patch_attempts"] == 3
+    assert report["aggregate"]["accepted"] == 2
+    assert report["aggregate"]["accepted_rate"] == 0.6667
+    assert report["aggregate"]["scoped_inner_repair_attempts"] == 1
+    assert report["aggregate"]["dev_improved"] == 1
+    assert report["aggregate"]["blind_improved"] == 1
+    assert report["aggregate"]["teacher_call_proxy"] == 3
+    assert report["aggregate"]["focused_repair_weak_calls_skipped"] == 1
