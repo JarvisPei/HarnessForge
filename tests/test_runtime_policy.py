@@ -32,7 +32,7 @@ from agentdistill.diagnosis import PatchBundle, parse_diagnosis
 from agentdistill.feedback import build_patch_feedback, build_transfer_feedback, merge_benchmark_context
 from agentdistill.metrics import build_benchmark_metrics
 from agentdistill.repair_probe import run_repair_probe
-from agentdistill.repair_family import _weak_system, build_repair_family_cases
+from agentdistill.repair_family import _weak_system, build_probe_filter_cases, build_repair_family_cases, run_probe_filter
 from agentdistill.patches import apply_patch_bundles_atomically
 from agentdistill.repair_efficiency import build_repair_efficiency_report
 from agentdistill.repair_fixture import run_repair_fixture
@@ -2410,3 +2410,55 @@ def run(input: dict) -> dict:
     assert "base weak prompt" in system_prompt
     assert "Harness tool specs" in system_prompt
     assert "Tool module: signed_sum" in system_prompt
+
+
+def test_probe_filter_cases_use_stricter_candidates() -> None:
+    cases = build_probe_filter_cases()
+
+    tool_case = next(case for case in cases if case.case_id == "tool_contract_repair")
+    assert tool_case.dev_probe_tasks is not None
+    assert len(tool_case.dev_probe_tasks) >= 2
+    assert tool_case.dev_probe_tasks[0].expected_answer == "7208"
+    assert tool_case.blind_test_tasks is not None
+    assert len(tool_case.blind_test_tasks) >= 2
+    assert tool_case.blind_test_tasks[0].expected_answer == "39534"
+
+
+def test_probe_filter_report_records_baseline_failures(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    (repo_root / "prompts").mkdir(parents=True)
+    (repo_root / "prompts" / "weak_system.md").write_text("weak", encoding="utf-8")
+    (repo_root / "prompts" / "teacher_diagnosis.md").write_text("teacher", encoding="utf-8")
+    for subdir in ["guidelines", "skills", "validators", "tools", "runtime_policies", "tests"]:
+        (repo_root / "harness" / subdir).mkdir(parents=True, exist_ok=True)
+    (repo_root / "harness" / "tools" / "signed_sum.py").write_text(
+        """
+def run(input: dict) -> dict:
+    total = int(input.get("start", 0))
+    for value in input.get("updates", []):
+        total += int(str(value).replace(",", ""))
+    return {"ok": True, "result": total}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    class WeakClient:
+        async def complete(self, messages, temperature=0.2):
+            return "I do not know"
+
+    class TeacherClient:
+        async def complete(self, messages, temperature=0.2):
+            return """{\n  \"diagnosis\": \"ok\",\n  \"failure_categories\": [],\n  \"harness_patch\": \"\",\n  \"patch_type\": \"prompt_guideline\",\n  \"regression_test\": \"\",\n  \"patch_bundles\": [],\n  \"confidence\": 0.0\n}"""
+
+    report = asyncio.run(
+        run_probe_filter(
+            tmp_path / "probe_filter",
+            None,
+            repo_root=repo_root,
+            weak=WeakClient(),
+            teacher=TeacherClient(),
+        )
+    )
+
+    assert report["summary"]["cases"] >= 1
+    assert "probe_filter_report.json" in {p.name for p in (tmp_path / "probe_filter").iterdir()}

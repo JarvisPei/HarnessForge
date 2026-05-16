@@ -22,7 +22,7 @@ from agentdistill.manifest import HarnessManifest, ManifestArtifact
 from agentdistill.models import ChatClient, load_model_settings
 from agentdistill.patches import apply_patch_bundles_atomically
 from agentdistill.repair_fixture import build_repair_fixture_case
-from agentdistill.report import build_impact_report
+from agentdistill.report import build_impact_report, evaluate_success
 from agentdistill.run import run_task
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
 
@@ -51,14 +51,74 @@ def main(
     output_dir: Path = typer.Option(Path("outputs/repair_family"), "--output-dir", "-o"),
     profile: str | None = typer.Option(None, "--profile", "-p"),
     include_diagnostics: bool = typer.Option(False, "--include-diagnostics"),
+    filter_baseline_probes: bool = typer.Option(False, "--filter-baseline-probes"),
 ) -> None:
     load_dotenv(override=True)
     try:
-        report = asyncio.run(run_repair_family(output_dir, profile, include_diagnostics=include_diagnostics))
+        if filter_baseline_probes:
+            report = asyncio.run(
+                run_probe_filter(output_dir, profile, include_diagnostics=include_diagnostics)
+            )
+        else:
+            report = asyncio.run(run_repair_family(output_dir, profile, include_diagnostics=include_diagnostics))
     except Exception as exc:
         console.print(f"[bold red]Error:[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
     console.print(json.dumps(report, indent=2, ensure_ascii=False))
+
+
+async def run_probe_filter(
+    output_dir: Path,
+    profile: str | None,
+    *,
+    repo_root: Path | None = None,
+    teacher: ChatClient | None = None,
+    weak: ChatClient | None = None,
+    include_diagnostics: bool = False,
+) -> dict[str, Any]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    repo_root = repo_root or Path(__file__).resolve().parent.parent
+    teacher = teacher or ChatClient(load_model_settings("teacher", profile))
+    weak = weak or ChatClient(load_model_settings("weak", profile))
+    teacher_system = (repo_root / "prompts/teacher_diagnosis.md").read_text().strip()
+    cases = build_probe_filter_cases(include_diagnostics=include_diagnostics)
+    workspace_parent = Path(tempfile.mkdtemp(prefix="repair_family_probe_filter_"))
+    workspace_root = workspace_parent / "workspace"
+    try:
+        _copy_workspace(repo_root, workspace_root)
+        weak_system = _weak_system(workspace_root)
+        case_reports = []
+        for case in cases:
+            console.print(f"[bold]Filtering baseline probes:[/bold] {case.case_id}")
+            report = await _run_probe_filter_case(
+                case=case,
+                case_dir=output_dir / case.case_id,
+                workspace_root=workspace_root,
+                weak=weak,
+                teacher=teacher,
+                teacher_system=teacher_system,
+                weak_system=weak_system,
+            )
+            case_reports.append(report)
+    finally:
+        shutil.rmtree(workspace_parent, ignore_errors=True)
+
+    summary = {
+        "cases": len(case_reports),
+        "mechanism_only": sum(1 for report in case_reports if report.get("mechanism_only") is True),
+        "candidate_tasks": sum(report.get("baseline", {}).get("tasks", 0) for report in case_reports),
+        "baseline_pass": sum(report.get("baseline", {}).get("passed", 0) for report in case_reports),
+        "baseline_fail": sum(report.get("baseline", {}).get("failed", 0) for report in case_reports),
+        "recommended_dev_candidates": sum(
+            len(report.get("recommended_dev_task_ids", [])) for report in case_reports
+        ),
+        "recommended_blind_candidates": sum(
+            len(report.get("recommended_blind_task_ids", [])) for report in case_reports
+        ),
+    }
+    report = {"cases": case_reports, "summary": summary}
+    (output_dir / "probe_filter_report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    return report
 
 async def run_repair_family(
     output_dir: Path,
@@ -313,6 +373,160 @@ def run(input: dict) -> dict:
     return cases
 
 
+def build_probe_filter_cases(include_diagnostics: bool = False) -> list[RepairFamilyCase]:
+    cases = build_repair_family_cases(include_diagnostics=include_diagnostics)
+    candidate_by_id = {
+        "tool_policy_pair": (
+            _candidate_signed_update_dev_tasks(),
+            _candidate_signed_update_blind_tasks(),
+        ),
+        "tool_contract_repair": (
+            _candidate_tool_dev_tasks(),
+            _candidate_tool_blind_tasks(),
+        ),
+        "tool_policy_pair_scoped": (
+            _candidate_signed_update_dev_tasks(),
+            _candidate_signed_update_blind_tasks(),
+        ),
+    }
+    filtered_cases = []
+    for case in cases:
+        dev_tasks, blind_tasks = candidate_by_id.get(case.case_id, (case.dev_probe_tasks, case.blind_test_tasks))
+        filtered_cases.append(
+            RepairFamilyCase(
+                case_id=case.case_id,
+                mechanism=case.mechanism,
+                task=case.task,
+                bad_policy_bundles=case.bad_policy_bundles,
+                good_policy_bundles=case.good_policy_bundles,
+                manifest=case.manifest,
+                dev_probe_tasks=dev_tasks,
+                blind_test_tasks=blind_tasks,
+                mechanism_only=case.mechanism_only,
+                repair_scope_override=case.repair_scope_override,
+                diagnostic=case.diagnostic,
+            )
+        )
+    return filtered_cases
+
+
+def _candidate_signed_update_dev_tasks() -> list[TaskConfig]:
+    return [
+        TaskConfig(
+            id="dev_filter_signed_dense_log",
+            instruction=(
+                "Compute the final count exactly. Start at 9,127 tokens. Apply signed updates in order: "
+                "+384, -219, +77, -1,406, +502, -908, +116, -73, +641, -222, +39, -850. "
+                "Return only the final integer."
+            ),
+            expected_answer="7208",
+            rubric="Correct computation is 9127 + 384 - 219 + 77 - 1406 + 502 - 908 + 116 - 73 + 641 - 222 + 39 - 850 = 7208.",
+        ),
+        TaskConfig(
+            id="dev_filter_signed_table_noise",
+            instruction=(
+                "A ledger starts with 15,000 units. Use only rows whose status is POSTED and ignore DRAFT rows. "
+                "POSTED deltas: -1,275, +386, -942, +711, -208, +64, -530, +119, -76, +403, -999, +250. "
+                "Return only the final integer."
+            ),
+            expected_answer="12903",
+            rubric="Correct computation is 15000 - 1275 + 386 - 942 + 711 - 208 + 64 - 530 + 119 - 76 + 403 - 999 + 250 = 12903.",
+        ),
+        TaskConfig(
+            id="dev_filter_signed_small_offsets",
+            instruction=(
+                "Start=731. Updates=[+44, -18, +27, -96, +105, -12, -58, +33, -21, +14]. "
+                "Return the final value and no explanation."
+            ),
+            expected_answer="749",
+            rubric="Correct computation is 731 + 44 - 18 + 27 - 96 + 105 - 12 - 58 + 33 - 21 + 14 = 749.",
+        ),
+    ]
+
+
+def _candidate_signed_update_blind_tasks() -> list[TaskConfig]:
+    return [
+        TaskConfig(
+            id="blind_filter_signed_reordered",
+            instruction=(
+                "Calculate the exact final balance. Initial balance: 42,000. "
+                "Deltas: -811, +233, -1,440, +950, -72, -602, +315, -49, +128, -207, +88, -999. "
+                "Return only the integer."
+            ),
+            expected_answer="39534",
+            rubric="Correct computation is 42000 - 811 + 233 - 1440 + 950 - 72 - 602 + 315 - 49 + 128 - 207 + 88 - 999 = 39534.",
+        ),
+        TaskConfig(
+            id="blind_filter_signed_mixed_units",
+            instruction=(
+                "Inventory starts at 6,550 packets. Apply adjustments: +120, -450, +315, -90, -700, +42, +58, -16, +900, -111. "
+                "Return only the final packet count as an integer."
+            ),
+            expected_answer="6618",
+            rubric="Correct computation is 6550 + 120 - 450 + 315 - 90 - 700 + 42 + 58 - 16 + 900 - 111 = 6618.",
+        ),
+        TaskConfig(
+            id="blind_filter_signed_large_offsets",
+            instruction=(
+                "From 123,456 apply these signed changes: -9,876; +5,432; -2,100; +809; -77; -650; +1,200; -333; +444; -555. "
+                "Return only the final integer."
+            ),
+            expected_answer="117750",
+            rubric="Correct computation is 123456 - 9876 + 5432 - 2100 + 809 - 77 - 650 + 1200 - 333 + 444 - 555 = 117750.",
+        ),
+    ]
+
+
+def _candidate_tool_dev_tasks() -> list[TaskConfig]:
+    return [
+        TaskConfig(
+            id="dev_filter_tool_dense_updates",
+            instruction=(
+                "Use the signed_sum tool if it is available. Compute start=9,127 with "
+                'updates=["+384", "-219", "+77", "-1,406", "+502", "-908", "+116", "-73", "+641", "-222", "+39", "-850"]. '
+                "Return only the final integer."
+            ),
+            expected_answer="7208",
+            rubric="Correct computation is 7208 and requires preserving negative signs and commas inside signed update tokens.",
+        ),
+        TaskConfig(
+            id="dev_filter_tool_posted_updates",
+            instruction=(
+                "Use signed_sum if available for the POSTED updates only. "
+                'start=15,000; updates=["-1,275", "+386", "-942", "+711", "-208", "+64", "-530", "+119", "-76", "+403", "-999", "+250"]. '
+                "Return only the final integer."
+            ),
+            expected_answer="12903",
+            rubric="Correct computation is 12903 and requires signed integer parsing with comma separators.",
+        ),
+    ]
+
+
+def _candidate_tool_blind_tasks() -> list[TaskConfig]:
+    return [
+        TaskConfig(
+            id="blind_filter_tool_reordered",
+            instruction=(
+                "Use signed_sum if available. "
+                'start=42,000; updates=["-811", "+233", "-1,440", "+950", "-72", "-602", "+315", "-49", "+128", "-207", "+88", "-999"]. '
+                "Return only the final integer."
+            ),
+            expected_answer="39534",
+            rubric="Correct computation is 39534 and requires preserving all signs.",
+        ),
+        TaskConfig(
+            id="blind_filter_tool_large_offsets",
+            instruction=(
+                "Use signed_sum if available. "
+                'start=123,456; updates=["-9,876", "+5,432", "-2,100", "+809", "-77", "-650", "+1,200", "-333", "+444", "-555"]. '
+                "Return only the final integer."
+            ),
+            expected_answer="117750",
+            rubric="Correct computation is 117750 and requires signed integer parsing with comma separators.",
+        ),
+    ]
+
+
 async def _run_case(
     repo_root: Path,
     case: RepairFamilyCase,
@@ -410,6 +624,51 @@ async def _run_case(
         shutil.rmtree(workspace_parent, ignore_errors=True)
 
 
+async def _run_probe_filter_case(
+    case: RepairFamilyCase,
+    case_dir: Path,
+    workspace_root: Path,
+    weak: ChatClient,
+    teacher: ChatClient,
+    teacher_system: str,
+    weak_system: str,
+) -> dict[str, Any]:
+    case_dir.mkdir(parents=True, exist_ok=True)
+    dev_probe_tasks = case.dev_probe_tasks or []
+    blind_test_tasks = case.blind_test_tasks or []
+    tasks = [] if case.mechanism_only else dev_probe_tasks + blind_test_tasks
+    results = await _run_transfer_suite(workspace_root, tasks, weak, teacher, teacher_system, weak_system) if tasks else {}
+    (case_dir / "baseline_results.json").write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
+    rows = [
+        _probe_filter_row(task, results.get(task.id, {}), split="dev")
+        for task in dev_probe_tasks
+        if not case.mechanism_only
+    ] + [
+        _probe_filter_row(task, results.get(task.id, {}), split="blind")
+        for task in blind_test_tasks
+        if not case.mechanism_only
+    ]
+    passed = [row for row in rows if row["baseline_success"] is True]
+    failed = [row for row in rows if row["baseline_success"] is False]
+    report = {
+        "case_id": case.case_id,
+        "mechanism": case.mechanism,
+        "diagnostic": case.diagnostic,
+        "mechanism_only": case.mechanism_only,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "baseline": {
+            "tasks": len(rows),
+            "passed": len(passed),
+            "failed": len(failed),
+        },
+        "recommended_dev_task_ids": [row["task_id"] for row in failed if row["split"] == "dev"],
+        "recommended_blind_task_ids": [row["task_id"] for row in failed if row["split"] == "blind"],
+        "rows": rows,
+    }
+    (case_dir / "probe_filter_case_report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    return report
+
+
 async def _run_transfer_suite(
     workspace_root: Path,
     tasks: list[TaskConfig],
@@ -434,6 +693,21 @@ async def _run_transfer_suite(
         )
         results[task.id] = result
     return results
+
+
+def _probe_filter_row(task: TaskConfig, result: dict[str, Any], split: str) -> dict[str, Any]:
+    success = evaluate_success(task, result)
+    return {
+        "task_id": task.id,
+        "split": split,
+        "expected_answer": task.expected_answer,
+        "baseline_success": success,
+        "baseline_answer": result.get("weak_answer"),
+        "initial_weak_answer": result.get("initial_weak_answer"),
+        "tool_call": result.get("tool_call"),
+        "tool_result": result.get("tool_result"),
+        "runtime_policy_results": result.get("runtime_policy_results", []),
+    }
 
 
 def _transfer_summary(rows: list[dict[str, Any]]) -> dict[str, int]:
