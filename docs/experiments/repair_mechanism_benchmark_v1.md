@@ -85,19 +85,30 @@ blind improved = 0
 
 ## Interpretation
 
-This is a useful short smoke benchmark, but it is not yet a reliable rejection-driven mechanism benchmark.
-
-The teacher often produced policy/test-only harness updates that passed contracts. Even with `policy_generalization_audit = true`, the first patch was accepted in the audit-enabled run. That means the slice does not reliably exercise:
+This fixture benchmark reliably triggers a rejected harness patch in all three modes:
 
 ```text
-rejected patch -> focused repair -> inner repair -> artifact-scoped repair
+fixture_full_train:   rejected = 1
+fixture_focused_only: rejected = 1
+fixture_scoped_inner: rejected = 1
 ```
 
-The positive signal is that the benchmark is cheap and can show transfer improvement. The negative signal is more important for the current goal: natural teacher behavior is too adaptive to guarantee a rejected patch with only task/config changes.
+The important difference is that the scoped-inner variant still records an inner repair attempt:
+
+```text
+fixture_scoped_inner: inner_repair_attempts = 1
+```
+
+The benchmark is cheap and deterministic, but the current controlled fixture does not guarantee inner repair success. It still exposes the repair-loop mechanics without API cost:
+
+```text
+natural teacher benchmark: no reliable rejection
+controlled fixture: always rejected initial patch, scoped-inner path exercised
+```
 
 ## Next Design Direction
 
-To reliably expose repair-mode differences, the mechanism benchmark likely needs a controlled teacher fixture or replayed diagnosis, not only a natural frontier-teacher run. A fixture can produce the same intentionally invalid first patch across ablation modes, then the framework can measure whether focused repair, inner repair, and artifact scope recover faster with less file churn.
+To compare focused repair, inner repair, and artifact-scoped repair more sharply, the next iteration should improve the fixture so the scoped-inner attempt succeeds while baseline/focused-only still reject. That would convert this from a rejection smoke into a full ablation probe.
 
 This would separate two benchmarks:
 
@@ -106,4 +117,4 @@ natural mechanism smoke: cheap end-to-end teacher/harness sanity check
 controlled repair fixture: deterministic ablation of repair-loop mechanics
 ```
 
-The current config should remain as the natural smoke slice. The next step is to add a controlled repair fixture runner or test harness for deterministic rejected-patch ablations.
+The current config remains a natural smoke slice, but the deterministic fixture runner is the real benchmark object for rejection-driven repair ablations.
