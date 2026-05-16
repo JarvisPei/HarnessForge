@@ -142,6 +142,16 @@ def _validate_patch_group(
     return results
 
 
+def patch_group_is_executable(bundles: list[PatchBundle]) -> bool:
+    if not bundles:
+        return False
+    allowed = {
+        ".py",
+        ".json",
+    }
+    return any(Path(bundle.target_path).suffix in allowed for bundle in bundles)
+
+
 def _rollback(applied: list[AppliedPatch]) -> None:
     for patch in reversed(applied):
         if patch.previous_content is None:

@@ -20,7 +20,7 @@ from agentdistill.feedback import build_patch_feedback, build_transfer_feedback
 from agentdistill.harness import load_system_prompt
 from agentdistill.manifest import HarnessManifest, ManifestArtifact
 from agentdistill.models import ChatClient, load_model_settings
-from agentdistill.patches import apply_patch_bundles_atomically
+from agentdistill.patches import apply_patch_bundles_atomically, patch_group_is_executable
 from agentdistill.repair_fixture import build_repair_fixture_case
 from agentdistill.report import build_impact_report, evaluate_success
 from agentdistill.run import run_task
@@ -596,7 +596,7 @@ async def _run_case(
                 diagnosis.patch_bundles,
                 case.task,
                 diagnosis.harness_manifest,
-                teacher_policy_cases=diagnosis.policy_audit_cases,
+                teacher_policy_cases=diagnosis.policy_audit_cases if patch_group_is_executable(diagnosis.patch_bundles) else None,
             )
         else:
             final_patch = {
@@ -770,7 +770,7 @@ async def _run_transfer_feedback_repair(
             diagnosis.patch_bundles,
             case.task,
             diagnosis.harness_manifest,
-            teacher_policy_cases=diagnosis.policy_audit_cases,
+            teacher_policy_cases=diagnosis.policy_audit_cases if patch_group_is_executable(diagnosis.patch_bundles) else None,
         )
     else:
         repair_patch = {

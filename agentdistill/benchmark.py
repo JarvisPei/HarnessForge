@@ -18,7 +18,7 @@ from agentdistill.harness import load_system_prompt
 from agentdistill.harness_snapshot import list_harness_files, snapshot_harness
 from agentdistill.metrics import build_benchmark_metrics
 from agentdistill.models import ChatClient, load_model_settings
-from agentdistill.patches import apply_patch_bundles_atomically
+from agentdistill.patches import apply_patch_bundles_atomically, patch_group_is_executable
 from agentdistill.report import build_impact_report, evaluate_success
 from agentdistill.run import run_task
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
@@ -443,7 +443,7 @@ async def _apply_diagnosis_with_optional_audit(
             )
             critic_audits[policy_name] = audit
             critic_policy_cases[policy_name] = list(audit.get("audit_cases", []))
-    if cfg.teacher_policy_audit and diagnosis.policy_audit_cases:
+    if cfg.teacher_policy_audit and diagnosis.policy_audit_cases and patch_group_is_executable(diagnosis.patch_bundles):
         teacher_audits = {"policy_audit_cases": diagnosis.policy_audit_cases}
         teacher_policy_cases.update(diagnosis.policy_audit_cases)
     patch_result = apply_patch_bundles_atomically(

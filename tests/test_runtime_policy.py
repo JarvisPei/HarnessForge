@@ -35,6 +35,7 @@ from agentdistill.report import build_impact_report
 from agentdistill.repair_probe import run_repair_probe
 from agentdistill.repair_family import _weak_system, build_probe_filter_cases, build_repair_family_cases, run_probe_filter, run_repair_family
 from agentdistill.patches import apply_patch_bundles_atomically
+from agentdistill.patches import patch_group_is_executable
 from agentdistill.repair_efficiency import build_repair_efficiency_report
 from agentdistill.repair_fixture import run_repair_fixture
 from agentdistill.models import load_model_settings
@@ -884,6 +885,29 @@ def evaluate(input: dict) -> dict:
         for contract in result["contract_validation"]
         if isinstance(contract, dict)
     )
+
+
+def test_patch_group_is_executable_requires_code_or_json(tmp_path: Path) -> None:
+    assert patch_group_is_executable(
+        [
+            PatchBundle(
+                target_path="harness/guidelines/finalization.md",
+                action="create_or_replace",
+                content="# guidance",
+                rationale="prompt only",
+            )
+        ]
+    ) is False
+    assert patch_group_is_executable(
+        [
+            PatchBundle(
+                target_path="harness/tests/adder.json",
+                action="create_or_replace",
+                content='{"tool":"adder","cases":[]}',
+                rationale="json bundle",
+            )
+        ]
+    ) is True
 
 
 def test_atomic_patch_bundles_reject_failed_critic_policy_cases(tmp_path: Path) -> None:

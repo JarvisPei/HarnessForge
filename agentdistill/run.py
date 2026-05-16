@@ -13,7 +13,7 @@ from agentdistill.config import ExperimentConfig, TaskConfig, load_config
 from agentdistill.diagnosis import parse_diagnosis, write_patch_artifact
 from agentdistill.harness import load_system_prompt
 from agentdistill.models import ChatClient, load_model_settings
-from agentdistill.patches import apply_patch_bundles_atomically
+from agentdistill.patches import apply_patch_bundles_atomically, patch_group_is_executable
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
 
 
@@ -89,7 +89,7 @@ async def run_experiment(
                     diagnosis.patch_bundles,
                     task,
                     diagnosis.harness_manifest,
-                    teacher_policy_cases=diagnosis.policy_audit_cases,
+                    teacher_policy_cases=diagnosis.policy_audit_cases if patch_group_is_executable(diagnosis.patch_bundles) else None,
                 )
                 result.update(patch_result)
                 applied_patch_paths = list(patch_result.get("applied_patch_paths", []))
