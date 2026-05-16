@@ -17,6 +17,7 @@ from agentdistill.benchmark import _build_focused_repair_task, _infer_repair_sco
 from agentdistill.config import TaskConfig, load_benchmark_config
 from agentdistill.diagnosis import PatchBundle, parse_diagnosis
 from agentdistill.feedback import build_patch_feedback
+from agentdistill.harness import load_system_prompt
 from agentdistill.manifest import HarnessManifest, ManifestArtifact
 from agentdistill.models import ChatClient, load_model_settings
 from agentdistill.patches import apply_patch_bundles_atomically
@@ -38,6 +39,9 @@ class RepairFamilyCase:
     bad_policy_bundles: list[PatchBundle]
     good_policy_bundles: list[PatchBundle]
     manifest: HarnessManifest | None
+    dev_probe_tasks: list[TaskConfig] | None = None
+    blind_test_tasks: list[TaskConfig] | None = None
+    mechanism_only: bool = False
     repair_scope_override: dict[str, Any] | None = None
     diagnostic: bool = False
 
@@ -93,6 +97,7 @@ async def run_repair_family(
                 "case_id": case.case_id,
                 "mechanism": case.mechanism,
                 "diagnostic": case.diagnostic,
+                "mechanism_only": case.mechanism_only,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "repair_success": False,
                 "repair_success_via": "error",
@@ -109,8 +114,11 @@ async def run_repair_family(
         "diagnostic_cases": sum(1 for report in case_reports if report.get("diagnostic") is True),
         "repair_successes": sum(1 for report in case_reports if report["repair_success"]),
         "errors": sum(1 for report in case_reports if "error_type" in report),
+        "mechanism_only": sum(1 for report in case_reports if report.get("mechanism_only") is True),
         "dev_improved": sum(report.get("dev_transfer", {}).get("improved", 0) for report in case_reports),
         "blind_improved": sum(report.get("blind_transfer", {}).get("improved", 0) for report in case_reports),
+        "dev_regressed": sum(report.get("dev_transfer", {}).get("regressed", 0) for report in case_reports),
+        "blind_regressed": sum(report.get("blind_transfer", {}).get("regressed", 0) for report in case_reports),
     }
     report = {"cases": case_reports, "summary": summary}
     (output_dir / "repair_family_report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -119,6 +127,22 @@ async def run_repair_family(
 
 def build_repair_family_cases(include_diagnostics: bool = False) -> list[RepairFamilyCase]:
     fixture = build_repair_fixture_case()
+    fixture_dev_probes = [
+        TaskConfig(
+            id="dev_fixture_signed_updates",
+            instruction="Use the signed updates: start=200, updates=[+15, -9]. Return the final count.",
+            expected_answer="206",
+            rubric="Correct computation is 200 + 15 - 9 = 206.",
+        )
+    ]
+    fixture_blind_probes = [
+        TaskConfig(
+            id="blind_fixture_signed_updates",
+            instruction="Use the signed updates: start=350, updates=[-40, +22, -8]. Return the final count.",
+            expected_answer="324",
+            rubric="Correct computation is 350 - 40 + 22 - 8 = 324.",
+        )
+    ]
     fallback_task = TaskConfig(
         id="fallback_rejected_paths",
         instruction="Repair the rejected harness guideline by making the note precise and reusable.",
@@ -143,6 +167,30 @@ def build_repair_family_cases(include_diagnostics: bool = False) -> list[RepairF
         instruction="Repair a signed-sum tool so it handles negative updates correctly.",
         expected_answer="118",
     )
+    tool_dev_probes = [
+        TaskConfig(
+            id="dev_signed_sum_tool_updates",
+            instruction=(
+                "Use the signed_sum tool if it is available. Compute the final count for "
+                'start=240 and updates=["+31", "-18", "-42", "+9", "-7"]. '
+                "Return the final number with one short explanation sentence."
+            ),
+            expected_answer="213",
+            rubric="Correct computation is 240 + 31 - 18 - 42 + 9 - 7 = 213.",
+        )
+    ]
+    tool_blind_probes = [
+        TaskConfig(
+            id="blind_signed_sum_tool_updates",
+            instruction=(
+                "Use the signed_sum tool if it is available. Compute the final count for "
+                'start=1000 and updates=["+125", "-240", "+16", "-33"]. '
+                "Return the final number with one short explanation sentence."
+            ),
+            expected_answer="868",
+            rubric="Correct computation is 1000 + 125 - 240 + 16 - 33 = 868.",
+        )
+    ]
     tool_bad = [
         PatchBundle(
             target_path="harness/tools/signed_sum.py",
@@ -213,6 +261,8 @@ def run(input: dict) -> dict:
             bad_policy_bundles=fixture.bad_policy_bundles,
             good_policy_bundles=fixture.good_policy_bundles,
             manifest=fixture.manifest,
+            dev_probe_tasks=fixture_dev_probes,
+            blind_test_tasks=fixture_blind_probes,
         ),
         RepairFamilyCase(
             case_id="tool_contract_repair",
@@ -221,6 +271,8 @@ def run(input: dict) -> dict:
             bad_policy_bundles=tool_bad,
             good_policy_bundles=tool_good,
             manifest=_manifest(["harness/tools/signed_sum.py", "harness/tests/signed_sum.json"], bundle_id="signed_sum_tool"),
+            dev_probe_tasks=tool_dev_probes,
+            blind_test_tasks=tool_blind_probes,
         ),
         RepairFamilyCase(
             case_id="fallback_rejected_paths",
@@ -229,6 +281,7 @@ def run(input: dict) -> dict:
             bad_policy_bundles=fallback_bad,
             good_policy_bundles=fallback_good,
             manifest=None,
+            mechanism_only=True,
         ),
     ]
     if include_diagnostics:
@@ -240,6 +293,8 @@ def run(input: dict) -> dict:
                 bad_policy_bundles=fixture.bad_policy_bundles,
                 good_policy_bundles=fixture.good_policy_bundles,
                 manifest=fixture.manifest,
+                dev_probe_tasks=fixture_dev_probes,
+                blind_test_tasks=fixture_blind_probes,
                 diagnostic=True,
                 repair_scope_override={
                     "allowed_repair_paths": [
@@ -271,9 +326,14 @@ async def _run_case(
     workspace_root = workspace_parent / "workspace"
     try:
         _copy_workspace(repo_root, workspace_root)
+        dev_probe_tasks = case.dev_probe_tasks if case.dev_probe_tasks is not None else transfer_cfg.dev_probe_tasks
+        blind_test_tasks = case.blind_test_tasks if case.blind_test_tasks is not None else transfer_cfg.blind_test_tasks
+        transfer_tasks = [] if case.mechanism_only else dev_probe_tasks + blind_test_tasks
         weak_system = _weak_system(workspace_root)
-        console.print(f"  - baseline transfer: {case.case_id}")
-        baseline = await _run_transfer_suite(workspace_root, transfer_cfg.dev_probe_tasks + transfer_cfg.blind_test_tasks, weak, teacher, teacher_system, weak_system)
+        baseline: dict[str, dict[str, Any]] = {}
+        if transfer_tasks:
+            console.print(f"  - baseline transfer: {case.case_id}")
+            baseline = await _run_transfer_suite(workspace_root, transfer_tasks, weak, teacher, teacher_system, weak_system)
         (case_dir / "baseline_results.json").write_text(json.dumps(baseline, indent=2, ensure_ascii=False), encoding="utf-8")
         console.print(f"  - applying rejected seed patch: {case.case_id}")
         seed_result = apply_patch_bundles_atomically(workspace_root, case.bad_policy_bundles, case.task, case.manifest)
@@ -308,24 +368,27 @@ async def _run_case(
                 "harness_manifest": diagnosis.harness_manifest.model_dump() if diagnosis.harness_manifest is not None else None,
             }
         (case_dir / "final_patch_result.json").write_text(json.dumps(final_patch, indent=2, ensure_ascii=False), encoding="utf-8")
-        console.print(f"  - after-transfer: {case.case_id}")
-        after = await _run_transfer_suite(workspace_root, transfer_cfg.dev_probe_tasks + transfer_cfg.blind_test_tasks, weak, teacher, teacher_system, _weak_system(workspace_root))
+        after: dict[str, dict[str, Any]] = {}
+        if transfer_tasks:
+            console.print(f"  - after-transfer: {case.case_id}")
+            after = await _run_transfer_suite(workspace_root, transfer_tasks, weak, teacher, teacher_system, _weak_system(workspace_root))
         dev_report = build_impact_report(
-            {task.id: baseline[task.id] for task in transfer_cfg.dev_probe_tasks},
-            {task.id: after[task.id] for task in transfer_cfg.dev_probe_tasks},
-            transfer_cfg.dev_probe_tasks,
+            {task.id: baseline[task.id] for task in dev_probe_tasks if task.id in baseline},
+            {task.id: after[task.id] for task in dev_probe_tasks if task.id in after},
+            [] if case.mechanism_only else dev_probe_tasks,
             case_dir / "dev_impact_report.json",
         )
         blind_report = build_impact_report(
-            {task.id: baseline[task.id] for task in transfer_cfg.blind_test_tasks},
-            {task.id: after[task.id] for task in transfer_cfg.blind_test_tasks},
-            transfer_cfg.blind_test_tasks,
+            {task.id: baseline[task.id] for task in blind_test_tasks if task.id in baseline},
+            {task.id: after[task.id] for task in blind_test_tasks if task.id in after},
+            [] if case.mechanism_only else blind_test_tasks,
             case_dir / "blind_impact_report.json",
         )
         case_report = {
             "case_id": case.case_id,
             "mechanism": case.mechanism,
             "diagnostic": case.diagnostic,
+            "mechanism_only": case.mechanism_only,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "seed_patch_result": seed_result,
             "patch_feedback": patch_feedback,
@@ -336,6 +399,8 @@ async def _run_case(
             "repair_success": final_patch.get("patch_status") == "accepted",
             "repair_success_via": "scoped_inner_repair" if final_patch.get("patch_status") == "accepted" else "none",
             "scoped_inner_repair_success": final_patch.get("patch_status") == "accepted",
+            "dev_probe_task_ids": [task.id for task in dev_probe_tasks],
+            "blind_test_task_ids": [task.id for task in blind_test_tasks],
             "dev_transfer": _transfer_summary(dev_report),
             "blind_transfer": _transfer_summary(blind_report),
         }
@@ -386,7 +451,14 @@ def _copy_workspace(source: Path, destination: Path) -> None:
 
 
 def _weak_system(workspace_root: Path) -> str:
-    return (workspace_root / "prompts/weak_system.md").read_text().strip()
+    harness_root = workspace_root / "harness"
+    return load_system_prompt(
+        workspace_root / "prompts/weak_system.md",
+        harness_root / "skills",
+        harness_root / "guidelines",
+        harness_root / "validators",
+        harness_root / "tools",
+    )
 
 
 def _manifest(paths: list[str], bundle_id: str) -> HarnessManifest:

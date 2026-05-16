@@ -32,7 +32,7 @@ from agentdistill.diagnosis import PatchBundle, parse_diagnosis
 from agentdistill.feedback import build_patch_feedback, build_transfer_feedback, merge_benchmark_context
 from agentdistill.metrics import build_benchmark_metrics
 from agentdistill.repair_probe import run_repair_probe
-from agentdistill.repair_family import build_repair_family_cases
+from agentdistill.repair_family import _weak_system, build_repair_family_cases
 from agentdistill.patches import apply_patch_bundles_atomically
 from agentdistill.repair_efficiency import build_repair_efficiency_report
 from agentdistill.repair_fixture import run_repair_fixture
@@ -2359,6 +2359,15 @@ def test_repair_family_cases_cover_distinct_mechanisms() -> None:
     assert cases[1].manifest.bundle_id == "signed_sum_tool"
     assert cases[2].manifest is None
     assert cases[2].bad_policy_bundles[0].action == "append"
+    assert cases[0].dev_probe_tasks is not None
+    assert [task.id for task in cases[0].dev_probe_tasks] == ["dev_fixture_signed_updates"]
+    assert cases[0].blind_test_tasks is not None
+    assert [task.id for task in cases[0].blind_test_tasks] == ["blind_fixture_signed_updates"]
+    assert cases[1].dev_probe_tasks is not None
+    assert [task.id for task in cases[1].dev_probe_tasks] == ["dev_signed_sum_tool_updates"]
+    assert cases[1].blind_test_tasks is not None
+    assert [task.id for task in cases[1].blind_test_tasks] == ["blind_signed_sum_tool_updates"]
+    assert cases[2].mechanism_only is True
 
 
 def test_repair_family_can_include_diagnostic_scope_variant() -> None:
@@ -2381,3 +2390,23 @@ def test_repair_family_tool_case_uses_manifest() -> None:
     assert tool_case.manifest.bundle_id == "signed_sum_tool"
     assert "harness/tools/signed_sum.py" in tool_case.manifest.allowed_paths
     assert "harness/tests/signed_sum.json" in tool_case.manifest.allowed_paths
+
+
+def test_repair_family_weak_system_loads_harness_tools(tmp_path: Path) -> None:
+    (tmp_path / "prompts").mkdir()
+    (tmp_path / "prompts" / "weak_system.md").write_text("base weak prompt", encoding="utf-8")
+    for subdir in ["guidelines", "skills", "validators", "tools"]:
+        (tmp_path / "harness" / subdir).mkdir(parents=True)
+    (tmp_path / "harness" / "tools" / "signed_sum.py").write_text(
+        """
+def run(input: dict) -> dict:
+    return {"ok": True, "result": 1}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    system_prompt = _weak_system(tmp_path)
+
+    assert "base weak prompt" in system_prompt
+    assert "Harness tool specs" in system_prompt
+    assert "Tool module: signed_sum" in system_prompt
