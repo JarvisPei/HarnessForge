@@ -40,6 +40,7 @@ from agentdistill.repair_efficiency import build_repair_efficiency_report
 from agentdistill.repair_fixture import run_repair_fixture
 from agentdistill.models import load_model_settings
 from agentdistill.run import run_task
+from agentdistill.teacher_prompt import build_teacher_payload, enrich_benchmark_context
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
 
 
@@ -1689,6 +1690,58 @@ def test_run_focused_repair_task_calls_teacher_without_weak_model() -> None:
     assert '"repair_mode": "focused"' in teacher.messages[1]["content"]
 
 
+def test_run_focused_repair_task_includes_repair_plan_and_boundaries() -> None:
+    class TeacherClient:
+        def __init__(self) -> None:
+            self.messages = None
+
+        async def complete(self, messages, temperature=0.2):
+            self.messages = messages
+            return '{"failure_categories":[],"patch_type":"runtime_policy","patch_bundles":[]}'
+
+    teacher = TeacherClient()
+    context = {
+        "repair_mode": "focused",
+        "repair_scope": {
+            "allowed_repair_paths": [
+                "harness/runtime_policies/force_fixture.py",
+                "harness/tests/force_fixture.json",
+            ],
+            "failure_kinds": ["runtime_policy"],
+            "source_rejected_paths": ["harness/runtime_policies/force_fixture.py"],
+            "scope_reason": "runtime policy contract failures should repair only the policy and matching tests",
+        },
+        "transfer_feedback": {
+            "has_transfer_failures": True,
+            "failed_tasks": [
+                {
+                    "task_id": "dev_fixture",
+                    "repair_plan": {
+                        "primary_axis": "runtime_policy",
+                        "allowed_artifact_types": ["runtime_policy", "test"],
+                        "required_regression_test": "runtime policy test covering the failed routing case and tool_input",
+                    },
+                }
+            ],
+        },
+    }
+    asyncio.run(
+        _run_focused_repair_task(
+            TaskConfig(id="focused_repair", instruction="repair", expected_answer="1"),
+            teacher,
+            "teacher system",
+            "weak system",
+            context,
+        )
+    )
+
+    assert teacher.messages is not None
+    payload = json.loads(teacher.messages[1]["content"])
+    assert payload["benchmark_context"]["repair_plan"]["primary_axis"] == "runtime_policy"
+    assert payload["benchmark_context"]["artifact_boundaries"]["allowed_artifact_types"] == ["runtime_policy", "test"]
+    assert "allowed_repair_paths" in payload["benchmark_context"]["artifact_boundaries"]
+
+
 def test_run_phase_focused_repair_skips_weak_and_records_contexts(tmp_path: Path) -> None:
     class WeakClient:
         async def complete(self, messages, temperature=0.2):
@@ -2622,6 +2675,65 @@ def test_repair_probe_passes_patch_feedback_and_scope_to_teacher(tmp_path: Path)
     assert "harness/tests/force_fixture.json" in payload["benchmark_context"]["repair_scope"]["allowed_repair_paths"]
     assert report["repair_success"] is True
     assert report["repair_success_via"] == "scoped_inner_repair"
+
+
+def test_teacher_prompt_enrichment_lifts_repair_plan_and_boundaries() -> None:
+    context = {
+        "repair_mode": "focused",
+        "repair_scope": {
+            "allowed_repair_paths": [
+                "harness/runtime_policies/force_fixture.py",
+                "harness/tests/force_fixture.json",
+            ],
+            "failure_kinds": ["runtime_policy"],
+            "source_rejected_paths": ["harness/runtime_policies/force_fixture.py"],
+            "scope_reason": "runtime policy contract failures should repair only the policy and matching tests",
+        },
+        "transfer_feedback": {
+            "has_transfer_failures": True,
+            "failed_tasks": [
+                {
+                    "task_id": "dev_fixture",
+                    "repair_plan": {
+                        "primary_axis": "runtime_policy",
+                        "allowed_artifact_types": ["runtime_policy", "test"],
+                        "required_regression_test": "runtime policy test covering the failed routing case and tool_input",
+                    },
+                }
+            ],
+        },
+    }
+
+    enriched = enrich_benchmark_context(context)
+
+    assert enriched is not None
+    assert enriched["repair_plan"]["primary_axis"] == "runtime_policy"
+    assert enriched["artifact_boundaries"]["allowed_artifact_types"] == ["runtime_policy", "test"]
+    assert "allowed_repair_paths" in enriched["artifact_boundaries"]
+    assert enriched["artifact_boundaries"]["required_regression_test"] == "runtime policy test covering the failed routing case and tool_input"
+
+
+def test_teacher_payload_preserves_core_fields() -> None:
+    payload = build_teacher_payload(
+        task_id="task",
+        task_instruction="repair",
+        expected_answer="1",
+        rubric="rubric",
+        weak_system_prompt="weak system",
+        weak_answer="answer",
+        initial_weak_answer="initial",
+        tool_call={"name": "adder", "input": {"a": 1}},
+        tool_result={"ok": True, "total": 1},
+        runtime_policy_results=[{"requires_tool": True}],
+        benchmark_context=None,
+    )
+
+    assert payload["task_id"] == "task"
+    assert payload["task_instruction"] == "repair"
+    assert payload["weak_system_prompt"] == "weak system"
+    assert payload["tool_call"] == {"name": "adder", "input": {"a": 1}}
+    assert payload["runtime_policy_results"] == [{"requires_tool": True}]
+    assert "benchmark_context" not in payload
 
 
 def test_repair_family_cases_cover_distinct_mechanisms() -> None:

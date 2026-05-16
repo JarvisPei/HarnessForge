@@ -20,6 +20,7 @@ from agentdistill.metrics import build_benchmark_metrics
 from agentdistill.models import ChatClient, load_model_settings
 from agentdistill.patches import apply_patch_bundles_atomically, patch_group_is_executable
 from agentdistill.report import build_impact_report, evaluate_success
+from agentdistill.teacher_prompt import build_teacher_messages, enrich_benchmark_context
 from agentdistill.run import run_task
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
 
@@ -382,29 +383,20 @@ async def _run_focused_repair_task(
     weak_system: str,
     benchmark_context: dict[str, object],
 ) -> dict[str, object]:
-    messages = [
-        {"role": "system", "content": teacher_system},
-        {
-            "role": "user",
-            "content": json.dumps(
-                {
-                    "task_id": task.id,
-                    "task_instruction": task.instruction,
-                    "expected_answer": task.expected_answer,
-                    "rubric": task.rubric,
-                    "weak_system_prompt": weak_system,
-                    "weak_answer": "",
-                    "initial_weak_answer": "",
-                    "tool_call": None,
-                    "tool_result": None,
-                    "runtime_policy_results": [],
-                    "benchmark_context": benchmark_context,
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-        },
-    ]
+    messages = build_teacher_messages(
+        teacher_system,
+        task_id=task.id,
+        task_instruction=task.instruction,
+        expected_answer=task.expected_answer,
+        rubric=task.rubric,
+        weak_system_prompt=weak_system,
+        weak_answer="",
+        initial_weak_answer="",
+        tool_call=None,
+        tool_result=None,
+        runtime_policy_results=[],
+        benchmark_context=benchmark_context,
+    )
     return {
         "task_id": task.id,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -837,7 +829,8 @@ def _benchmark_context_for_iteration(
     context = merge_benchmark_context(transfer_context, patch_feedback, transfer_feedback)
     if phase_kind == "focused_repair":
         context["repair_mode"] = "focused"
-    return context
+    enriched = enrich_benchmark_context(context)
+    return enriched if enriched is not None else context
 
 
 if __name__ == "__main__":

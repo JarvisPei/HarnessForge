@@ -14,6 +14,7 @@ from agentdistill.diagnosis import parse_diagnosis, write_patch_artifact
 from agentdistill.harness import load_system_prompt
 from agentdistill.models import ChatClient, load_model_settings
 from agentdistill.patches import apply_patch_bundles_atomically, patch_group_is_executable
+from agentdistill.teacher_prompt import build_teacher_messages
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
 
 
@@ -208,29 +209,20 @@ async def run_task(
     if not request_teacher_diagnosis:
         return result
 
-    teacher_messages = [
-        {"role": "system", "content": teacher_system},
-        {
-            "role": "user",
-            "content": json.dumps(
-                {
-                    "task_id": task.id,
-                    "task_instruction": task.instruction,
-                    "expected_answer": task.expected_answer,
-                    "rubric": task.rubric,
-                    "weak_system_prompt": weak_system,
-                    "weak_answer": final_answer,
-                    "initial_weak_answer": weak_answer,
-                    "tool_call": tool_call,
-                    "tool_result": tool_result,
-                    "runtime_policy_results": policy_results,
-                    **({"benchmark_context": benchmark_context} if benchmark_context is not None else {}),
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-        },
-    ]
+    teacher_messages = build_teacher_messages(
+        teacher_system,
+        task_id=task.id,
+        task_instruction=task.instruction,
+        expected_answer=task.expected_answer,
+        rubric=task.rubric,
+        weak_system_prompt=weak_system,
+        weak_answer=final_answer,
+        initial_weak_answer=weak_answer,
+        tool_call=tool_call,
+        tool_result=tool_result,
+        runtime_policy_results=policy_results,
+        benchmark_context=benchmark_context,
+    )
     result["teacher_diagnosis_raw"] = await teacher.complete(teacher_messages, temperature=0.1)
     return result
 
