@@ -52,6 +52,7 @@ def main(
     profile: str | None = typer.Option(None, "--profile", "-p"),
     include_diagnostics: bool = typer.Option(False, "--include-diagnostics"),
     filter_baseline_probes: bool = typer.Option(False, "--filter-baseline-probes"),
+    transfer_tight: bool = typer.Option(False, "--transfer-tight"),
 ) -> None:
     load_dotenv(override=True)
     try:
@@ -60,7 +61,14 @@ def main(
                 run_probe_filter(output_dir, profile, include_diagnostics=include_diagnostics)
             )
         else:
-            report = asyncio.run(run_repair_family(output_dir, profile, include_diagnostics=include_diagnostics))
+            report = asyncio.run(
+                run_repair_family(
+                    output_dir,
+                    profile,
+                    include_diagnostics=include_diagnostics,
+                    transfer_tight=transfer_tight,
+                )
+            )
     except Exception as exc:
         console.print(f"[bold red]Error:[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
@@ -128,6 +136,7 @@ async def run_repair_family(
     teacher: ChatClient | None = None,
     weak: ChatClient | None = None,
     include_diagnostics: bool = False,
+    transfer_tight: bool = False,
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     repo_root = repo_root or Path(__file__).resolve().parent.parent
@@ -135,7 +144,11 @@ async def run_repair_family(
     teacher = teacher or ChatClient(load_model_settings("teacher", profile))
     weak = weak or ChatClient(load_model_settings("weak", profile))
     teacher_system = (repo_root / "prompts/teacher_diagnosis.md").read_text().strip()
-    cases = build_repair_family_cases(include_diagnostics=include_diagnostics)
+    cases = (
+        build_probe_filter_cases(include_diagnostics=include_diagnostics)
+        if transfer_tight
+        else build_repair_family_cases(include_diagnostics=include_diagnostics)
+    )
 
     case_reports = []
     for case in cases:
@@ -170,6 +183,7 @@ async def run_repair_family(
 
     summary = {
         "cases": len(case_reports),
+        "transfer_tight": transfer_tight,
         "mechanisms": sorted({str(report.get("mechanism")) for report in case_reports if report.get("mechanism")}),
         "diagnostic_cases": sum(1 for report in case_reports if report.get("diagnostic") is True),
         "repair_successes": sum(1 for report in case_reports if report["repair_success"]),

@@ -32,7 +32,7 @@ from agentdistill.diagnosis import PatchBundle, parse_diagnosis
 from agentdistill.feedback import build_patch_feedback, build_transfer_feedback, merge_benchmark_context
 from agentdistill.metrics import build_benchmark_metrics
 from agentdistill.repair_probe import run_repair_probe
-from agentdistill.repair_family import _weak_system, build_probe_filter_cases, build_repair_family_cases, run_probe_filter
+from agentdistill.repair_family import _weak_system, build_probe_filter_cases, build_repair_family_cases, run_probe_filter, run_repair_family
 from agentdistill.patches import apply_patch_bundles_atomically
 from agentdistill.repair_efficiency import build_repair_efficiency_report
 from agentdistill.repair_fixture import run_repair_fixture
@@ -2462,3 +2462,9 @@ def run(input: dict) -> dict:
 
     assert report["summary"]["cases"] >= 1
     assert "probe_filter_report.json" in {p.name for p in (tmp_path / "probe_filter").iterdir()}
+
+
+def test_transfer_tight_mode_uses_probe_filter_cases() -> None:
+    cases = build_probe_filter_cases()
+    assert [task.id for task in cases[0].dev_probe_tasks or []][0].startswith("dev_filter_")
+    assert [task.id for task in cases[1].dev_probe_tasks or []][0].startswith("dev_filter_")
