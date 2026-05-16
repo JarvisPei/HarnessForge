@@ -32,6 +32,7 @@ from agentdistill.diagnosis import PatchBundle, parse_diagnosis
 from agentdistill.feedback import build_patch_feedback, build_transfer_feedback, merge_benchmark_context
 from agentdistill.metrics import build_benchmark_metrics
 from agentdistill.repair_probe import run_repair_probe
+from agentdistill.repair_family import build_repair_family_cases
 from agentdistill.patches import apply_patch_bundles_atomically
 from agentdistill.repair_efficiency import build_repair_efficiency_report
 from agentdistill.repair_fixture import run_repair_fixture
@@ -2345,3 +2346,12 @@ def test_repair_probe_passes_patch_feedback_and_scope_to_teacher(tmp_path: Path)
     assert "harness/tests/force_fixture.json" in payload["benchmark_context"]["repair_scope"]["allowed_repair_paths"]
     assert report["repair_success"] is True
     assert report["repair_success_via"] == "scoped_inner_repair"
+
+
+def test_repair_family_cases_cover_distinct_mechanisms() -> None:
+    cases = build_repair_family_cases()
+
+    assert [case.case_id for case in cases] == ["tool_policy_pair", "fallback_rejected_paths"]
+    assert cases[0].manifest is not None
+    assert cases[1].manifest is None
+    assert cases[1].bad_policy_bundles[0].action == "append"
