@@ -1341,9 +1341,42 @@ def test_transfer_feedback_summarizes_failed_accepted_harness_probe() -> None:
     failed = feedback["failed_tasks"][0]
     assert failed["task_id"] == "dev_semicolon"
     assert failed["regressed"] is True
+    assert failed["failure_mode"] == "tool_failure"
     assert failed["after_tool_result"]["error"] == "Could not find initial/start count"
     merged = merge_benchmark_context({"heldout_probe": []}, None, feedback)
     assert merged["transfer_feedback"] == feedback
+
+
+def test_transfer_feedback_labels_policy_and_finalization_failures() -> None:
+    tasks = [
+        TaskConfig(id="dev_policy", instruction="unit: tags; initial: 1,000; operations: +1", expected_answer="1,001 tags remain."),
+        TaskConfig(id="dev_final", instruction="unit: cards; initial: 2,000; operations: +1", expected_answer="2,001 cards remain."),
+    ]
+    feedback = build_transfer_feedback(
+        tasks,
+        baseline_results={
+            "dev_policy": {"weak_answer": "1,001 tags remain."},
+            "dev_final": {"weak_answer": "2,001 cards remain."},
+        },
+        probe_results={
+            "dev_policy": {
+                "weak_answer": "wrong",
+                "runtime_policy_results": [{"requires_tool": True}],
+                "tool_result": {"ok": True, "result": 1001},
+            },
+            "dev_final": {
+                "weak_answer": "2,000 cards remain.",
+                "runtime_policy_results": [{"requires_tool": False}],
+                "tool_call": None,
+            },
+        },
+        iteration=1,
+        accepted_harness=True,
+    )
+
+    by_id = {item["task_id"]: item for item in feedback["failed_tasks"]}
+    assert by_id["dev_policy"]["failure_mode"] == "finalization_failure"
+    assert by_id["dev_final"]["failure_mode"] == "policy_or_routing_failure"
 
 
 def test_transfer_feedback_persists_until_probe_success_resolves_it() -> None:
@@ -1923,6 +1956,12 @@ def test_merge_benchmark_context_adds_patch_feedback_only_for_rejections() -> No
     merged = merge_benchmark_context(transfer_context, rejected_feedback)
     assert merged["heldout_probe"] == transfer_context["heldout_probe"]
     assert merged["patch_feedback"] == rejected_feedback
+
+
+def test_teacher_prompt_mentions_transfer_failure_mode() -> None:
+    prompt = Path("prompts/teacher_diagnosis.md").read_text()
+
+    assert "Prefer the transfer_feedback.failure_mode field" in prompt
 
 
 def test_run_phase_records_context_patch_feedback(tmp_path: Path) -> None:

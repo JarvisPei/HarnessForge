@@ -48,6 +48,7 @@ def build_transfer_feedback(
             "task_instruction": task.instruction,
             "expected_answer": task.expected_answer,
             "rubric": task.rubric,
+            "failure_mode": _classify_transfer_failure(before, after),
             "before_success": before_success,
             "after_success": after_success,
             "regressed": before_success and not after_success,
@@ -121,6 +122,26 @@ def _transfer_feedback_result(iteration: int, unresolved_by_id: dict[str, dict[s
         "has_transfer_failures": bool(failed_tasks),
         "failed_tasks": failed_tasks,
     }
+
+
+def _classify_transfer_failure(before: dict[str, Any], after: dict[str, Any]) -> str:
+    after_runtime = after.get("runtime_policy_results", [])
+    if isinstance(after_runtime, list):
+        forced = [item for item in after_runtime if isinstance(item, dict) and item.get("requires_tool")]
+        if forced:
+            after_tool = after.get("tool_result")
+            if isinstance(after_tool, dict):
+                if after_tool.get("ok") is False:
+                    return "tool_failure"
+                return "finalization_failure"
+            return "policy_or_routing_failure"
+    before_tool = before.get("tool_result")
+    after_tool = after.get("tool_result")
+    if isinstance(before_tool, dict) and before_tool.get("ok") is True and isinstance(after_tool, dict) and after_tool.get("ok") is False:
+        return "tool_failure"
+    if after.get("tool_call") is None:
+        return "policy_or_routing_failure"
+    return "finalization_failure"
 
 
 def _summarize_rejection(task_id: str, result: dict[str, Any]) -> dict[str, Any]:
