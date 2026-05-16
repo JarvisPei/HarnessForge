@@ -2160,3 +2160,42 @@ def test_repair_efficiency_report_aggregates_runs(tmp_path: Path) -> None:
     assert report["aggregate"]["blind_improved"] == 1
     assert report["aggregate"]["teacher_call_proxy"] == 3
     assert report["aggregate"]["focused_repair_weak_calls_skipped"] == 1
+
+
+def test_repair_efficiency_report_recovers_interrupted_run_from_phase_results(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    phase_dir = run_dir / "evolve_train_iter_02"
+    phase_dir.mkdir(parents=True)
+    (phase_dir / "train.inner_repair_1.json").write_text(json.dumps({"patch_status": "rejected"}))
+    (phase_dir / "train.json").write_text(
+        json.dumps(
+            {
+                "task_id": "train",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "patch_status": "rejected",
+                "rejected_patch_paths": ["/repo/harness/runtime_policies/force_train.py"],
+                "contract_validation": [{"ok": False}],
+                "inner_repair_attempts": [
+                    {
+                        "patch_status": "rejected",
+                        "focused_repair": True,
+                        "context_repair_scope": {
+                            "allowed_repair_paths": [
+                                "harness/runtime_policies/force_train.py",
+                                "harness/tests/force_train.json",
+                            ]
+                        },
+                    }
+                ],
+            }
+        )
+    )
+
+    report = build_repair_efficiency_report([run_dir])
+
+    repair = report["runs"][0]["repair_efficiency"]
+    assert repair["patch_attempts"] == 1
+    assert repair["rejected"] == 1
+    assert repair["inner_repair_attempts"] == 1
+    assert repair["scoped_inner_repair_attempts"] == 1
+    assert repair["cost_proxies"]["teacher_call_proxy"] == 2
