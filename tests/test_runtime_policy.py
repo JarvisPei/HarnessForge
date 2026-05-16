@@ -1711,6 +1711,7 @@ def test_teacher_prompt_uses_meta_skills_not_domain_scaffolds() -> None:
     assert "Meta-Skill: Contract Repair" in prompt
     assert "Meta-Skill: Architecture Escalation" in prompt
     assert "Meta-Skill: Generalization Discipline" in prompt
+    assert "Keep the response concise and non-redundant." in prompt
     assert "benchmark_context.transfer_feedback" in prompt
     assert "keep the runtime policy as a thin router" in prompt
     assert "move that logic into a deterministic tool" in prompt
