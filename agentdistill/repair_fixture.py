@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,14 @@ from agentdistill.repair_efficiency import build_repair_efficiency_report
 app = typer.Typer(add_completion=False)
 
 
+@dataclass(frozen=True)
+class RepairFixtureCase:
+    task: TaskConfig
+    bad_policy_bundles: list[PatchBundle]
+    good_policy_bundles: list[PatchBundle]
+    manifest: HarnessManifest
+
+
 @app.command()
 def main(
     output_dir: Path = typer.Option(Path("outputs/repair_mechanism_fixture"), "--output-dir", "-o"),
@@ -27,41 +36,51 @@ def main(
 
 def run_repair_fixture(output_dir: Path) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    case = build_repair_fixture_case()
     run_dirs = [
-        _write_fixture_run(output_dir / "fixture_full_train", mode="full_train"),
-        _write_fixture_run(output_dir / "fixture_focused_only", mode="focused_only"),
-        _write_fixture_run(output_dir / "fixture_scoped_inner", mode="scoped_inner"),
+        _write_fixture_run(output_dir / "fixture_full_train", case=case, mode="full_train"),
+        _write_fixture_run(output_dir / "fixture_focused_only", case=case, mode="focused_only"),
+        _write_fixture_run(output_dir / "fixture_scoped_inner", case=case, mode="scoped_inner"),
     ]
     report = build_repair_efficiency_report(run_dirs)
     (output_dir / "repair_efficiency_report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     return report
 
 
-def _write_fixture_run(run_dir: Path, mode: str) -> Path:
-    if run_dir.exists():
-        shutil.rmtree(run_dir)
-    run_dir.mkdir(parents=True)
-    _make_harness_dirs(run_dir)
-
+def build_repair_fixture_case() -> RepairFixtureCase:
     task = TaskConfig(
         id="fixture_train",
         instruction="Use the signed updates: start=100, updates=[+25, -7]. Return the final count.",
         expected_answer="118",
     )
+    return RepairFixtureCase(
+        task=task,
+        bad_policy_bundles=_bad_policy_bundles(),
+        good_policy_bundles=_good_policy_bundles(),
+        manifest=_manifest(["harness/runtime_policies/force_fixture.py", "harness/tests/force_fixture.json"]),
+    )
+
+
+def _write_fixture_run(run_dir: Path, case: RepairFixtureCase, mode: str) -> Path:
+    if run_dir.exists():
+        shutil.rmtree(run_dir)
+    run_dir.mkdir(parents=True)
+    _make_harness_dirs(run_dir)
+
     rejected_result = apply_patch_bundles_atomically(
         run_dir,
-        _bad_policy_bundles(),
-        task,
-        _manifest(["harness/runtime_policies/force_fixture.py", "harness/tests/force_fixture.json"]),
+        case.bad_policy_bundles,
+        case.task,
+        case.manifest,
     )
-    rejected_result.update({"task_id": task.id, "created_at": "2026-01-01T00:00:00+00:00"})
+    rejected_result.update({"task_id": case.task.id, "created_at": "2026-01-01T00:00:00+00:00"})
     inner_attempts: list[dict[str, Any]] = []
     if mode == "scoped_inner":
         inner = apply_patch_bundles_atomically(
             run_dir,
-            _good_policy_bundles(),
-            task,
-            _manifest(["harness/runtime_policies/force_fixture.py", "harness/tests/force_fixture.json"]),
+            case.good_policy_bundles,
+            case.task,
+            case.manifest,
         )
         inner.update(
             {

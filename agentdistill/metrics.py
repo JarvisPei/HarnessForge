@@ -147,7 +147,9 @@ def _build_repair_efficiency_metrics(
         for attempt in row.get("inner_repair_attempts", [])
         if isinstance(attempt, dict)
     ]
+    inner_accepted = [attempt for attempt in inner_attempts if attempt.get("patch_status") == "accepted"]
     scoped_attempts = [attempt for attempt in inner_attempts if isinstance(attempt.get("context_repair_scope"), dict)]
+    scoped_accepted = [attempt for attempt in scoped_attempts if attempt.get("patch_status") == "accepted"]
     out_of_scope_rejections = [
         attempt
         for attempt in inner_attempts
@@ -160,10 +162,14 @@ def _build_repair_efficiency_metrics(
         "accepted": len(accepted),
         "rejected": len(rejected),
         "accepted_rate": _safe_ratio(len(accepted), len(patch_rows)),
+        "repair_success": bool(accepted or inner_accepted),
+        "repair_success_via": _repair_success_via(accepted, inner_accepted, scoped_accepted),
         "inner_repair_attempts": len(inner_attempts),
-        "inner_repair_accepted": sum(1 for attempt in inner_attempts if attempt.get("patch_status") == "accepted"),
+        "inner_repair_accepted": len(inner_accepted),
         "inner_repair_rejected": sum(1 for attempt in inner_attempts if attempt.get("patch_status") == "rejected"),
         "scoped_inner_repair_attempts": len(scoped_attempts),
+        "scoped_inner_repair_accepted": len(scoped_accepted),
+        "scoped_inner_repair_success": bool(scoped_accepted),
         "out_of_scope_rejections": len(out_of_scope_rejections),
         "total_patch_paths": len(touched_paths),
         "unique_patch_paths": len(set(touched_paths)),
@@ -194,6 +200,20 @@ def _normalize_harness_path(path: str) -> str | None:
 
 def _safe_ratio(numerator: int, denominator: int) -> float:
     return round(numerator / denominator, 4) if denominator else 0.0
+
+
+def _repair_success_via(
+    accepted: list[dict[str, Any]],
+    inner_accepted: list[dict[str, Any]],
+    scoped_accepted: list[dict[str, Any]],
+) -> str:
+    if accepted:
+        return "outer_patch"
+    if scoped_accepted:
+        return "scoped_inner_repair"
+    if inner_accepted:
+        return "inner_repair"
+    return "none"
 
 
 def _build_cost_proxies(train_summary: list[dict[str, Any]], inner_attempts: list[dict[str, Any]]) -> dict[str, Any]:

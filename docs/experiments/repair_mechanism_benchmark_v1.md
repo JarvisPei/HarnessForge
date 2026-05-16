@@ -118,3 +118,47 @@ controlled repair fixture: deterministic ablation of repair-loop mechanics
 ```
 
 The current config remains a natural smoke slice, but the deterministic fixture runner is the real benchmark object for rejection-driven repair ablations.
+
+## Mechanism Fixture v2
+
+The deterministic fixture now reports repair outcome separately from outer patch acceptance. This matters because a scoped-inner run should still show the initial bad patch as rejected, while also showing that the inner scoped repair accepted a corrected harness patch.
+
+Validation command:
+
+```bash
+.venv/bin/python -m agentdistill.repair_fixture --output-dir /private/tmp/repair_fixture_v2
+```
+
+Result:
+
+```text
+fixture_full_train:
+  rejected = 1
+  repair_success = false
+  repair_success_via = none
+  scoped_inner_repair_success = false
+
+fixture_focused_only:
+  rejected = 1
+  repair_success = false
+  repair_success_via = none
+  scoped_inner_repair_success = false
+
+fixture_scoped_inner:
+  rejected = 1
+  repair_success = true
+  repair_success_via = scoped_inner_repair
+  scoped_inner_repair_success = true
+```
+
+Aggregate:
+
+```text
+rejected = 3
+repair_successes = 1
+inner_repair_accepted = 1
+scoped_inner_repair_accepted = 1
+scoped_inner_repair_successes = 1
+```
+
+This converts the fixture into a small mechanism-differentiating ablation: all variants reject the same initial bad runtime-policy patch, but only the scoped-inner variant records a successful inner repair. The fixture is still deterministic and API-free, so it is a cheap gate for future repair-loop metrics before running expensive teacher benchmarks.

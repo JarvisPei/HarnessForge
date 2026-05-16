@@ -69,8 +69,12 @@ def _aggregate_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
         "accepted": accepted,
         "rejected": _sum_nested(runs, "repair_efficiency", "rejected"),
         "accepted_rate": _safe_ratio(accepted, patch_attempts),
+        "repair_successes": _count_successes(runs, "repair_efficiency", "repair_success"),
         "inner_repair_attempts": _sum_nested(runs, "repair_efficiency", "inner_repair_attempts"),
+        "inner_repair_accepted": _sum_nested(runs, "repair_efficiency", "inner_repair_accepted"),
         "scoped_inner_repair_attempts": _sum_nested(runs, "repair_efficiency", "scoped_inner_repair_attempts"),
+        "scoped_inner_repair_accepted": _sum_nested(runs, "repair_efficiency", "scoped_inner_repair_accepted"),
+        "scoped_inner_repair_successes": _count_successes(runs, "repair_efficiency", "scoped_inner_repair_success"),
         "out_of_scope_rejections": _sum_nested(runs, "repair_efficiency", "out_of_scope_rejections"),
         "total_patch_paths": _sum_nested(runs, "repair_efficiency", "total_patch_paths"),
         "unique_patch_paths_sum": _sum_nested(runs, "repair_efficiency", "unique_patch_paths"),
@@ -97,6 +101,17 @@ def _sum_nested(rows: list[dict[str, Any]], *keys: str) -> int:
             value = value.get(key, {}) if isinstance(value, dict) else {}
         if isinstance(value, int):
             total += value
+    return total
+
+
+def _count_successes(rows: list[dict[str, Any]], *keys: str) -> int:
+    total = 0
+    for row in rows:
+        value: Any = row
+        for key in keys:
+            value = value.get(key, {}) if isinstance(value, dict) else {}
+        if value is True:
+            total += 1
     return total
 
 

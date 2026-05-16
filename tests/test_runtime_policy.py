@@ -31,6 +31,7 @@ from agentdistill.critic import parse_critic_audit, validate_critic_policy_cases
 from agentdistill.diagnosis import PatchBundle, parse_diagnosis
 from agentdistill.feedback import build_patch_feedback, build_transfer_feedback, merge_benchmark_context
 from agentdistill.metrics import build_benchmark_metrics
+from agentdistill.repair_probe import run_repair_probe
 from agentdistill.patches import apply_patch_bundles_atomically
 from agentdistill.repair_efficiency import build_repair_efficiency_report
 from agentdistill.repair_fixture import run_repair_fixture
@@ -2053,6 +2054,8 @@ def test_build_benchmark_metrics_counts_patch_quality_and_transfer() -> None:
     assert metrics["harness_after"]["type_counts"]["tool"] == 1
     assert metrics["repair_efficiency"]["patch_attempts"] == 2
     assert metrics["repair_efficiency"]["accepted_rate"] == 0.5
+    assert metrics["repair_efficiency"]["repair_success"] is True
+    assert metrics["repair_efficiency"]["repair_success_via"] == "outer_patch"
     assert metrics["repair_efficiency"]["avg_paths_per_patch_attempt"] == 2.5
     assert metrics["repair_efficiency"]["dev"]["improved"] == 1
     assert metrics["repair_efficiency"]["cost_proxies"]["weak_call_proxy"] == 1
@@ -2110,8 +2113,12 @@ def test_build_benchmark_metrics_counts_scoped_inner_repair_efficiency() -> None
 
     repair = metrics["repair_efficiency"]
     assert repair["inner_repair_attempts"] == 2
+    assert repair["repair_success"] is True
+    assert repair["repair_success_via"] == "scoped_inner_repair"
     assert repair["inner_repair_accepted"] == 1
     assert repair["scoped_inner_repair_attempts"] == 2
+    assert repair["scoped_inner_repair_accepted"] == 1
+    assert repair["scoped_inner_repair_success"] is True
     assert repair["out_of_scope_rejections"] == 1
     assert repair["blind"]["regressed"] == 1
     assert repair["cost_proxies"]["teacher_call_proxy"] == 3
@@ -2130,8 +2137,12 @@ def test_repair_efficiency_report_aggregates_runs(tmp_path: Path) -> None:
                     "patch_attempts": 2,
                     "accepted": 1,
                     "rejected": 1,
+                    "repair_success": True,
                     "inner_repair_attempts": 1,
+                    "inner_repair_accepted": 1,
                     "scoped_inner_repair_attempts": 1,
+                    "scoped_inner_repair_accepted": 1,
+                    "scoped_inner_repair_success": True,
                     "out_of_scope_rejections": 0,
                     "total_patch_paths": 3,
                     "unique_patch_paths": 2,
@@ -2170,7 +2181,11 @@ def test_repair_efficiency_report_aggregates_runs(tmp_path: Path) -> None:
     assert report["aggregate"]["patch_attempts"] == 3
     assert report["aggregate"]["accepted"] == 2
     assert report["aggregate"]["accepted_rate"] == 0.6667
+    assert report["aggregate"]["repair_successes"] == 2
+    assert report["aggregate"]["inner_repair_accepted"] == 1
     assert report["aggregate"]["scoped_inner_repair_attempts"] == 1
+    assert report["aggregate"]["scoped_inner_repair_accepted"] == 1
+    assert report["aggregate"]["scoped_inner_repair_successes"] == 1
     assert report["aggregate"]["dev_improved"] == 1
     assert report["aggregate"]["blind_improved"] == 1
     assert report["aggregate"]["teacher_call_proxy"] == 3
@@ -2211,8 +2226,11 @@ def test_repair_efficiency_report_recovers_interrupted_run_from_phase_results(tm
     repair = report["runs"][0]["repair_efficiency"]
     assert repair["patch_attempts"] == 1
     assert repair["rejected"] == 1
+    assert repair["repair_success"] is False
+    assert repair["repair_success_via"] == "none"
     assert repair["inner_repair_attempts"] == 1
     assert repair["scoped_inner_repair_attempts"] == 1
+    assert repair["scoped_inner_repair_success"] is False
     assert repair["cost_proxies"]["teacher_call_proxy"] == 2
 
 
@@ -2222,12 +2240,108 @@ def test_repair_fixture_deterministically_exposes_scoped_inner_repair(tmp_path: 
 
     assert runs["fixture_full_train"]["patch_attempts"] == 1
     assert runs["fixture_full_train"]["rejected"] == 1
+    assert runs["fixture_full_train"]["repair_success"] is False
+    assert runs["fixture_full_train"]["repair_success_via"] == "none"
     assert runs["fixture_full_train"]["inner_repair_attempts"] == 0
+    assert runs["fixture_full_train"]["scoped_inner_repair_success"] is False
     assert runs["fixture_focused_only"]["rejected"] == 1
+    assert runs["fixture_focused_only"]["repair_success"] is False
+    assert runs["fixture_focused_only"]["repair_success_via"] == "none"
     assert runs["fixture_focused_only"]["inner_repair_attempts"] == 0
+    assert runs["fixture_focused_only"]["scoped_inner_repair_success"] is False
     assert runs["fixture_scoped_inner"]["rejected"] == 1
+    assert runs["fixture_scoped_inner"]["repair_success"] is True
+    assert runs["fixture_scoped_inner"]["repair_success_via"] == "scoped_inner_repair"
     assert runs["fixture_scoped_inner"]["inner_repair_attempts"] == 1
     assert runs["fixture_scoped_inner"]["inner_repair_accepted"] == 1
     assert runs["fixture_scoped_inner"]["scoped_inner_repair_attempts"] == 1
+    assert runs["fixture_scoped_inner"]["scoped_inner_repair_accepted"] == 1
+    assert runs["fixture_scoped_inner"]["scoped_inner_repair_success"] is True
     assert report["aggregate"]["rejected"] == 3
+    assert report["aggregate"]["repair_successes"] == 1
     assert report["aggregate"]["scoped_inner_repair_attempts"] == 1
+    assert report["aggregate"]["scoped_inner_repair_accepted"] == 1
+    assert report["aggregate"]["scoped_inner_repair_successes"] == 1
+
+
+def test_repair_probe_passes_patch_feedback_and_scope_to_teacher(tmp_path: Path) -> None:
+    class TeacherClient:
+        def __init__(self) -> None:
+            self.messages = None
+
+        async def complete(self, messages, temperature=0.2):
+            self.messages = messages
+            return json.dumps(
+                {
+                    "diagnosis": "Repair the scoped harness.",
+                    "failure_categories": ["runtime_policy"],
+                    "harness_patch": "repair the fixture",
+                    "patch_type": "runtime_policy",
+                    "regression_test": "keep repair scoped",
+                    "patch_bundles": [
+                        {
+                            "target_path": "harness/runtime_policies/force_fixture.py",
+                            "action": "create_or_replace",
+                            "content": "def evaluate(input: dict) -> dict:\n    return {\"requires_tool\": False}\n",
+                        },
+                        {
+                            "target_path": "harness/tests/force_fixture.json",
+                            "action": "create_or_replace",
+                            "content": json.dumps(
+                                {
+                                    "policy": "force_fixture",
+                                    "cases": [
+                                        {
+                                            "input": {
+                                                "task_instruction": "Use the signed updates: start=100, updates=[+25, -7]. Return the final count.",
+                                                "available_tools": [],
+                                                "expected_answer": "118",
+                                            },
+                                            "expected": {"requires_tool": False},
+                                        }
+                                    ],
+                                }
+                            ),
+                        },
+                    ],
+                    "harness_manifest": {
+                        "bundle_id": "repair_fixture",
+                        "intent": "repair fixture",
+                        "allowed_paths": [
+                            "harness/runtime_policies/force_fixture.py",
+                            "harness/tests/force_fixture.json",
+                        ],
+                        "artifacts": [
+                            {
+                                "path": "harness/runtime_policies/force_fixture.py",
+                                "type": "runtime_policy",
+                                "purpose": "fixture repair",
+                            },
+                            {
+                                "path": "harness/tests/force_fixture.json",
+                                "type": "test",
+                                "purpose": "fixture repair",
+                            },
+                        ],
+                        "contracts": ["fixture contracts pass"],
+                    },
+                }
+                )
+
+    probe_repo = tmp_path / "repo"
+    (probe_repo / "prompts").mkdir(parents=True)
+    (probe_repo / "prompts" / "weak_system.md").write_text("weak")
+    (probe_repo / "prompts" / "teacher_diagnosis.md").write_text("teacher")
+    for subdir in ["guidelines", "skills", "validators", "tools", "runtime_policies", "tests"]:
+        (probe_repo / "harness" / subdir).mkdir(parents=True, exist_ok=True)
+
+    teacher = TeacherClient()
+    report = asyncio.run(run_repair_probe(tmp_path / "probe", None, teacher=teacher, repo_root=probe_repo))
+
+    assert teacher.messages is not None
+    payload = json.loads(teacher.messages[1]["content"])
+    assert payload["benchmark_context"]["patch_feedback"]["has_rejections"] is True
+    assert "harness/runtime_policies/force_fixture.py" in payload["benchmark_context"]["repair_scope"]["allowed_repair_paths"]
+    assert "harness/tests/force_fixture.json" in payload["benchmark_context"]["repair_scope"]["allowed_repair_paths"]
+    assert report["repair_success"] is True
+    assert report["repair_success_via"] == "scoped_inner_repair"
