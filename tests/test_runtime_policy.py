@@ -31,6 +31,7 @@ from agentdistill.critic import parse_critic_audit, validate_critic_policy_cases
 from agentdistill.diagnosis import PatchBundle, parse_diagnosis
 from agentdistill.feedback import build_patch_feedback, build_transfer_feedback, merge_benchmark_context
 from agentdistill.metrics import build_benchmark_metrics
+from agentdistill.report import build_impact_report
 from agentdistill.repair_probe import run_repair_probe
 from agentdistill.repair_family import _weak_system, build_probe_filter_cases, build_repair_family_cases, run_probe_filter, run_repair_family
 from agentdistill.patches import apply_patch_bundles_atomically
@@ -2001,6 +2002,33 @@ def test_run_task_can_skip_teacher_diagnosis(tmp_path: Path) -> None:
 
     assert result["weak_answer"] == "1"
     assert "teacher_diagnosis_raw" not in result
+
+
+def test_impact_report_includes_tool_results(tmp_path: Path) -> None:
+    rows = build_impact_report(
+        baseline={
+            "task": {
+                "weak_answer": "0",
+                "tool_call": {"name": "signed_sum", "input": {}},
+                "tool_result": {"ok": False},
+                "runtime_policy_results": [{"requires_tool": True}],
+            }
+        },
+        after={
+            "task": {
+                "weak_answer": "1",
+                "tool_call": {"name": "signed_sum", "input": {"start": 1}},
+                "tool_result": {"ok": True, "result": 1},
+                "runtime_policy_results": [],
+            }
+        },
+        tasks=[TaskConfig(id="task", instruction="return 1", expected_answer="1")],
+        output_path=tmp_path / "impact.json",
+    )
+
+    assert rows[0]["before_tool_result"] == {"ok": False}
+    assert rows[0]["after_tool_result"] == {"ok": True, "result": 1}
+    assert rows[0]["before_runtime_policy_results"] == [{"requires_tool": True}]
 
 
 def test_build_benchmark_metrics_counts_patch_quality_and_transfer() -> None:

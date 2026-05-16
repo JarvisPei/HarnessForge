@@ -16,7 +16,7 @@ from rich.console import Console
 from agentdistill.benchmark import _build_focused_repair_task, _infer_repair_scope, _reject_out_of_scope_repair, _run_focused_repair_task
 from agentdistill.config import TaskConfig, load_benchmark_config
 from agentdistill.diagnosis import PatchBundle, parse_diagnosis
-from agentdistill.feedback import build_patch_feedback
+from agentdistill.feedback import build_patch_feedback, build_transfer_feedback
 from agentdistill.harness import load_system_prompt
 from agentdistill.manifest import HarnessManifest, ManifestArtifact
 from agentdistill.models import ChatClient, load_model_settings
@@ -53,6 +53,7 @@ def main(
     include_diagnostics: bool = typer.Option(False, "--include-diagnostics"),
     filter_baseline_probes: bool = typer.Option(False, "--filter-baseline-probes"),
     transfer_tight: bool = typer.Option(False, "--transfer-tight"),
+    transfer_feedback_repair: bool = typer.Option(False, "--transfer-feedback-repair"),
 ) -> None:
     load_dotenv(override=True)
     try:
@@ -67,6 +68,7 @@ def main(
                     profile,
                     include_diagnostics=include_diagnostics,
                     transfer_tight=transfer_tight,
+                    transfer_feedback_repair=transfer_feedback_repair,
                 )
             )
     except Exception as exc:
@@ -137,6 +139,7 @@ async def run_repair_family(
     weak: ChatClient | None = None,
     include_diagnostics: bool = False,
     transfer_tight: bool = False,
+    transfer_feedback_repair: bool = False,
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     repo_root = repo_root or Path(__file__).resolve().parent.parent
@@ -164,6 +167,7 @@ async def run_repair_family(
                 weak=weak,
                 teacher=teacher,
                 teacher_system=teacher_system,
+                transfer_feedback_repair=transfer_feedback_repair,
             )
         except Exception as exc:
             report = {
@@ -184,6 +188,7 @@ async def run_repair_family(
     summary = {
         "cases": len(case_reports),
         "transfer_tight": transfer_tight,
+        "transfer_feedback_repair": transfer_feedback_repair,
         "mechanisms": sorted({str(report.get("mechanism")) for report in case_reports if report.get("mechanism")}),
         "diagnostic_cases": sum(1 for report in case_reports if report.get("diagnostic") is True),
         "repair_successes": sum(1 for report in case_reports if report["repair_success"]),
@@ -549,6 +554,7 @@ async def _run_case(
     weak: ChatClient,
     teacher: ChatClient,
     teacher_system: str,
+    transfer_feedback_repair: bool = False,
 ) -> dict[str, Any]:
     workspace_parent = Path(tempfile.mkdtemp(prefix=f"repair_family_{case.case_id}_"))
     workspace_root = workspace_parent / "workspace"
@@ -600,6 +606,7 @@ async def _run_case(
         if transfer_tasks:
             console.print(f"  - after-transfer: {case.case_id}")
             after = await _run_transfer_suite(workspace_root, transfer_tasks, weak, teacher, teacher_system, _weak_system(workspace_root))
+        (case_dir / "after_results.json").write_text(json.dumps(after, indent=2, ensure_ascii=False), encoding="utf-8")
         dev_report = build_impact_report(
             {task.id: baseline[task.id] for task in dev_probe_tasks if task.id in baseline},
             {task.id: after[task.id] for task in dev_probe_tasks if task.id in after},
@@ -612,6 +619,20 @@ async def _run_case(
             [] if case.mechanism_only else blind_test_tasks,
             case_dir / "blind_impact_report.json",
         )
+        transfer_repair_report = None
+        if transfer_feedback_repair and case.case_id == "tool_contract_repair" and final_patch.get("patch_status") == "accepted":
+            transfer_repair_report = await _run_transfer_feedback_repair(
+                repo_root=workspace_root,
+                case=case,
+                case_dir=case_dir,
+                dev_probe_tasks=dev_probe_tasks,
+                blind_test_tasks=blind_test_tasks,
+                baseline=baseline,
+                after=after,
+                weak=weak,
+                teacher=teacher,
+                teacher_system=teacher_system,
+            )
         case_report = {
             "case_id": case.case_id,
             "mechanism": case.mechanism,
@@ -632,6 +653,8 @@ async def _run_case(
             "dev_transfer": _transfer_summary(dev_report),
             "blind_transfer": _transfer_summary(blind_report),
         }
+        if transfer_repair_report is not None:
+            case_report["transfer_feedback_repair"] = transfer_repair_report
         (case_dir / "case_report.json").write_text(json.dumps(case_report, indent=2, ensure_ascii=False), encoding="utf-8")
         return case_report
     finally:
@@ -681,6 +704,105 @@ async def _run_probe_filter_case(
     }
     (case_dir / "probe_filter_case_report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     return report
+
+
+async def _run_transfer_feedback_repair(
+    repo_root: Path,
+    case: RepairFamilyCase,
+    case_dir: Path,
+    dev_probe_tasks: list[TaskConfig],
+    blind_test_tasks: list[TaskConfig],
+    baseline: dict[str, dict[str, Any]],
+    after: dict[str, dict[str, Any]],
+    weak: ChatClient,
+    teacher: ChatClient,
+    teacher_system: str,
+) -> dict[str, Any]:
+    transfer_feedback = build_transfer_feedback(
+        dev_probe_tasks,
+        {task.id: baseline[task.id] for task in dev_probe_tasks if task.id in baseline},
+        {task.id: after[task.id] for task in dev_probe_tasks if task.id in after},
+        iteration=2,
+        accepted_harness=True,
+    )
+    repair_dir = case_dir / "transfer_feedback_repair"
+    repair_dir.mkdir(parents=True, exist_ok=True)
+    (repair_dir / "transfer_feedback.json").write_text(json.dumps(transfer_feedback, indent=2, ensure_ascii=False), encoding="utf-8")
+    if not transfer_feedback.get("has_transfer_failures"):
+        return {
+            "attempted": False,
+            "reason": "no dev transfer failures after accepted harness",
+            "transfer_feedback": transfer_feedback,
+        }
+
+    patch_feedback = {"iteration": 2, "rejected_bundles": [], "has_rejections": False}
+    repair_scope = {
+        "allowed_repair_paths": ["harness/tools/signed_sum.py", "harness/tests/signed_sum.json"],
+        "failure_kinds": ["tool"],
+        "source_rejected_paths": [],
+        "scope_reason": "transfer feedback repair is limited to the accepted signed_sum tool and tests",
+    }
+    repair_task = _build_focused_repair_task(patch_feedback, transfer_feedback, repair_scope)
+    repair_context = {
+        "repair_mode": "focused",
+        "patch_feedback": patch_feedback,
+        "transfer_feedback": transfer_feedback,
+        "repair_scope": repair_scope,
+        "inferred_repair_scope": repair_scope,
+    }
+    (repair_dir / "repair_context.json").write_text(json.dumps(repair_context, indent=2, ensure_ascii=False), encoding="utf-8")
+    console.print(f"  - transfer-feedback repair: {case.case_id}")
+    repair_run = await _run_focused_repair_task(repair_task, teacher, teacher_system, _weak_system(repo_root), repair_context)
+    diagnosis = parse_diagnosis(str(repair_run["teacher_diagnosis_raw"]))
+    repair_run["teacher_diagnosis"] = diagnosis.model_dump()
+    out_of_scope = _reject_out_of_scope_repair(diagnosis, repair_scope, repo_root)
+    if out_of_scope is not None:
+        repair_patch = out_of_scope
+    elif diagnosis.patch_bundles and diagnosis.failure_categories:
+        repair_patch = apply_patch_bundles_atomically(repo_root, diagnosis.patch_bundles, case.task, diagnosis.harness_manifest)
+    else:
+        repair_patch = {
+            "patch_status": "skipped",
+            "applied_patch_paths": [],
+            "rejected_patch_paths": [],
+            "rejection_reason": "teacher did not produce a transfer-feedback repair patch",
+            "contract_validation": [],
+            "harness_manifest": diagnosis.harness_manifest.model_dump() if diagnosis.harness_manifest is not None else None,
+        }
+    (repair_dir / "repair_run.json").write_text(json.dumps(repair_run, indent=2, ensure_ascii=False), encoding="utf-8")
+    (repair_dir / "repair_patch_result.json").write_text(json.dumps(repair_patch, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    repaired_after = {}
+    if repair_patch.get("patch_status") == "accepted":
+        repaired_after = await _run_transfer_suite(
+            repo_root,
+            dev_probe_tasks + blind_test_tasks,
+            weak,
+            teacher,
+            teacher_system,
+            _weak_system(repo_root),
+        )
+    (repair_dir / "after_repair_results.json").write_text(json.dumps(repaired_after, indent=2, ensure_ascii=False), encoding="utf-8")
+    dev_report = build_impact_report(
+        {task.id: baseline[task.id] for task in dev_probe_tasks if task.id in baseline},
+        {task.id: repaired_after[task.id] for task in dev_probe_tasks if task.id in repaired_after},
+        dev_probe_tasks,
+        repair_dir / "dev_impact_report.json",
+    )
+    blind_report = build_impact_report(
+        {task.id: baseline[task.id] for task in blind_test_tasks if task.id in baseline},
+        {task.id: repaired_after[task.id] for task in blind_test_tasks if task.id in repaired_after},
+        blind_test_tasks,
+        repair_dir / "blind_impact_report.json",
+    )
+    return {
+        "attempted": True,
+        "transfer_feedback": transfer_feedback,
+        "repair_success": repair_patch.get("patch_status") == "accepted",
+        "repair_patch_result": repair_patch,
+        "dev_transfer": _transfer_summary(dev_report),
+        "blind_transfer": _transfer_summary(blind_report),
+    }
 
 
 async def _run_transfer_suite(
