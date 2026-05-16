@@ -18,6 +18,7 @@ class Diagnosis(BaseModel):
     patch_type: str
     regression_test: str
     confidence: float | None = None
+    policy_audit_cases: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
     parse_status: str = "parsed"
     patch_bundle: "PatchBundle | None" = None
     patch_bundles: list["PatchBundle"] = Field(default_factory=list)
@@ -73,6 +74,8 @@ def parse_diagnosis(raw: str) -> Diagnosis:
         data["patch_bundles"] = [data["patch_bundle"]] if data.get("patch_bundle") else []
     if "patch_bundle" not in data and data["patch_bundles"]:
         data["patch_bundle"] = data["patch_bundles"][0]
+    if "policy_audit_cases" not in data or not isinstance(data.get("policy_audit_cases"), dict):
+        data["policy_audit_cases"] = {}
     return Diagnosis.model_validate(data)
 
 
@@ -105,6 +108,10 @@ def write_patch_artifact(
         "## Patch Bundles",
         "",
         json.dumps([bundle.model_dump() for bundle in diagnosis.patch_bundles], indent=2, ensure_ascii=False),
+        "",
+        "## Policy Audit Cases",
+        "",
+        json.dumps(diagnosis.policy_audit_cases, indent=2, ensure_ascii=False),
         "",
         "## Harness Manifest",
         "",

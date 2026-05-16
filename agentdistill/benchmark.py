@@ -36,6 +36,7 @@ def main(
     repair_mode: Literal["full_train", "focused"] | None = typer.Option(None, "--repair-mode"),
     inner_repair_attempts: int | None = typer.Option(None, "--inner-repair-attempts", min=0),
     evolve_iterations: int | None = typer.Option(None, "--evolve-iterations", min=1),
+    teacher_policy_audit: bool | None = typer.Option(None, "--teacher-policy-audit/--no-teacher-policy-audit"),
 ) -> None:
     load_dotenv(override=True)
     cfg = load_benchmark_config(config)
@@ -45,6 +46,8 @@ def main(
         cfg.inner_repair_attempts = inner_repair_attempts
     if evolve_iterations is not None:
         cfg.evolve_iterations = evolve_iterations
+    if teacher_policy_audit is not None:
+        cfg.teacher_policy_audit = teacher_policy_audit
     asyncio.run(run_benchmark(cfg, profile, run_id))
 
 
@@ -424,7 +427,9 @@ async def _apply_diagnosis_with_optional_audit(
     repo_root: Path,
 ) -> dict[str, object]:
     critic_policy_cases: dict[str, list[dict[str, object]]] = {}
+    teacher_policy_cases: dict[str, list[dict[str, object]]] = {}
     critic_audits: dict[str, object] = {}
+    teacher_audits: dict[str, object] = {}
     if _should_request_critic_cases(cfg.critic_mode, critic):
         for policy_name in _policy_names_from_patch_bundles(diagnosis.patch_bundles):
             existing_policy_tests = _policy_tests_from_patch_bundles(diagnosis.patch_bundles, policy_name)
@@ -438,16 +443,22 @@ async def _apply_diagnosis_with_optional_audit(
             )
             critic_audits[policy_name] = audit
             critic_policy_cases[policy_name] = list(audit.get("audit_cases", []))
+    if cfg.teacher_policy_audit and diagnosis.policy_audit_cases:
+        teacher_audits = {"policy_audit_cases": diagnosis.policy_audit_cases}
+        teacher_policy_cases.update(diagnosis.policy_audit_cases)
     patch_result = apply_patch_bundles_atomically(
         repo_root,
         diagnosis.patch_bundles,
         task,
         diagnosis.harness_manifest,
         critic_policy_cases=critic_policy_cases,
+        teacher_policy_cases=teacher_policy_cases,
         enable_policy_generalization_audit=cfg.policy_generalization_audit,
     )
     if critic_audits:
         patch_result["critic_audits"] = critic_audits
+    if teacher_audits:
+        patch_result["teacher_audits"] = teacher_audits
     return patch_result
 
 

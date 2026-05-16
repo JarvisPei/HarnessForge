@@ -591,7 +591,13 @@ async def _run_case(
         if out_of_scope is not None:
             final_patch = out_of_scope
         elif diagnosis.patch_bundles and diagnosis.failure_categories:
-            final_patch = apply_patch_bundles_atomically(workspace_root, diagnosis.patch_bundles, case.task, diagnosis.harness_manifest)
+            final_patch = apply_patch_bundles_atomically(
+                workspace_root,
+                diagnosis.patch_bundles,
+                case.task,
+                diagnosis.harness_manifest,
+                teacher_policy_cases=diagnosis.policy_audit_cases,
+            )
         else:
             final_patch = {
                 "patch_status": "skipped",
@@ -759,7 +765,13 @@ async def _run_transfer_feedback_repair(
     if out_of_scope is not None:
         repair_patch = out_of_scope
     elif diagnosis.patch_bundles and diagnosis.failure_categories:
-        repair_patch = apply_patch_bundles_atomically(repo_root, diagnosis.patch_bundles, case.task, diagnosis.harness_manifest)
+        repair_patch = apply_patch_bundles_atomically(
+            repo_root,
+            diagnosis.patch_bundles,
+            case.task,
+            diagnosis.harness_manifest,
+            teacher_policy_cases=diagnosis.policy_audit_cases,
+        )
     else:
         repair_patch = {
             "patch_status": "skipped",

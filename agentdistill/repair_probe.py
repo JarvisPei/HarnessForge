@@ -78,7 +78,13 @@ async def run_repair_probe(
     if out_of_scope is not None:
         final_patch = out_of_scope
     elif diagnosis.patch_bundles and diagnosis.failure_categories:
-        final_patch = apply_patch_bundles_atomically(repo_root, diagnosis.patch_bundles, case.task, diagnosis.harness_manifest)
+        final_patch = apply_patch_bundles_atomically(
+            repo_root,
+            diagnosis.patch_bundles,
+            case.task,
+            diagnosis.harness_manifest,
+            teacher_policy_cases=diagnosis.policy_audit_cases,
+        )
     else:
         final_patch = {
             "patch_status": "skipped",

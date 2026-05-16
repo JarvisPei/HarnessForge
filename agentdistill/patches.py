@@ -27,6 +27,7 @@ def apply_patch_bundles_atomically(
     task: TaskConfig,
     manifest: HarnessManifest | None = None,
     critic_policy_cases: dict[str, list[dict[str, Any]]] | None = None,
+    teacher_policy_cases: dict[str, list[dict[str, Any]]] | None = None,
     enable_policy_generalization_audit: bool = False,
 ) -> dict[str, Any]:
     applied: list[AppliedPatch] = []
@@ -54,6 +55,7 @@ def apply_patch_bundles_atomically(
             task,
             [patch.path for patch in staged_applied],
             critic_policy_cases=critic_policy_cases,
+            teacher_policy_cases=teacher_policy_cases,
             enable_policy_generalization_audit=enable_policy_generalization_audit,
         )
         failures = [result for result in contract_results if result.get("ok") is not True]
@@ -103,6 +105,7 @@ def _validate_patch_group(
     task: TaskConfig,
     paths: list[Path],
     critic_policy_cases: dict[str, list[dict[str, Any]]] | None = None,
+    teacher_policy_cases: dict[str, list[dict[str, Any]]] | None = None,
     enable_policy_generalization_audit: bool = False,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
@@ -125,6 +128,15 @@ def _validate_patch_group(
                         "path": str(path),
                         "critic_policy_cases": policy_cases,
                         **validate_critic_policy_cases(repo_root, path, policy_cases),
+                    }
+                )
+            teacher_cases = (teacher_policy_cases or {}).get(path.stem, [])
+            if teacher_cases:
+                results.append(
+                    {
+                        "path": str(path),
+                        "teacher_policy_cases": teacher_cases,
+                        **validate_critic_policy_cases(repo_root, path, teacher_cases),
                     }
                 )
     return results

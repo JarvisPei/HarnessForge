@@ -584,6 +584,22 @@ def test_parse_diagnosis_accepts_patch_bundles() -> None:
     ],
     "contracts": ["tool tests pass"]
   },
+  "policy_audit_cases": {
+    "force_adder": [
+      {
+        "input": {
+          "task_instruction": "use adder",
+          "available_tools": ["adder"],
+          "expected_answer": "5"
+        },
+        "expected": {
+          "requires_tool": true,
+          "tool_name": "adder"
+        },
+        "expected_tool_result": {"ok": true, "total": 5}
+      }
+    ]
+  },
   "confidence": 0.8
 }
 """.strip()
@@ -594,6 +610,7 @@ def test_parse_diagnosis_accepts_patch_bundles() -> None:
     assert diagnosis.patch_bundle.target_path == "harness/tests/adder.json"
     assert diagnosis.harness_manifest is not None
     assert diagnosis.harness_manifest.bundle_id == "adder_bundle"
+    assert diagnosis.policy_audit_cases["force_adder"][0]["expected"]["tool_name"] == "adder"
 
 
 def test_parse_diagnosis_allows_missing_bundle_rationale() -> None:
@@ -759,6 +776,114 @@ def evaluate(input: dict) -> dict:
     assert all(contract["ok"] is True for contract in result["contract_validation"])
     assert (tmp_path / "harness" / "tools" / "adder.py").exists()
     assert (tmp_path / "outputs" / "harness_workspaces" / "adder_bundle" / "harness" / "tools" / "adder.py").exists()
+
+
+def test_atomic_patch_bundles_accepts_teacher_policy_audit_cases(tmp_path: Path) -> None:
+    _make_harness_dirs(tmp_path)
+    task = TaskConfig(id="t", instruction="add 2 and 3", expected_answer="5")
+
+    result = apply_patch_bundles_atomically(
+        tmp_path,
+        [
+            PatchBundle(
+                target_path="harness/tools/adder.py",
+                action="create_or_replace",
+                content="""
+def run(input: dict) -> dict:
+    return {"ok": True, "total": input["a"] + input["b"]}
+""".strip(),
+                rationale="Deterministic addition.",
+            ),
+            PatchBundle(
+                target_path="harness/tests/adder.json",
+                action="create_or_replace",
+                content="""
+{
+  "tool": "adder",
+  "cases": [
+    {
+      "input": {"a": 2, "b": 3},
+      "expected": {"ok": true, "total": 5}
+    }
+  ]
+}
+""".strip(),
+                rationale="Covers the tool contract.",
+            ),
+            PatchBundle(
+                target_path="harness/runtime_policies/force_adder.py",
+                action="create_or_replace",
+                content="""
+def evaluate(input: dict) -> dict:
+    return {
+        "requires_tool": True,
+        "tool_name": "adder",
+        "tool_input": {"a": 2, "b": 3},
+        "reason": "Use exact arithmetic."
+    }
+""".strip(),
+                rationale="Forces exact arithmetic.",
+            ),
+            PatchBundle(
+                target_path="harness/tests/force_adder.json",
+                action="create_or_replace",
+                content="""
+{
+  "policy": "force_adder",
+  "cases": [
+    {
+      "input": {
+        "task_instruction": "add 2 and 3",
+        "available_tools": ["adder"],
+        "expected_answer": "5"
+      },
+      "expected": {
+        "requires_tool": true,
+        "tool_name": "adder",
+        "tool_input": {"a": 2, "b": 3}
+      },
+      "expected_tool_result": {"ok": true, "total": 5}
+    }
+  ]
+}
+""".strip(),
+                rationale="Covers the runtime policy contract.",
+            ),
+        ],
+        task,
+        _manifest_for(
+            [
+                "harness/tools/adder.py",
+                "harness/tests/adder.json",
+                "harness/runtime_policies/force_adder.py",
+                "harness/tests/force_adder.json",
+            ]
+        ),
+        teacher_policy_cases={
+            "force_adder": [
+                {
+                    "input": {
+                        "task_instruction": "sum 2 and 3",
+                        "available_tools": ["adder"],
+                        "expected_answer": "5",
+                    },
+                    "expected": {
+                        "requires_tool": True,
+                        "tool_name": "adder",
+                        "tool_input": {"a": 2, "b": 3},
+                    },
+                        "expected_tool_result": {"ok": True, "total": 5},
+                }
+            ]
+        },
+    )
+
+    assert result["patch_status"] == "accepted"
+    assert any(
+        contract.get("reason") == "forced tool call succeeded"
+        for contract in result["contract_validation"]
+        if isinstance(contract, dict)
+    )
 
 
 def test_atomic_patch_bundles_reject_failed_critic_policy_cases(tmp_path: Path) -> None:
@@ -1882,8 +2007,32 @@ train_tasks:
     assert cfg.critic_mode == "off"
     assert cfg.transfer_context_mode == "heldout_probe"
     assert cfg.repair_mode == "full_train"
+    assert cfg.teacher_policy_audit is True
     assert _critic_enabled(cfg.critic_mode) is False
     assert _should_request_critic_cases(cfg.critic_mode, None) is False
+
+
+def test_benchmark_config_can_disable_teacher_policy_audit(tmp_path: Path) -> None:
+    config_path = tmp_path / "configs" / "bench.yaml"
+    config_path.parent.mkdir()
+    config_path.write_text(
+        """
+name: no_teacher_audit_benchmark
+output_dir: outputs/no_teacher_audit
+weak: {role: weak}
+teacher: {role: teacher}
+teacher_policy_audit: false
+harness:
+  system_prompt_path: prompts/weak_system.md
+train_tasks:
+  - id: train
+    instruction: train
+""".strip()
+    )
+
+    cfg = load_benchmark_config(config_path)
+
+    assert cfg.teacher_policy_audit is False
 
 
 def test_benchmark_config_can_enable_critic_always(tmp_path: Path) -> None:

@@ -52,6 +52,7 @@ class BenchmarkConfig(BaseModel):
     repair_mode: Literal["full_train", "focused"] = "full_train"
     inner_repair_attempts: int = Field(default=0, ge=0)
     policy_generalization_audit: bool = False
+    teacher_policy_audit: bool = True
 
 
 def load_config(path: str | Path) -> ExperimentConfig:

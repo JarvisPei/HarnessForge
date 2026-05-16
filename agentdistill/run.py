@@ -84,7 +84,13 @@ async def run_experiment(
                 and diagnosis.patch_bundles
                 and (apply_success_patches or bool(diagnosis.failure_categories))
             ):
-                patch_result = apply_patch_bundles_atomically(repo_root, diagnosis.patch_bundles, task, diagnosis.harness_manifest)
+                patch_result = apply_patch_bundles_atomically(
+                    repo_root,
+                    diagnosis.patch_bundles,
+                    task,
+                    diagnosis.harness_manifest,
+                    teacher_policy_cases=diagnosis.policy_audit_cases,
+                )
                 result.update(patch_result)
                 applied_patch_paths = list(patch_result.get("applied_patch_paths", []))
                 result["applied_patch_path"] = applied_patch_paths[0] if applied_patch_paths else None

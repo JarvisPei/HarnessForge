@@ -30,6 +30,7 @@ Return JSON only with these fields:
 - harness_patch: concrete patch text or tool/skill spec
 - patch_type: one of prompt_guideline, skill, tool, validator, state_representation, runtime_policy
 - regression_test: a future test that would catch this failure
+- policy_audit_cases: optional map from policy name to additional runtime policy audit cases that should be added to the same harness bundle when the patch changes a runtime policy. Each case must follow the runtime policy test schema and should target a generalization gap or heldout-style hazard, not a memorized benchmark item.
 - patch_bundles: a list of one or more patch objects. Use this when one harness improvement needs multiple files, such as tool code plus tests plus a runtime policy.
 Each patch object has:
   - target_path: one relative path under harness/guidelines, harness/skills, harness/validators, harness/tools, harness/runtime_policies, or harness/tests
