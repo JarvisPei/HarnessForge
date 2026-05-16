@@ -2353,5 +2353,10 @@ def test_repair_family_cases_cover_distinct_mechanisms() -> None:
 
     assert [case.case_id for case in cases] == ["tool_policy_pair", "fallback_rejected_paths"]
     assert cases[0].manifest is not None
+    assert cases[0].repair_scope_override is not None
+    assert cases[0].repair_scope_override["allowed_repair_paths"] == [
+        "harness/runtime_policies/force_fixture.py",
+        "harness/tests/force_fixture.json",
+    ]
     assert cases[1].manifest is None
     assert cases[1].bad_policy_bundles[0].action == "append"

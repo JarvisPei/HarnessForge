@@ -37,6 +37,7 @@ class RepairFamilyCase:
     bad_policy_bundles: list[PatchBundle]
     good_policy_bundles: list[PatchBundle]
     manifest: HarnessManifest | None
+    repair_scope_override: dict[str, Any] | None = None
 
 
 @app.command()
@@ -136,6 +137,18 @@ def build_repair_family_cases() -> list[RepairFamilyCase]:
             bad_policy_bundles=fixture.bad_policy_bundles,
             good_policy_bundles=fixture.good_policy_bundles,
             manifest=fixture.manifest,
+            repair_scope_override={
+                "allowed_repair_paths": [
+                    "harness/runtime_policies/force_fixture.py",
+                    "harness/tests/force_fixture.json",
+                ],
+                "failure_kinds": ["runtime_policy"],
+                "source_rejected_paths": [
+                    "harness/runtime_policies/force_fixture.py",
+                    "harness/tests/force_fixture.json",
+                ],
+                "scope_reason": "family fixture constrains repair to the rejected runtime policy and its matching test",
+            },
         ),
         RepairFamilyCase(
             case_id="fallback_rejected_paths",
@@ -168,9 +181,15 @@ async def _run_case(
         seed_result = apply_patch_bundles_atomically(workspace_root, case.bad_policy_bundles, case.task, case.manifest)
         (case_dir / "seed_patch_result.json").write_text(json.dumps(seed_result, indent=2, ensure_ascii=False), encoding="utf-8")
         patch_feedback = build_patch_feedback({case.task.id: seed_result}, iteration=1)
-        repair_scope = _infer_repair_scope(patch_feedback)
+        inferred_repair_scope = _infer_repair_scope(patch_feedback)
+        repair_scope = case.repair_scope_override or inferred_repair_scope
         repair_task = _build_focused_repair_task(patch_feedback, None, repair_scope)
-        repair_context = {"repair_mode": "focused", "patch_feedback": patch_feedback, "repair_scope": repair_scope}
+        repair_context = {
+            "repair_mode": "focused",
+            "patch_feedback": patch_feedback,
+            "repair_scope": repair_scope,
+            "inferred_repair_scope": inferred_repair_scope,
+        }
         (case_dir / "repair_context.json").write_text(json.dumps(repair_context, indent=2, ensure_ascii=False), encoding="utf-8")
         console.print(f"  - teacher scoped repair: {case.case_id}")
         repair_run = await _run_focused_repair_task(repair_task, teacher, teacher_system, weak_system, repair_context)
