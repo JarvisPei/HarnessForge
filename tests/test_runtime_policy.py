@@ -33,6 +33,7 @@ from agentdistill.feedback import build_patch_feedback, build_transfer_feedback,
 from agentdistill.metrics import build_benchmark_metrics
 from agentdistill.patches import apply_patch_bundles_atomically
 from agentdistill.repair_efficiency import build_repair_efficiency_report
+from agentdistill.repair_fixture import run_repair_fixture
 from agentdistill.models import load_model_settings
 from agentdistill.run import run_task
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
@@ -2213,3 +2214,20 @@ def test_repair_efficiency_report_recovers_interrupted_run_from_phase_results(tm
     assert repair["inner_repair_attempts"] == 1
     assert repair["scoped_inner_repair_attempts"] == 1
     assert repair["cost_proxies"]["teacher_call_proxy"] == 2
+
+
+def test_repair_fixture_deterministically_exposes_scoped_inner_repair(tmp_path: Path) -> None:
+    report = run_repair_fixture(tmp_path / "fixture")
+    runs = {Path(row["run_dir"]).name: row["repair_efficiency"] for row in report["runs"]}
+
+    assert runs["fixture_full_train"]["patch_attempts"] == 1
+    assert runs["fixture_full_train"]["rejected"] == 1
+    assert runs["fixture_full_train"]["inner_repair_attempts"] == 0
+    assert runs["fixture_focused_only"]["rejected"] == 1
+    assert runs["fixture_focused_only"]["inner_repair_attempts"] == 0
+    assert runs["fixture_scoped_inner"]["rejected"] == 1
+    assert runs["fixture_scoped_inner"]["inner_repair_attempts"] == 1
+    assert runs["fixture_scoped_inner"]["inner_repair_accepted"] == 1
+    assert runs["fixture_scoped_inner"]["scoped_inner_repair_attempts"] == 1
+    assert report["aggregate"]["rejected"] == 3
+    assert report["aggregate"]["scoped_inner_repair_attempts"] == 1
