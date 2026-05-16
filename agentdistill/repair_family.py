@@ -142,7 +142,8 @@ async def _run_case(
     teacher: ChatClient,
     teacher_system: str,
 ) -> dict[str, Any]:
-    workspace_root = Path(tempfile.mkdtemp(prefix=f"repair_family_{case.case_id}_"))
+    workspace_parent = Path(tempfile.mkdtemp(prefix=f"repair_family_{case.case_id}_"))
+    workspace_root = workspace_parent / "workspace"
     try:
         _copy_workspace(repo_root, workspace_root)
         weak_system = _weak_system(workspace_root)
@@ -200,7 +201,7 @@ async def _run_case(
         (case_dir / "case_report.json").write_text(json.dumps(case_report, indent=2, ensure_ascii=False), encoding="utf-8")
         return case_report
     finally:
-        shutil.rmtree(workspace_root, ignore_errors=True)
+        shutil.rmtree(workspace_parent, ignore_errors=True)
 
 
 async def _run_transfer_suite(
