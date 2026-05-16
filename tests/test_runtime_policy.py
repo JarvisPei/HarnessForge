@@ -887,7 +887,7 @@ def evaluate(input: dict) -> dict:
     )
 
 
-def test_patch_group_is_executable_requires_code_or_json(tmp_path: Path) -> None:
+def test_patch_group_is_executable_requires_tools_or_policy_python(tmp_path: Path) -> None:
     assert patch_group_is_executable(
         [
             PatchBundle(
@@ -905,6 +905,26 @@ def test_patch_group_is_executable_requires_code_or_json(tmp_path: Path) -> None
                 action="create_or_replace",
                 content='{"tool":"adder","cases":[]}',
                 rationale="json bundle",
+            )
+        ]
+    ) is False
+    assert patch_group_is_executable(
+        [
+            PatchBundle(
+                target_path="harness/tools/adder.py",
+                action="create_or_replace",
+                content="def run(input: dict) -> dict:\n    return {\"ok\": True}\n",
+                rationale="tool bundle",
+            )
+        ]
+    ) is True
+    assert patch_group_is_executable(
+        [
+            PatchBundle(
+                target_path="harness/runtime_policies/force_adder.py",
+                action="create_or_replace",
+                content="def evaluate(input: dict) -> dict:\n    return {\"requires_tool\": False}\n",
+                rationale="policy bundle",
             )
         ]
     ) is True

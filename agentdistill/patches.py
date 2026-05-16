@@ -145,11 +145,15 @@ def _validate_patch_group(
 def patch_group_is_executable(bundles: list[PatchBundle]) -> bool:
     if not bundles:
         return False
-    allowed = {
-        ".py",
-        ".json",
+    allowed_roots = {
+        (Path("harness") / "tools").as_posix(),
+        (Path("harness") / "runtime_policies").as_posix(),
     }
-    return any(Path(bundle.target_path).suffix in allowed for bundle in bundles)
+    return any(
+        Path(bundle.target_path).suffix == ".py"
+        and any(bundle.target_path.startswith(root + "/") or bundle.target_path == root for root in allowed_roots)
+        for bundle in bundles
+    )
 
 
 def _rollback(applied: list[AppliedPatch]) -> None:
