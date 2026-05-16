@@ -1343,6 +1343,11 @@ def test_transfer_feedback_summarizes_failed_accepted_harness_probe() -> None:
     assert failed["regressed"] is True
     assert failed["failure_mode"] == "tool_failure"
     assert failed["recommended_repair_target"] == "tool"
+    assert failed["repair_plan"] == {
+        "primary_axis": "tool",
+        "allowed_artifact_types": ["tool", "test"],
+        "required_regression_test": "tool contract test covering the failed parser/executor case",
+    }
     assert failed["after_tool_result"]["error"] == "Could not find initial/start count"
     merged = merge_benchmark_context({"heldout_probe": []}, None, feedback)
     assert merged["transfer_feedback"] == feedback
@@ -1378,8 +1383,12 @@ def test_transfer_feedback_labels_policy_and_finalization_failures() -> None:
     by_id = {item["task_id"]: item for item in feedback["failed_tasks"]}
     assert by_id["dev_policy"]["failure_mode"] == "finalization_failure"
     assert by_id["dev_policy"]["recommended_repair_target"] == "finalization"
+    assert by_id["dev_policy"]["repair_plan"]["primary_axis"] == "finalization"
+    assert by_id["dev_policy"]["repair_plan"]["allowed_artifact_types"] == ["guideline", "validator"]
     assert by_id["dev_final"]["failure_mode"] == "policy_or_routing_failure"
     assert by_id["dev_final"]["recommended_repair_target"] == "runtime_policy"
+    assert by_id["dev_final"]["repair_plan"]["primary_axis"] == "runtime_policy"
+    assert by_id["dev_final"]["repair_plan"]["allowed_artifact_types"] == ["runtime_policy", "test"]
 
 
 def test_transfer_feedback_persists_until_probe_success_resolves_it() -> None:
@@ -1966,6 +1975,8 @@ def test_teacher_prompt_mentions_transfer_failure_mode() -> None:
 
     assert "Prefer the transfer_feedback.failure_mode field" in prompt
     assert "transfer_feedback.recommended_repair_target" in prompt
+    assert "transfer_feedback.repair_plan" in prompt
+    assert "allowed_artifact_types" in prompt
 
 
 def test_run_phase_records_context_patch_feedback(tmp_path: Path) -> None:

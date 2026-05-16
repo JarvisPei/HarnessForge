@@ -43,13 +43,16 @@ def build_transfer_feedback(
             continue
         previous = unresolved_by_id.get(task.id, {})
         first_seen = previous.get("first_seen_iteration", iteration)
+        failure_mode = _classify_transfer_failure(before, after)
+        repair_target = _repair_target_for_failure_mode(failure_mode)
         current_failed_by_id[task.id] = {
             "task_id": task.id,
             "task_instruction": task.instruction,
             "expected_answer": task.expected_answer,
             "rubric": task.rubric,
-            "failure_mode": _classify_transfer_failure(before, after),
-            "recommended_repair_target": _recommend_transfer_repair_target(before, after),
+            "failure_mode": failure_mode,
+            "recommended_repair_target": repair_target,
+            "repair_plan": _build_transfer_repair_plan(repair_target),
             "before_success": before_success,
             "after_success": after_success,
             "regressed": before_success and not after_success,
@@ -147,11 +150,35 @@ def _classify_transfer_failure(before: dict[str, Any], after: dict[str, Any]) ->
 
 def _recommend_transfer_repair_target(before: dict[str, Any], after: dict[str, Any]) -> str:
     failure_mode = _classify_transfer_failure(before, after)
+    return _repair_target_for_failure_mode(failure_mode)
+
+
+def _repair_target_for_failure_mode(failure_mode: str) -> str:
     if failure_mode == "tool_failure":
         return "tool"
     if failure_mode == "policy_or_routing_failure":
         return "runtime_policy"
     return "finalization"
+
+
+def _build_transfer_repair_plan(repair_target: str) -> dict[str, Any]:
+    if repair_target == "tool":
+        return {
+            "primary_axis": "tool",
+            "allowed_artifact_types": ["tool", "test"],
+            "required_regression_test": "tool contract test covering the failed parser/executor case",
+        }
+    if repair_target == "runtime_policy":
+        return {
+            "primary_axis": "runtime_policy",
+            "allowed_artifact_types": ["runtime_policy", "test"],
+            "required_regression_test": "runtime policy test covering the failed routing case and tool_input",
+        }
+    return {
+        "primary_axis": "finalization",
+        "allowed_artifact_types": ["guideline", "validator"],
+        "required_regression_test": "finalization regression describing how to turn correct tool_result into the final answer",
+    }
 
 
 def _summarize_rejection(task_id: str, result: dict[str, Any]) -> dict[str, Any]:
