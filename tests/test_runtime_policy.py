@@ -1726,6 +1726,19 @@ def test_weak_prompt_does_not_frame_model_as_small() -> None:
     assert "small model" not in prompt
 
 
+def test_repair_mechanism_config_loads() -> None:
+    cfg = load_benchmark_config("configs/benchmark_repair_mechanism.yaml")
+
+    assert cfg.name == "benchmark_repair_mechanism"
+    assert cfg.evolve_iterations == 2
+    assert cfg.transfer_context_mode == "feedback_only"
+    assert cfg.repair_mode == "focused"
+    assert cfg.inner_repair_attempts == 1
+    assert len(cfg.train_tasks) == 1
+    assert len(cfg.dev_probe_tasks) == 2
+    assert len(cfg.blind_test_tasks) == 1
+
+
 def test_merge_benchmark_context_adds_patch_feedback_only_for_rejections() -> None:
     transfer_context = {"heldout_probe": [{"task_id": "dev"}]}
     empty_feedback = {"iteration": 1, "has_rejections": False, "rejected_bundles": []}

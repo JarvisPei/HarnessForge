@@ -1,0 +1,82 @@
+name: benchmark_repair_mechanism
+output_dir: outputs/benchmark_repair_mechanism
+weak:
+  role: weak
+teacher:
+  role: teacher
+harness:
+  system_prompt_path: prompts/weak_system.md
+  skills_dir: harness/skills
+  guidelines_dir: harness/guidelines
+  validators_dir: harness/validators
+  tools_dir: harness/tools
+  runtime_policies_dir: harness/runtime_policies
+evolve_iterations: 2
+transfer_context_mode: feedback_only
+repair_mode: focused
+inner_repair_attempts: 1
+train_tasks:
+  - id: train_mechanism_block_log
+    instruction: |
+      Compute the final inventory count from this explicit signed operation log.
+
+      Unit: labels
+      Initial: 4,200
+      Operations:
+      + 18 * 37
+      - 1,406
+      + 9 * 84
+      - 275
+
+      Return the final count in labels with one short explanation sentence.
+    expected_answer: "3,941 labels remain."
+    rubric: |
+      Correct computation is 4200 + 18*37 - 1406 + 9*84 - 275 = 3941.
+      This mechanism benchmark is designed to test harness repair behavior, not arithmetic difficulty.
+      A reusable harness should create an executable calculator and runtime policy, with tests that cover
+      the same latent signed-operation schema across block logs, inline start/updates lists, markdown
+      sign/value tables, and JSON-like update objects. A narrow block-only parser should fail transfer.
+dev_probe_tasks:
+  - id: dev_mechanism_inline_updates
+    instruction: |
+      Use the explicit signed update list to compute the final count.
+      unit=tags
+      start=5,100
+      updates=[+24*31, -1,250, +7*90, -604]
+      Return the final count in tags with one short explanation sentence.
+    expected_answer: "4,620 tags remain."
+    rubric: |
+      Correct computation is 5100 + 24*31 - 1250 + 7*90 - 604 = 4620.
+  - id: dev_mechanism_table_updates
+    instruction: |
+      Calculate the final count from this signed-operation table.
+
+      unit: stickers
+      initial: 6,300
+
+      | sign | value |
+      | --- | --- |
+      | + | 15 * 42 |
+      | - | 930 |
+      | + | 8 * 75 |
+      | - | 1,104 |
+
+      Return the final count in stickers with one short explanation sentence.
+    expected_answer: "5,496 stickers remain."
+    rubric: |
+      Correct computation is 6300 + 15*42 - 930 + 8*75 - 1104 = 5496.
+blind_test_tasks:
+  - id: blind_mechanism_jsonish_updates
+    instruction: |
+      Determine the final inventory count.
+
+      {
+        "unit": "badges",
+        "initial": "7,250",
+        "updates": ["+16*58", "-1,340", "+22*19", "-705"]
+      }
+
+      Return the final count in badges with one short explanation sentence.
+    expected_answer: "6,551 badges remain."
+    rubric: |
+      Correct computation is 7250 + 16*58 - 1340 + 22*19 - 705 = 6551.
