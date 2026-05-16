@@ -4,7 +4,7 @@ import asyncio
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import typer
 from dotenv import load_dotenv
@@ -33,9 +33,18 @@ def main(
     config: Path = typer.Option(..., "--config", "-c"),
     profile: str | None = typer.Option(None, "--profile", "-p"),
     run_id: str | None = typer.Option(None, "--run-id"),
+    repair_mode: Literal["full_train", "focused"] | None = typer.Option(None, "--repair-mode"),
+    inner_repair_attempts: int | None = typer.Option(None, "--inner-repair-attempts", min=0),
+    evolve_iterations: int | None = typer.Option(None, "--evolve-iterations", min=1),
 ) -> None:
     load_dotenv(override=True)
     cfg = load_benchmark_config(config)
+    if repair_mode is not None:
+        cfg.repair_mode = repair_mode
+    if inner_repair_attempts is not None:
+        cfg.inner_repair_attempts = inner_repair_attempts
+    if evolve_iterations is not None:
+        cfg.evolve_iterations = evolve_iterations
     asyncio.run(run_benchmark(cfg, profile, run_id))
 
 
