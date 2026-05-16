@@ -2352,12 +2352,32 @@ def test_repair_probe_passes_patch_feedback_and_scope_to_teacher(tmp_path: Path)
 def test_repair_family_cases_cover_distinct_mechanisms() -> None:
     cases = build_repair_family_cases()
 
-    assert [case.case_id for case in cases] == ["tool_policy_pair", "fallback_rejected_paths"]
+    assert [case.case_id for case in cases] == ["tool_policy_pair", "tool_contract_repair", "fallback_rejected_paths"]
+    assert [case.mechanism for case in cases] == ["tool_policy_pair", "tool", "prompt_guideline"]
     assert cases[0].manifest is not None
-    assert cases[0].repair_scope_override is not None
-    assert cases[0].repair_scope_override["allowed_repair_paths"] == [
+    assert cases[1].manifest is not None
+    assert cases[1].manifest.bundle_id == "signed_sum_tool"
+    assert cases[2].manifest is None
+    assert cases[2].bad_policy_bundles[0].action == "append"
+
+
+def test_repair_family_can_include_diagnostic_scope_variant() -> None:
+    cases = build_repair_family_cases(include_diagnostics=True)
+
+    assert [case.case_id for case in cases][-1] == "tool_policy_pair_scoped"
+    assert cases[-1].diagnostic is True
+    assert cases[-1].repair_scope_override is not None
+    assert cases[-1].repair_scope_override["allowed_repair_paths"] == [
         "harness/runtime_policies/force_fixture.py",
         "harness/tests/force_fixture.json",
     ]
-    assert cases[1].manifest is None
-    assert cases[1].bad_policy_bundles[0].action == "append"
+
+
+def test_repair_family_tool_case_uses_manifest() -> None:
+    cases = build_repair_family_cases()
+
+    tool_case = cases[1]
+    assert tool_case.manifest is not None
+    assert tool_case.manifest.bundle_id == "signed_sum_tool"
+    assert "harness/tools/signed_sum.py" in tool_case.manifest.allowed_paths
+    assert "harness/tests/signed_sum.json" in tool_case.manifest.allowed_paths

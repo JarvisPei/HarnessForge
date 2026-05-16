@@ -17,7 +17,7 @@ from agentdistill.benchmark import _build_focused_repair_task, _infer_repair_sco
 from agentdistill.config import TaskConfig, load_benchmark_config
 from agentdistill.diagnosis import PatchBundle, parse_diagnosis
 from agentdistill.feedback import build_patch_feedback
-from agentdistill.manifest import HarnessManifest
+from agentdistill.manifest import HarnessManifest, ManifestArtifact
 from agentdistill.models import ChatClient, load_model_settings
 from agentdistill.patches import apply_patch_bundles_atomically
 from agentdistill.repair_fixture import build_repair_fixture_case
@@ -33,21 +33,24 @@ console = Console()
 @dataclass(frozen=True)
 class RepairFamilyCase:
     case_id: str
+    mechanism: str
     task: TaskConfig
     bad_policy_bundles: list[PatchBundle]
     good_policy_bundles: list[PatchBundle]
     manifest: HarnessManifest | None
     repair_scope_override: dict[str, Any] | None = None
+    diagnostic: bool = False
 
 
 @app.command()
 def main(
     output_dir: Path = typer.Option(Path("outputs/repair_family"), "--output-dir", "-o"),
     profile: str | None = typer.Option(None, "--profile", "-p"),
+    include_diagnostics: bool = typer.Option(False, "--include-diagnostics"),
 ) -> None:
     load_dotenv(override=True)
     try:
-        report = asyncio.run(run_repair_family(output_dir, profile))
+        report = asyncio.run(run_repair_family(output_dir, profile, include_diagnostics=include_diagnostics))
     except Exception as exc:
         console.print(f"[bold red]Error:[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
@@ -60,6 +63,7 @@ async def run_repair_family(
     repo_root: Path | None = None,
     teacher: ChatClient | None = None,
     weak: ChatClient | None = None,
+    include_diagnostics: bool = False,
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     repo_root = repo_root or Path(__file__).resolve().parent.parent
@@ -67,7 +71,7 @@ async def run_repair_family(
     teacher = teacher or ChatClient(load_model_settings("teacher", profile))
     weak = weak or ChatClient(load_model_settings("weak", profile))
     teacher_system = (repo_root / "prompts/teacher_diagnosis.md").read_text().strip()
-    cases = build_repair_family_cases()
+    cases = build_repair_family_cases(include_diagnostics=include_diagnostics)
 
     case_reports = []
     for case in cases:
@@ -87,6 +91,8 @@ async def run_repair_family(
         except Exception as exc:
             report = {
                 "case_id": case.case_id,
+                "mechanism": case.mechanism,
+                "diagnostic": case.diagnostic,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "repair_success": False,
                 "repair_success_via": "error",
@@ -99,6 +105,8 @@ async def run_repair_family(
 
     summary = {
         "cases": len(case_reports),
+        "mechanisms": sorted({str(report.get("mechanism")) for report in case_reports if report.get("mechanism")}),
+        "diagnostic_cases": sum(1 for report in case_reports if report.get("diagnostic") is True),
         "repair_successes": sum(1 for report in case_reports if report["repair_success"]),
         "errors": sum(1 for report in case_reports if "error_type" in report),
         "dev_improved": sum(report.get("dev_transfer", {}).get("improved", 0) for report in case_reports),
@@ -109,7 +117,7 @@ async def run_repair_family(
     return report
 
 
-def build_repair_family_cases() -> list[RepairFamilyCase]:
+def build_repair_family_cases(include_diagnostics: bool = False) -> list[RepairFamilyCase]:
     fixture = build_repair_fixture_case()
     fallback_task = TaskConfig(
         id="fallback_rejected_paths",
@@ -130,34 +138,124 @@ def build_repair_family_cases() -> list[RepairFamilyCase]:
             content="# Fallback repair note\nUse the rejected path itself as the repair scope.\n",
         )
     ]
-    return [
+    tool_task = TaskConfig(
+        id="tool_signed_sum",
+        instruction="Repair a signed-sum tool so it handles negative updates correctly.",
+        expected_answer="118",
+    )
+    tool_bad = [
+        PatchBundle(
+            target_path="harness/tools/signed_sum.py",
+            action="create_or_replace",
+            content="""
+def run(input: dict) -> dict:
+    total = int(input.get("start", 0))
+    for value in input.get("updates", []):
+        text = str(value).strip().replace(",", "")
+        total += abs(int(text))
+    return {"ok": True, "result": total}
+""".strip(),
+        ),
+        PatchBundle(
+            target_path="harness/tests/signed_sum.json",
+            action="create_or_replace",
+            content="""
+{
+  "tool": "signed_sum",
+  "cases": [
+    {
+      "input": {"start": 100, "updates": ["+25", "-7"]},
+      "expected": {"ok": true, "result": 118}
+    }
+  ]
+}
+""".strip(),
+        ),
+    ]
+    tool_good = [
+        PatchBundle(
+            target_path="harness/tools/signed_sum.py",
+            action="create_or_replace",
+            content="""
+def run(input: dict) -> dict:
+    total = int(input.get("start", 0))
+    for value in input.get("updates", []):
+        text = str(value).strip().replace(",", "")
+        total += int(text)
+    return {"ok": True, "result": total}
+""".strip(),
+        ),
+        PatchBundle(
+            target_path="harness/tests/signed_sum.json",
+            action="create_or_replace",
+            content="""
+{
+  "tool": "signed_sum",
+  "cases": [
+    {
+      "input": {"start": 100, "updates": ["+25", "-7"]},
+      "expected": {"ok": true, "result": 118}
+    },
+    {
+      "input": {"start": 10, "updates": ["-3", "+8"]},
+      "expected": {"ok": true, "result": 15}
+    }
+  ]
+}
+""".strip(),
+        ),
+    ]
+    cases = [
         RepairFamilyCase(
             case_id="tool_policy_pair",
+            mechanism="tool_policy_pair",
             task=fixture.task,
             bad_policy_bundles=fixture.bad_policy_bundles,
             good_policy_bundles=fixture.good_policy_bundles,
             manifest=fixture.manifest,
-            repair_scope_override={
-                "allowed_repair_paths": [
-                    "harness/runtime_policies/force_fixture.py",
-                    "harness/tests/force_fixture.json",
-                ],
-                "failure_kinds": ["runtime_policy"],
-                "source_rejected_paths": [
-                    "harness/runtime_policies/force_fixture.py",
-                    "harness/tests/force_fixture.json",
-                ],
-                "scope_reason": "family fixture constrains repair to the rejected runtime policy and its matching test",
-            },
+        ),
+        RepairFamilyCase(
+            case_id="tool_contract_repair",
+            mechanism="tool",
+            task=tool_task,
+            bad_policy_bundles=tool_bad,
+            good_policy_bundles=tool_good,
+            manifest=_manifest(["harness/tools/signed_sum.py", "harness/tests/signed_sum.json"], bundle_id="signed_sum_tool"),
         ),
         RepairFamilyCase(
             case_id="fallback_rejected_paths",
+            mechanism="prompt_guideline",
             task=fallback_task,
             bad_policy_bundles=fallback_bad,
             good_policy_bundles=fallback_good,
             manifest=None,
         ),
     ]
+    if include_diagnostics:
+        cases.append(
+            RepairFamilyCase(
+                case_id="tool_policy_pair_scoped",
+                mechanism="runtime_policy",
+                task=fixture.task,
+                bad_policy_bundles=fixture.bad_policy_bundles,
+                good_policy_bundles=fixture.good_policy_bundles,
+                manifest=fixture.manifest,
+                diagnostic=True,
+                repair_scope_override={
+                    "allowed_repair_paths": [
+                        "harness/runtime_policies/force_fixture.py",
+                        "harness/tests/force_fixture.json",
+                    ],
+                    "failure_kinds": ["runtime_policy"],
+                    "source_rejected_paths": [
+                        "harness/runtime_policies/force_fixture.py",
+                        "harness/tests/force_fixture.json",
+                    ],
+                    "scope_reason": "diagnostic fixture constrains repair to the rejected runtime policy and its matching test",
+                },
+            )
+        )
+    return cases
 
 
 async def _run_case(
@@ -226,6 +324,8 @@ async def _run_case(
         )
         case_report = {
             "case_id": case.case_id,
+            "mechanism": case.mechanism,
+            "diagnostic": case.diagnostic,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "seed_patch_result": seed_result,
             "patch_feedback": patch_feedback,
@@ -287,6 +387,27 @@ def _copy_workspace(source: Path, destination: Path) -> None:
 
 def _weak_system(workspace_root: Path) -> str:
     return (workspace_root / "prompts/weak_system.md").read_text().strip()
+
+
+def _manifest(paths: list[str], bundle_id: str) -> HarnessManifest:
+    artifact_types = {
+        "guidelines": "guideline",
+        "skills": "skill",
+        "validators": "validator",
+        "tools": "tool",
+        "tests": "test",
+        "runtime_policies": "runtime_policy",
+    }
+    return HarnessManifest(
+        bundle_id=bundle_id,
+        intent="Repair family tool case",
+        allowed_paths=paths,
+        artifacts=[
+            ManifestArtifact(path=path, type=artifact_types[Path(path).parts[1]], purpose="repair family artifact")
+            for path in paths
+        ],
+        contracts=["tool tests pass"],
+    )
 
 
 if __name__ == "__main__":
