@@ -37,6 +37,8 @@ Edit `.env` on the server and fill in the relay endpoints:
 nano .env
 ```
 
+The CLI entrypoints call `load_dotenv(override=True)`, so you do not need to `source .env` manually before running experiments.
+
 Run:
 
 ```bash
@@ -103,6 +105,14 @@ The normal sync path is:
 ```text
 Mac/local Codex edits -> push to GitHub main -> server pulls main
 ```
+
+Current working rule set:
+
+- keep one canonical server checkout at `/auxstore/cse/d11/data/s1155124388/projects/AgentDistill`
+- keep `.env` on the server checkout and never commit or delete it during cleanup
+- use `outputs/<run-id>/...` for experiment isolation instead of creating fresh repo clones
+- clean only generated harness artifacts when needed; leave `.env`, `.venv`, and Git history intact
+- treat `main` as the shared sync branch unless the user explicitly asks otherwise
 
 On the Mac:
 

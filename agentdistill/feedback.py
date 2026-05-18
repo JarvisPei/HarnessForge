@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 
@@ -43,7 +44,7 @@ def build_transfer_feedback(
             continue
         previous = unresolved_by_id.get(task.id, {})
         first_seen = previous.get("first_seen_iteration", iteration)
-        failure_mode = _classify_transfer_failure(before, after)
+        failure_mode = _classify_transfer_failure(task.expected_answer, before, after)
         repair_target = _repair_target_for_failure_mode(failure_mode)
         current_failed_by_id[task.id] = {
             "task_id": task.id,
@@ -128,7 +129,7 @@ def _transfer_feedback_result(iteration: int, unresolved_by_id: dict[str, dict[s
     }
 
 
-def _classify_transfer_failure(before: dict[str, Any], after: dict[str, Any]) -> str:
+def _classify_transfer_failure(expected_answer: str | None, before: dict[str, Any], after: dict[str, Any]) -> str:
     after_runtime = after.get("runtime_policy_results", [])
     if isinstance(after_runtime, list):
         forced = [item for item in after_runtime if isinstance(item, dict) and item.get("requires_tool")]
@@ -136,6 +137,8 @@ def _classify_transfer_failure(before: dict[str, Any], after: dict[str, Any]) ->
             after_tool = after.get("tool_result")
             if isinstance(after_tool, dict):
                 if after_tool.get("ok") is False:
+                    return "tool_failure"
+                if not _tool_result_matches_expected(expected_answer, after_tool):
                     return "tool_failure"
                 return "finalization_failure"
             return "policy_or_routing_failure"
@@ -146,6 +149,18 @@ def _classify_transfer_failure(before: dict[str, Any], after: dict[str, Any]) ->
     if after.get("tool_call") is None:
         return "policy_or_routing_failure"
     return "finalization_failure"
+
+
+def _tool_result_matches_expected(expected_answer: str | None, tool_result: dict[str, Any]) -> bool:
+    if not expected_answer:
+        return True
+    expected_numbers = _numbers(expected_answer)
+    if not expected_numbers:
+        return True
+    tool_numbers = _numbers(str(tool_result))
+    if not tool_numbers:
+        return False
+    return all(expected in tool_numbers for expected in expected_numbers)
 
 
 def _recommend_transfer_repair_target(before: dict[str, Any], after: dict[str, Any]) -> str:

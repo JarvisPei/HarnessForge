@@ -1392,6 +1392,30 @@ def test_transfer_feedback_labels_policy_and_finalization_failures() -> None:
     assert by_id["dev_final"]["repair_plan"]["allowed_artifact_types"] == ["runtime_policy", "test"]
 
 
+def test_transfer_feedback_treats_wrong_forced_tool_result_as_tool_failure() -> None:
+    tasks = [
+        TaskConfig(id="dev_tool", instruction="unit: tags; initial: 1,000; operations: +1", expected_answer="1,001 tags remain."),
+    ]
+    feedback = build_transfer_feedback(
+        tasks,
+        baseline_results={"dev_tool": {"weak_answer": "1,001 tags remain."}},
+        probe_results={
+            "dev_tool": {
+                "weak_answer": "wrong final answer",
+                "runtime_policy_results": [{"requires_tool": True}],
+                "tool_result": {"ok": True, "result": 999},
+            }
+        },
+        iteration=1,
+        accepted_harness=True,
+    )
+
+    failed = feedback["failed_tasks"][0]
+    assert failed["failure_mode"] == "tool_failure"
+    assert failed["recommended_repair_target"] == "tool"
+    assert failed["repair_plan"]["primary_axis"] == "tool"
+
+
 def test_transfer_feedback_persists_until_probe_success_resolves_it() -> None:
     tasks = [
         TaskConfig(
