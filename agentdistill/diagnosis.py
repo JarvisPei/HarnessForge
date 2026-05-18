@@ -44,9 +44,20 @@ def parse_diagnosis(raw: str) -> Diagnosis:
             confidence=None,
             parse_status="unparsed",
         )
+    parse_status = "parsed"
     try:
         data = json.loads(payload)
     except json.JSONDecodeError:
+        repaired_payload = _remove_unmatched_closing_square_brackets(payload)
+        if repaired_payload != payload:
+            try:
+                data = json.loads(repaired_payload)
+                parse_status = "parsed_repaired"
+            except json.JSONDecodeError:
+                data = None
+        else:
+            data = None
+    if data is None:
         return Diagnosis(
             diagnosis="Teacher response contained malformed JSON.",
             failure_categories=["parser"],
@@ -76,6 +87,7 @@ def parse_diagnosis(raw: str) -> Diagnosis:
         data["patch_bundle"] = data["patch_bundles"][0]
     if "policy_audit_cases" not in data or not isinstance(data.get("policy_audit_cases"), dict):
         data["policy_audit_cases"] = {}
+    data["parse_status"] = parse_status
     return Diagnosis.model_validate(data)
 
 
@@ -224,6 +236,36 @@ def _scan_balanced_object(text: str, start: int) -> str | None:
             if depth < 0:
                 return None
     return None
+
+
+def _remove_unmatched_closing_square_brackets(text: str) -> str:
+    chars: list[str] = []
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+    for char in text:
+        if in_string:
+            chars.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+            chars.append(char)
+        elif char == "[":
+            stack.append("[")
+            chars.append(char)
+        elif char == "]":
+            if stack:
+                stack.pop()
+                chars.append(char)
+        else:
+            chars.append(char)
+    return "".join(chars)
 
 
 def _infer_patch_type(categories: list[Any], patch: str) -> str:

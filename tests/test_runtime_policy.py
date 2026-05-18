@@ -750,6 +750,41 @@ Trailing text.
     assert len(diagnosis.patch_bundles) == 1
 
 
+def test_parse_diagnosis_repairs_unmatched_closing_square_bracket_after_patch_bundles() -> None:
+    raw = """
+{
+  "diagnosis": "Focused repair should not be dropped.",
+  "failure_categories": ["runtime_policy", "tool"],
+  "harness_patch": "Patch a linked policy/tool pair.",
+  "patch_type": "runtime_policy",
+  "regression_test": "Parser should preserve teacher code patches.",
+  "patch_bundles": [
+    {
+      "target_path": "harness/tools/explicit_operation_log_calculator.py",
+      "action": "create_or_replace",
+      "content": "def run(input: dict) -> dict:\\n    return {\\"ok\\": True, \\"text\\": \\"] literal bracket stays in string\\"}\\n",
+      "rationale": "tool repair"
+    }
+  ],
+  "patch_bundle": {
+    "target_path": "harness/tools/explicit_operation_log_calculator.py",
+    "action": "create_or_replace",
+    "content": "def run(input: dict) -> dict:\\n    return {\\"ok\\": True}\\n",
+    "rationale": "duplicate first bundle"
+  }],
+  "confidence": 0.87
+}
+""".strip()
+
+    diagnosis = parse_diagnosis(raw)
+
+    assert diagnosis.parse_status == "parsed_repaired"
+    assert diagnosis.failure_categories == ["runtime_policy", "tool"]
+    assert len(diagnosis.patch_bundles) == 1
+    assert diagnosis.patch_bundles[0].target_path == "harness/tools/explicit_operation_log_calculator.py"
+    assert "] literal bracket stays in string" in diagnosis.patch_bundles[0].content
+
+
 def test_atomic_patch_bundles_accept_tool_tests_and_policy(tmp_path: Path) -> None:
     _make_harness_dirs(tmp_path)
     task = TaskConfig(id="t", instruction="add 2 and 3", expected_answer="5")
