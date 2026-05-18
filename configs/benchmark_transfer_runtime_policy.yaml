@@ -1,0 +1,47 @@
+name: benchmark_transfer_runtime_policy
+output_dir: outputs/benchmark_transfer_runtime_policy
+weak:
+  role: weak
+teacher:
+  role: teacher
+harness:
+  system_prompt_path: prompts/weak_system.md
+  skills_dir: harness/skills
+  guidelines_dir: harness/guidelines
+  validators_dir: harness/validators
+  tools_dir: harness/tools
+  runtime_policies_dir: harness/runtime_policies
+evolve_iterations: 1
+transfer_context_mode: feedback_only
+repair_mode: focused
+inner_repair_attempts: 1
+teacher_policy_audit: true
+policy_generalization_audit: true
+train_tasks:
+  - id: train_tool_contract_repair
+    instruction: |
+      Use the signed_sum tool if it is available. Compute the final count for
+      start=100 and updates=["+25", "-7"].
+      Return only the final integer.
+    expected_answer: "118"
+    rubric: |
+      This task should train the harness to route explicit signed-update prompts
+      through a deterministic tool and preserve signed parsing with commas.
+dev_probe_tasks:
+  - id: dev_transfer_runtime_policy_dense
+    instruction: |
+      Use signed_sum if available for the POSTED updates only.
+      start=15,000; updates=["-1,275", "+386", "-942", "+711", "-208", "+64", "-530", "+119", "-76", "+403", "-999", "+250"].
+      Return only the final integer.
+    expected_answer: "12903"
+    rubric: |
+      Correct computation is 15000 - 1275 + 386 - 942 + 711 - 208 + 64 - 530 + 119 - 76 + 403 - 999 + 250 = 12903.
+blind_test_tasks:
+  - id: blind_transfer_runtime_policy_reordered
+    instruction: |
+      Use the signed_sum tool if it is available. Compute start=42,000 with
+      updates=["-811", "+233", "-1,440", "+950", "-72", "-602", "+315", "-49", "+128", "-207", "+88", "-999"].
+      Return only the final integer.
+    expected_answer: "39534"
+    rubric: |
+      Correct computation is 42000 - 811 + 233 - 1440 + 950 - 72 - 602 + 315 - 49 + 128 - 207 + 88 - 999 = 39534.
