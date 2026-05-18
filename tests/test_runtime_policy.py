@@ -423,6 +423,66 @@ def evaluate(input: dict) -> dict:
     assert result["num_cases"] >= 2
 
 
+def test_runtime_policy_generalization_rejects_missing_signed_ops_format_variants(tmp_path: Path) -> None:
+    harness = tmp_path / "harness"
+    tools_dir = harness / "tools"
+    policies_dir = harness / "runtime_policies"
+    tests_dir = harness / "tests"
+    tools_dir.mkdir(parents=True)
+    policies_dir.mkdir(parents=True)
+    tests_dir.mkdir(parents=True)
+
+    (tools_dir / "missing_fixture_tool.py").write_text(
+        """
+def run(input: dict) -> dict:
+    return {"ok": True, "result": 16322}
+""".strip()
+    )
+    policy_path = policies_dir / "force_fixture.py"
+    policy_path.write_text(
+        """
+def evaluate(input: dict) -> dict:
+    task = input.get("task_instruction", "")
+    if "updates=[" in task or "| sign | value |" in task:
+        return {
+            "requires_tool": True,
+            "tool_name": "missing_fixture_tool",
+            "tool_input": {"task_instruction": task},
+        }
+    return {"requires_tool": False}
+""".strip()
+    )
+    (tests_dir / "force_fixture.json").write_text(
+        """
+{
+  "policy": "force_fixture",
+  "cases": [
+    {
+      "input": {
+        "task_instruction": "Use the explicit signed update list to compute the final count.\\nunit=tags\\nstart=20,500\\nupdates=[+116*45, -3,138, -11,107, +29*132, -906, +7*275]\\nReturn the final count in tags with one short explanation sentence.",
+        "available_tools": ["missing_fixture_tool"],
+        "expected_answer": "16,322 tags remain."
+      },
+      "expected": {
+        "requires_tool": true,
+        "tool_name": "missing_fixture_tool"
+      },
+      "expected_tool_result": {"ok": true, "result": 16322}
+    }
+  ]
+}
+""".strip()
+    )
+
+    result = validate_runtime_policy_generalization(tmp_path, policy_path)
+
+    assert result["ok"] is False
+    assert result["reason"] == "one or more policy generalization audits failed"
+    mutations = {failure["mutation"] for failure in result["failures"]}
+    assert "signed_ops_semicolon_format" in mutations
+    assert "signed_ops_reordered_jsonish_format" in mutations
+
+
 def test_parse_critic_audit_accepts_fenced_json() -> None:
     parsed = parse_critic_audit(
         """

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -300,6 +301,9 @@ def _policy_generalization_mutations(payload: dict[str, Any], expected_tool_resu
         if mutated_instruction != instruction:
             mutations.append({"mutation": mutation_name, "task_instruction": mutated_instruction})
 
+    for mutation in _signed_operation_format_mutations(instruction, payload):
+        mutations.append(mutation)
+
     deduped = []
     seen = set()
     for mutation in mutations:
@@ -308,6 +312,86 @@ def _policy_generalization_mutations(payload: dict[str, Any], expected_tool_resu
             seen.add(key)
             deduped.append(mutation)
     return deduped
+
+
+def _signed_operation_format_mutations(instruction: str, payload: dict[str, Any]) -> list[dict[str, str]]:
+    parsed = _extract_signed_operation_schema(instruction)
+    if parsed is None:
+        return []
+    unit = parsed["unit"]
+    start = parsed["start"]
+    updates = parsed["updates"]
+    expected_answer = payload.get("expected_answer")
+    mutations = [
+        {
+            "mutation": "signed_ops_semicolon_format",
+            "task_instruction": (
+                f"Compute the final count from the explicit signed operations: "
+                f"unit: {unit}; initial: {start}; operations: {'; '.join(updates)}. "
+                f"Return the final count in {unit} with one short explanation sentence."
+            ),
+        },
+        {
+            "mutation": "signed_ops_reordered_jsonish_format",
+            "task_instruction": (
+                "Determine the final inventory count.\n\n"
+                + json.dumps({"updates": updates, "initial": start, "unit": unit}, indent=2)
+                + f"\n\nReturn the final count in {unit} with one short explanation sentence."
+            ),
+        },
+    ]
+    if isinstance(expected_answer, str):
+        for mutation in mutations:
+            mutation["expected_answer"] = expected_answer
+    return mutations
+
+
+def _extract_signed_operation_schema(instruction: str) -> dict[str, Any] | None:
+    start_match = re.search(r"\b(?:start|initial)\s*[:=]\s*([+-]?\d[\d,]*)", instruction, flags=re.I)
+    if not start_match:
+        return None
+    unit = _extract_unit(instruction)
+    if unit is None:
+        unit = "items"
+    updates = _extract_signed_operations(instruction)
+    if len(updates) < 2:
+        return None
+    return {"unit": unit, "start": start_match.group(1), "updates": updates}
+
+
+def _extract_unit(instruction: str) -> str | None:
+    patterns = [
+        r"\bunit\s*[:=]\s*([A-Za-z][A-Za-z-]*)",
+        r"\bfinal\s+count\s+in\s+([A-Za-z][A-Za-z-]*)\b",
+        r"\b([A-Za-z][A-Za-z-]*)\s+remain\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, instruction, flags=re.I)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _extract_signed_operations(instruction: str) -> list[str]:
+    updates_match = re.search(r"\b(?:updates|operations)\s*[:=]\s*\[([^\]]+)\]", instruction, flags=re.I | re.S)
+    if updates_match:
+        return [item.strip().strip("\"'") for item in updates_match.group(1).split(",") if item.strip()]
+
+    table_ops: list[str] = []
+    for sign, value in re.findall(r"^\s*\|\s*(\+|-)\s*\|\s*([^|]+?)\s*\|", instruction, flags=re.M):
+        table_ops.append(f"{sign}{value.strip()}")
+    if table_ops:
+        return table_ops
+
+    line_ops = re.findall(r"^\s*([+-]\s*\d[\d,\s]*(?:\*\s*\d[\d,\s]*)?)\s*$", instruction, flags=re.M)
+    if line_ops:
+        return [op.replace(" ", "") for op in line_ops]
+
+    operations_match = re.search(r"\boperations\s*:\s*(.+?)(?:\.\s|$)", instruction, flags=re.I | re.S)
+    if operations_match:
+        return [item.strip() for item in operations_match.group(1).split(";") if item.strip()]
+
+    return []
 
 
 def _surface_count_noun(payload: dict[str, Any], expected_tool_result: dict[str, Any] | None) -> str | None:
