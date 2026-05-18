@@ -1924,6 +1924,32 @@ def test_run_focused_repair_task_includes_repair_plan_and_boundaries() -> None:
     assert "allowed_repair_paths" in payload["benchmark_context"]["artifact_boundaries"]
 
 
+def test_repair_family_transfer_feedback_repair_uses_runtime_policy_scope() -> None:
+    from agentdistill.repair_family import _repair_scope_for_transfer_feedback
+
+    scope = _repair_scope_for_transfer_feedback(
+        {
+            "has_transfer_failures": True,
+            "failed_tasks": [
+                {
+                    "task_id": "dev_filter_tool_posted_updates",
+                    "repair_plan": {
+                        "primary_axis": "runtime_policy",
+                        "allowed_artifact_types": ["runtime_policy", "test"],
+                        "required_regression_test": "runtime policy test covering the failed routing case and tool_input",
+                    },
+                }
+            ],
+        }
+    )
+
+    assert scope["allowed_repair_paths"] == [
+        "harness/runtime_policies/force_arithmetic_inventory.py",
+        "harness/tests/force_arithmetic_inventory.json",
+    ]
+    assert scope["failure_kinds"] == ["runtime_policy"]
+
+
 def test_run_phase_focused_repair_skips_weak_and_records_contexts(tmp_path: Path) -> None:
     class WeakClient:
         async def complete(self, messages, temperature=0.2):

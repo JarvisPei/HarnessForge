@@ -741,13 +741,8 @@ async def _run_transfer_feedback_repair(
             "transfer_feedback": transfer_feedback,
         }
 
+    repair_scope = _repair_scope_for_transfer_feedback(transfer_feedback)
     patch_feedback = {"iteration": 2, "rejected_bundles": [], "has_rejections": False}
-    repair_scope = {
-        "allowed_repair_paths": ["harness/tools/signed_sum.py", "harness/tests/signed_sum.json"],
-        "failure_kinds": ["tool"],
-        "source_rejected_paths": [],
-        "scope_reason": "transfer feedback repair is limited to the accepted signed_sum tool and tests",
-    }
     repair_task = _build_focused_repair_task(patch_feedback, transfer_feedback, repair_scope)
     repair_context = {
         "repair_mode": "focused",
@@ -814,6 +809,25 @@ async def _run_transfer_feedback_repair(
         "repair_patch_result": repair_patch,
         "dev_transfer": _transfer_summary(dev_report),
         "blind_transfer": _transfer_summary(blind_report),
+    }
+
+
+def _repair_scope_for_transfer_feedback(transfer_feedback: dict[str, Any]) -> dict[str, Any]:
+    failed_task = transfer_feedback.get("failed_tasks", [{}])[0] if isinstance(transfer_feedback.get("failed_tasks"), list) else {}
+    repair_plan = failed_task.get("repair_plan") if isinstance(failed_task, dict) else None
+    primary_axis = repair_plan.get("primary_axis") if isinstance(repair_plan, dict) else None
+    if primary_axis == "runtime_policy":
+        return {
+            "allowed_repair_paths": ["harness/runtime_policies/force_arithmetic_inventory.py", "harness/tests/force_arithmetic_inventory.json"],
+            "failure_kinds": ["runtime_policy"],
+            "source_rejected_paths": [],
+            "scope_reason": "transfer feedback repair is limited to the runtime policy and matching tests from the accepted harness",
+        }
+    return {
+        "allowed_repair_paths": ["harness/tools/signed_sum.py", "harness/tests/signed_sum.json"],
+        "failure_kinds": ["tool"],
+        "source_rejected_paths": [],
+        "scope_reason": "transfer feedback repair is limited to the accepted signed_sum tool and tests",
     }
 
 
