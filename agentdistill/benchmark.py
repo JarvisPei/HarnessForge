@@ -509,9 +509,7 @@ def _scope_from_failed_contract(contract: dict[str, Any]) -> tuple[set[str], set
         failure_kinds.add("runtime_policy")
 
     linked_tools = sorted(set(_extract_nested_tool_names(contract)))
-    is_forced_tool_failure = bool(contract.get("policy_result")) and (
-        bool(contract.get("tool_result")) or "forced tool" in str(contract.get("reason", "")).lower()
-    )
+    is_forced_tool_failure = _has_forced_tool_failure(contract)
     if is_forced_tool_failure and linked_tools:
         failure_kinds.add("tool_policy_pair")
         for linked_tool in linked_tools:
@@ -616,6 +614,26 @@ def _extract_nested_tool_names(value: Any) -> list[str]:
         for item in value:
             names.extend(_extract_nested_tool_names(item))
     return names
+
+
+def _has_forced_tool_failure(value: Any) -> bool:
+    if isinstance(value, dict):
+        reason = str(value.get("reason", "")).lower()
+        if "forced tool" in reason and (
+            bool(value.get("policy_result")) or bool(value.get("tool_result")) or bool(value.get("actual"))
+        ):
+            return True
+        policy_result = value.get("policy_result")
+        tool_result = value.get("tool_result")
+        if isinstance(policy_result, dict) and policy_result.get("requires_tool") is True and isinstance(tool_result, dict):
+            return True
+        actual = value.get("actual")
+        if isinstance(actual, dict) and actual.get("requires_tool") is True and isinstance(tool_result, dict):
+            return True
+        return any(_has_forced_tool_failure(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_has_forced_tool_failure(item) for item in value)
+    return False
 
 
 def _as_dicts(value: Any) -> list[dict[str, Any]]:

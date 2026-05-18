@@ -1637,6 +1637,45 @@ def test_repair_scope_links_forced_tool_failures_to_policy_tool_pair() -> None:
     assert scope["failure_kinds"] == ["runtime_policy", "tool_policy_pair"]
 
 
+def test_repair_scope_links_nested_policy_test_tool_failures_to_tool_pair() -> None:
+    scope = _infer_repair_scope(
+        {
+            "has_rejections": True,
+            "rejected_bundles": [
+                {
+                    "failed_contracts": [
+                        {
+                            "path": "/repo/harness/runtime_policies/force_explicit_ops.py",
+                            "reason": "one or more policy tests failed",
+                            "policy": "force_explicit_ops",
+                            "failures": [
+                                {
+                                    "case_index": 0,
+                                    "reason": "expected tool result mismatch",
+                                    "actual": {
+                                        "requires_tool": True,
+                                        "tool_name": "explicit_ops_calculator",
+                                        "tool_input": {"text": "initial=18,750; +72*31; -906"},
+                                    },
+                                    "tool_result": {"ok": False, "error": "could not parse operations"},
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert scope["allowed_repair_paths"] == [
+        "harness/runtime_policies/force_explicit_ops.py",
+        "harness/tests/explicit_ops_calculator.json",
+        "harness/tests/force_explicit_ops.json",
+        "harness/tools/explicit_ops_calculator.py",
+    ]
+    assert scope["failure_kinds"] == ["runtime_policy", "tool_policy_pair"]
+
+
 def test_inner_repair_scope_rejects_out_of_scope_patch_targets(tmp_path: Path) -> None:
     diagnosis = parse_diagnosis(
         """
