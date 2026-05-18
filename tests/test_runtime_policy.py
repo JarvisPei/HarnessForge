@@ -1535,6 +1535,40 @@ def test_transfer_feedback_treats_wrong_forced_tool_result_as_tool_failure() -> 
     assert failed["repair_plan"]["primary_axis"] == "tool"
 
 
+def test_transfer_feedback_classifies_posted_updates_as_runtime_policy() -> None:
+    tasks = [
+        TaskConfig(
+            id="dev_filter_tool_posted_updates",
+            instruction=(
+                "Use signed_sum if available for the POSTED updates only. "
+                "start=15,000; updates=[\"-1,275\", \"+386\", \"-942\", \"+711\", \"-208\", \"+64\", \"-530\", \"+119\", \"-76\", \"+403\", \"-999\", \"+250\"]. "
+                "Return only the final integer."
+            ),
+            expected_answer="12903",
+        )
+    ]
+    feedback = build_transfer_feedback(
+        tasks,
+        baseline_results={"dev_filter_tool_posted_updates": {"weak_answer": "12903"}},
+        probe_results={
+            "dev_filter_tool_posted_updates": {
+                "weak_answer": "11703",
+                "runtime_policy_results": [{"policy": "force_arithmetic_inventory", "requires_tool": False}],
+                "tool_call": None,
+                "tool_result": None,
+            }
+        },
+        iteration=2,
+        accepted_harness=True,
+    )
+
+    failed = feedback["failed_tasks"][0]
+    assert failed["failure_mode"] == "policy_or_routing_failure"
+    assert failed["recommended_repair_target"] == "runtime_policy"
+    assert failed["repair_plan"]["primary_axis"] == "runtime_policy"
+    assert failed["repair_plan"]["allowed_artifact_types"] == ["runtime_policy", "test"]
+
+
 def test_transfer_feedback_persists_until_probe_success_resolves_it() -> None:
     tasks = [
         TaskConfig(
