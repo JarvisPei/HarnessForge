@@ -785,6 +785,30 @@ def test_parse_diagnosis_repairs_unmatched_closing_square_bracket_after_patch_bu
     assert "] literal bracket stays in string" in diagnosis.patch_bundles[0].content
 
 
+def test_parse_diagnosis_normalizes_single_policy_audit_case_dict() -> None:
+    diagnosis = parse_diagnosis(
+        """
+{
+  "diagnosis": "Policy audits should remain usable.",
+  "failure_categories": ["runtime_policy"],
+  "harness_patch": "Add a policy audit case.",
+  "patch_type": "runtime_policy",
+  "regression_test": "Parser should normalize a single policy audit case dict.",
+  "policy_audit_cases": {
+    "force_router": {
+      "input": {"task_instruction": "use router"},
+      "expected": {"requires_tool": true, "tool_name": "router"}
+    }
+  }
+}
+""".strip()
+    )
+
+    assert "force_router" in diagnosis.policy_audit_cases
+    assert isinstance(diagnosis.policy_audit_cases["force_router"], list)
+    assert diagnosis.policy_audit_cases["force_router"][0]["expected"]["tool_name"] == "router"
+
+
 def test_atomic_patch_bundles_accept_tool_tests_and_policy(tmp_path: Path) -> None:
     _make_harness_dirs(tmp_path)
     task = TaskConfig(id="t", instruction="add 2 and 3", expected_answer="5")

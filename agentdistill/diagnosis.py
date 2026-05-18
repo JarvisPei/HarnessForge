@@ -87,6 +87,14 @@ def parse_diagnosis(raw: str) -> Diagnosis:
         data["patch_bundle"] = data["patch_bundles"][0]
     if "policy_audit_cases" not in data or not isinstance(data.get("policy_audit_cases"), dict):
         data["policy_audit_cases"] = {}
+    else:
+        normalized_policy_audit_cases: dict[str, list[dict[str, Any]]] = {}
+        for policy_name, cases in data["policy_audit_cases"].items():
+            if isinstance(cases, list):
+                normalized_policy_audit_cases[str(policy_name)] = [case for case in cases if isinstance(case, dict)]
+            elif isinstance(cases, dict):
+                normalized_policy_audit_cases[str(policy_name)] = [cases]
+        data["policy_audit_cases"] = normalized_policy_audit_cases
     data["parse_status"] = parse_status
     return Diagnosis.model_validate(data)
 
