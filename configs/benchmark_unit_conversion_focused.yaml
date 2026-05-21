@@ -47,6 +47,13 @@ dev_probe_tasks:
     expected_answer: "5,025 milliliters remain."
     rubric: |
       Correct computation is 4750 mL + 625 mL - 1200 mL + 850 mL = 5025 mL.
+  - id: dev_syrup_milliliters_poured_out
+    instruction: |
+      A syrup jug began with 2 liters. It received 400 milliliters, poured out 750 milliliters, and then received 300 milliliters. How many milliliters are left?
+      Give only the final amount in milliliters and one short explanation sentence.
+    expected_answer: "1,950 milliliters remain."
+    rubric: |
+      Correct computation is 2000 mL + 400 mL - 750 mL + 300 mL = 1950 mL. A reliable helper should treat "poured out" as a subtractive cue, not an additive one.
 blind_test_tasks:
   - id: blind_syrup_milliliters
     instruction: |

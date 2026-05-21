@@ -2530,6 +2530,7 @@ def test_unit_conversion_focused_benchmark_config_exercises_transfer_repair() ->
         "dev_package_grams",
         "dev_cable_meters",
         "dev_water_milliliters",
+        "dev_syrup_milliliters_poured_out",
     ]
     assert [task.id for task in cfg.blind_test_tasks] == ["blind_syrup_milliliters", "blind_rope_centimeters"]
     all_text = "\n".join(task.instruction for task in cfg.train_tasks + cfg.dev_probe_tasks + cfg.blind_test_tasks)
@@ -2539,6 +2540,8 @@ def test_unit_conversion_focused_benchmark_config_exercises_transfer_repair() ->
     assert "grams" in all_text
     assert "centimeters" in all_text
     assert "meters" in all_text
+    assert "poured out" in all_text
+    assert "poured out" not in cfg.train_tasks[0].instruction
 
 
 def test_run_task_can_skip_teacher_diagnosis(tmp_path: Path) -> None:
