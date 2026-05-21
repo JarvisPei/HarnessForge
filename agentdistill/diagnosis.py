@@ -85,6 +85,7 @@ def parse_diagnosis(raw: str) -> Diagnosis:
         data["patch_bundles"] = [data["patch_bundle"]] if data.get("patch_bundle") else []
     if "patch_bundle" not in data and data["patch_bundles"]:
         data["patch_bundle"] = data["patch_bundles"][0]
+    _normalize_patch_bundle_content(data)
     if "policy_audit_cases" not in data or not isinstance(data.get("policy_audit_cases"), dict):
         data["policy_audit_cases"] = {}
     else:
@@ -97,6 +98,25 @@ def parse_diagnosis(raw: str) -> Diagnosis:
         data["policy_audit_cases"] = normalized_policy_audit_cases
     data["parse_status"] = parse_status
     return Diagnosis.model_validate(data)
+
+
+def _normalize_patch_bundle_content(data: dict[str, Any]) -> None:
+    def normalize_bundle(bundle: Any) -> Any:
+        if not isinstance(bundle, dict):
+            return bundle
+        content = bundle.get("content")
+        if isinstance(content, str):
+            return bundle
+        if content is None:
+            bundle["content"] = ""
+        else:
+            bundle["content"] = json.dumps(content, ensure_ascii=False)
+        return bundle
+
+    if isinstance(data.get("patch_bundles"), list):
+        data["patch_bundles"] = [normalize_bundle(bundle) for bundle in data["patch_bundles"]]
+    if isinstance(data.get("patch_bundle"), dict):
+        data["patch_bundle"] = normalize_bundle(data["patch_bundle"])
 
 
 def write_patch_artifact(

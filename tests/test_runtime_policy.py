@@ -785,6 +785,30 @@ def test_parse_diagnosis_repairs_unmatched_closing_square_bracket_after_patch_bu
     assert "] literal bracket stays in string" in diagnosis.patch_bundles[0].content
 
 
+def test_parse_diagnosis_serializes_non_string_patch_bundle_content() -> None:
+    diagnosis = parse_diagnosis(
+        """
+{
+  "diagnosis": "Patch bundle content may be structured JSON for data files.",
+  "failure_categories": ["tool"],
+  "harness_patch": "Handle JSON content.",
+  "patch_type": "tool",
+  "regression_test": "Parser should accept dict content.",
+  "patch_bundles": [
+    {
+      "target_path": "harness/tests/adder.json",
+      "action": "create_or_replace",
+      "content": {"tool": "adder", "cases": []}
+    }
+  ]
+}
+""".strip()
+    )
+
+    assert isinstance(diagnosis.patch_bundles[0].content, str)
+    assert '"tool": "adder"' in diagnosis.patch_bundles[0].content
+
+
 def test_parse_diagnosis_normalizes_single_policy_audit_case_dict() -> None:
     diagnosis = parse_diagnosis(
         """
