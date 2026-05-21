@@ -2515,6 +2515,32 @@ def test_unit_conversion_benchmark_config() -> None:
     assert [task.id for task in cfg.blind_test_tasks] == ["blind_syrup_milliliters", "blind_rope_centimeters"]
 
 
+def test_unit_conversion_focused_benchmark_config_exercises_transfer_repair() -> None:
+    cfg = load_benchmark_config("configs/benchmark_unit_conversion_focused.yaml")
+    assert cfg.name == "benchmark_unit_conversion_focused"
+    assert cfg.evolve_iterations == 3
+    assert cfg.critic_mode == "off"
+    assert cfg.transfer_context_mode == "feedback_only"
+    assert cfg.repair_mode == "focused"
+    assert cfg.inner_repair_attempts == 1
+    assert cfg.teacher_policy_audit is True
+    assert cfg.policy_generalization_audit is True
+    assert [task.id for task in cfg.train_tasks] == ["train_solution_liters"]
+    assert [task.id for task in cfg.dev_probe_tasks] == [
+        "dev_package_grams",
+        "dev_cable_meters",
+        "dev_water_milliliters",
+    ]
+    assert [task.id for task in cfg.blind_test_tasks] == ["blind_syrup_milliliters", "blind_rope_centimeters"]
+    all_text = "\n".join(task.instruction for task in cfg.train_tasks + cfg.dev_probe_tasks + cfg.blind_test_tasks)
+    assert "liters" in all_text
+    assert "milliliters" in all_text
+    assert "kilograms" in all_text
+    assert "grams" in all_text
+    assert "centimeters" in all_text
+    assert "meters" in all_text
+
+
 def test_run_task_can_skip_teacher_diagnosis(tmp_path: Path) -> None:
     tools_dir = tmp_path / "tools"
     policies_dir = tmp_path / "runtime_policies"
