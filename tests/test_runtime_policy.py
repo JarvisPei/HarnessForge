@@ -2544,6 +2544,14 @@ def test_unit_conversion_focused_benchmark_config_exercises_transfer_repair() ->
     assert "poured out" not in cfg.train_tasks[0].instruction
 
 
+def test_unit_conversion_focused_blind_rubric_marks_poured_out_subtractive() -> None:
+    cfg = load_benchmark_config("configs/benchmark_unit_conversion_focused.yaml")
+    blind = next(task for task in cfg.blind_test_tasks if task.id == "blind_syrup_milliliters")
+    assert blind.rubric is not None
+    assert "poured out" in blind.rubric
+    assert "subtractive cue" in blind.rubric
+
+
 def test_run_task_can_skip_teacher_diagnosis(tmp_path: Path) -> None:
     tools_dir = tmp_path / "tools"
     policies_dir = tmp_path / "runtime_policies"
