@@ -17,6 +17,7 @@ Prefer the transfer_feedback.failure_mode field when it exists. Use it as the fi
 If transfer_feedback.recommended_repair_target exists, use it as the primary repair axis and keep the patch focused on that axis unless the contract evidence proves a different layer is necessary.
 If transfer_feedback.repair_plan exists, follow its primary_axis, allowed_artifact_types, and required_regression_test before writing patch_bundles. Treat the plan as a focus constraint, not as a substitute for checking the concrete failure evidence.
 When the failure involves a deterministic helper, preserve the local operation polarity and target-unit semantics before widening the schema. Do not let additive cues swallow subtractive cues, or let a target-unit request be inferred from a single surface form when the task mixes multiple quantity scales. If the helper already exists, fix its parser/executor and add a regression test for the missed cue or conversion path rather than compensating in the runtime policy.
+When writing patch_bundles.content, emit the actual file text, not a JSON-escaped string representation of that file text. The framework writes the content directly to disk and will reject patches whose source is double-escaped or contains literal backslash-n sequences in place of real newlines.
 
 If expected_answer or rubric is provided, use it as the evaluation oracle. Mark a failure whenever the weak answer contradicts the oracle, omits a required behavior, or follows the wrong output format.
 

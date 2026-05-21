@@ -2984,6 +2984,13 @@ def test_teacher_prompt_enrichment_lifts_repair_plan_and_boundaries() -> None:
     assert enriched["artifact_boundaries"]["required_regression_test"] == "runtime policy test covering the failed routing case and tool_input"
 
 
+def test_teacher_prompt_mentions_raw_patch_bundle_content() -> None:
+    text = Path("prompts/teacher_diagnosis.md").read_text()
+    assert "patch_bundles.content" in text
+    assert "actual file text" in text
+    assert "double-escaped" in text
+
+
 def test_teacher_payload_preserves_core_fields() -> None:
     payload = build_teacher_payload(
         task_id="task",
