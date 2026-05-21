@@ -48,7 +48,7 @@ def parse_diagnosis(raw: str) -> Diagnosis:
     try:
         data = json.loads(payload)
     except json.JSONDecodeError:
-        repaired_payload = _remove_unmatched_closing_square_brackets(payload)
+        repaired_payload = _repair_json_payload(payload)
         if repaired_payload != payload:
             try:
                 data = json.loads(repaired_payload)
@@ -117,6 +117,43 @@ def _normalize_patch_bundle_content(data: dict[str, Any]) -> None:
         data["patch_bundles"] = [normalize_bundle(bundle) for bundle in data["patch_bundles"]]
     if isinstance(data.get("patch_bundle"), dict):
         data["patch_bundle"] = normalize_bundle(data["patch_bundle"])
+
+
+def _repair_json_payload(text: str) -> str:
+    return _remove_unmatched_closing_square_brackets(_escape_unescaped_control_chars_in_strings(text))
+
+
+def _escape_unescaped_control_chars_in_strings(text: str) -> str:
+    chars: list[str] = []
+    in_string = False
+    escaped = False
+    for char in text:
+        if not in_string:
+            chars.append(char)
+            if char == '"':
+                in_string = True
+            continue
+        if escaped:
+            chars.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            chars.append(char)
+            escaped = True
+            continue
+        if char == '"':
+            chars.append(char)
+            in_string = False
+            continue
+        if char == "\n":
+            chars.append("\\n")
+        elif char == "\r":
+            chars.append("\\r")
+        elif char == "\t":
+            chars.append("\\t")
+        else:
+            chars.append(char)
+    return "".join(chars)
 
 
 def write_patch_artifact(

@@ -809,6 +809,33 @@ def test_parse_diagnosis_serializes_non_string_patch_bundle_content() -> None:
     assert '"tool": "adder"' in diagnosis.patch_bundles[0].content
 
 
+def test_parse_diagnosis_repairs_raw_newlines_inside_content_strings() -> None:
+    raw = """
+{
+  "diagnosis": "Patch includes multiline source.",
+  "failure_categories": ["tool"],
+  "harness_patch": "Handle raw newlines.",
+  "patch_type": "tool",
+  "regression_test": "Parser should accept multiline content.",
+  "patch_bundles": [
+    {
+      "target_path": "harness/tools/adder.py",
+      "action": "create_or_replace",
+      "content": "def run(input: dict) -> dict:
+    return {\\"ok\\": True}
+"
+    }
+  ]
+}
+""".strip()
+
+    diagnosis = parse_diagnosis(raw)
+
+    assert diagnosis.parse_status == "parsed_repaired"
+    assert len(diagnosis.patch_bundles) == 1
+    assert "def run" in diagnosis.patch_bundles[0].content
+
+
 def test_parse_diagnosis_normalizes_single_policy_audit_case_dict() -> None:
     diagnosis = parse_diagnosis(
         """
