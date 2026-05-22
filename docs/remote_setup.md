@@ -1,6 +1,6 @@
 # Remote API-Only Setup
 
-This project should run experiments on the server even when both weak and teacher models are API models. The Mac is only for editing and lightweight checks.
+This project should run experiments on a small always-on cloud VM even when both weak and teacher models are API models. The Mac is only for editing and lightweight checks.
 
 ## Why API-Only First
 
@@ -20,11 +20,9 @@ Only after this loop is stable should we add local weak models through vLLM or a
 ## Server Setup
 
 ```bash
-ssh cse_H200
-ssh sandbox
-cwork
-git clone git@github.com:JarvisPei/AgentDistill.git
-cd AgentDistill
+ssh agentdistill
+mkdir -p ~/projects ~/runs ~/tmp
+cd ~/projects/AgentDistill
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -125,14 +123,14 @@ git push origin main
 On the server:
 
 ```bash
-cd /auxstore/cse/d11/data/s1155124388/projects/AgentDistill
+cd ~/projects/AgentDistill
 git pull --ff-only origin main
 ```
 
 Do not create a new server clone for each experiment. The server should have one canonical checkout:
 
 ```text
-/auxstore/cse/d11/data/s1155124388/projects/AgentDistill
+/home/ubuntu/projects/AgentDistill
 ```
 
 ### Server Environment
@@ -145,6 +143,7 @@ Rules:
 - Never delete `.env` as part of experiment cleanup.
 - If the checkout is recreated, copy or recreate `.env` before running any API experiment.
 - Prefer SSH Git remotes on the server: `git@github.com:JarvisPei/AgentDistill.git`.
+- If GitHub SSH access is not working on the server, configure a dedicated server key in `~/.ssh/config` and keep it separate from the login key used to reach the VM.
 
 ### Experiment Isolation
 
@@ -153,7 +152,7 @@ Teacher runs can write generated harness files into `harness/` when patch applic
 Use one canonical checkout and isolate experiments by resetting only generated experiment state before a new run:
 
 ```bash
-cd /auxstore/cse/d11/data/s1155124388/projects/AgentDistill
+cd ~/projects/AgentDistill
 git status --short
 ```
 
@@ -167,12 +166,11 @@ git clean -fd harness
 This keeps `.env`, `.venv`, and Git history intact while removing old generated harness files. Do not run broader cleanup commands such as `rm -rf AgentDistill*` or `git clean -fdx` unless the user explicitly asks, because those can delete server-local state such as `.env` or cached environments.
 
 Experiment outputs should be isolated with unique output directories or run IDs under `outputs/`, not with new repo clones.
+If a run needs temporary scratch space, use `~/tmp` or a run-specific subdirectory under `~/runs`.
 
 ### Terminal Discipline
 
-After `ssh cse_H200`, run `ssh sandbox` before executing project commands. The login node should not run experiments.
-
-Avoid accumulating unused terminals. Prefer one active SSH session for server work, and close or ignore stale sessions once the current run is complete.
+Avoid accumulating unused terminals. Prefer one active SSH session for cloud-server work, and close or ignore stale sessions once the current run is complete.
 
 ## Codex On Server
 
@@ -191,9 +189,29 @@ Recommended order:
 
 This keeps the first experimental loop simple and reproducible.
 
+## Legacy: H200 Workflow
+
+Keep this as a fallback path for GPU-heavy jobs, local weak model serving, or when we need the school cluster again.
+
+```bash
+ssh cse_H200
+ssh sandbox
+squeue
+```
+
+When Duo asks for a device, choose `1`, then approve on your phone.
+
+The old H200 checkout path was:
+
+```text
+/auxstore/cse/d11/data/s1155124388/projects/AgentDistill
+```
+
+Use it only if we explicitly switch back to the cluster. Do not make it the default control plane.
+
 ## Later: Local Weak Model
 
-Once API-only harness evolution works, serve a local weak model on H200 with an OpenAI-compatible endpoint and only change:
+Once API-only harness evolution works, serve a local weak model on H200 or another stronger GPU machine with an OpenAI-compatible endpoint and only change:
 
 ```text
 WEAK_BASE_URL=http://localhost:<port>/v1

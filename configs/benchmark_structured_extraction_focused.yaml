@@ -1,0 +1,72 @@
+name: benchmark_structured_extraction_focused
+output_dir: outputs/benchmark_structured_extraction_focused
+weak:
+  role: weak
+teacher:
+  role: teacher
+harness:
+  system_prompt_path: prompts/weak_system.md
+  skills_dir: harness/skills
+  guidelines_dir: harness/guidelines
+  validators_dir: harness/validators
+  tools_dir: harness/tools
+  runtime_policies_dir: harness/runtime_policies
+evolve_iterations: 3
+transfer_context_mode: feedback_only
+repair_mode: focused
+inner_repair_attempts: 1
+teacher_policy_audit: true
+policy_generalization_audit: true
+train_tasks:
+  - id: train_meeting_note_json
+    instruction: |
+      Extract the event from this messy note and return only one valid JSON object with exactly these keys in this order:
+      name, date, start_time, duration_minutes, location, attendees.
+      Use ISO date YYYY-MM-DD. Use 24-hour HH:MM time. Convert hours to minutes. Attendees must be an array of first names in the order mentioned. Do not include markdown or explanation.
+
+      Note: "Move Maya Chen's design review to Mon May 18, 2026. It starts at 9:30 AM in Room 4B and should run for three quarters of an hour. Noah and Priya said they will attend."
+    expected_answer: '{"name":"Maya Chen","date":"2026-05-18","start_time":"09:30","duration_minutes":45,"location":"Room 4B","attendees":["Noah","Priya"]}'
+    rubric: |
+      The answer must be a single parseable JSON object with exactly the expected keys and normalized values. Common weak-model failures include extra prose, markdown fences, 12-hour time, "45 minutes" as a string, wrong date normalization, or attendee names merged into one string. A reliable harness should use a schema/normalization path rather than relying only on instruction following.
+dev_probe_tasks:
+  - id: dev_clinic_followup_json
+    instruction: |
+      Extract the event from this messy note and return only one valid JSON object with exactly these keys in this order:
+      name, date, start_time, duration_minutes, location, attendees.
+      Use ISO date YYYY-MM-DD. Use 24-hour HH:MM time. Convert hours to minutes. Attendees must be an array of first names in the order mentioned. Do not include markdown or explanation.
+
+      Note: "For Jordan Lee: clinic follow-up is Wednesday, June 3rd 2026 at 2:05 p.m. It is in Suite 12. Block 1 hour and 20 minutes. Attending: Sam, Elena, and Victor."
+    expected_answer: '{"name":"Jordan Lee","date":"2026-06-03","start_time":"14:05","duration_minutes":80,"location":"Suite 12","attendees":["Sam","Elena","Victor"]}'
+    rubric: |
+      The answer must be strict JSON with normalized date, 24-hour time, numeric duration minutes, and attendee array. This dev probe changes the date surface form, time punctuation, duration expression, and attendee introducer.
+  - id: dev_workshop_json
+    instruction: |
+      Extract the event from this messy note and return only one valid JSON object with exactly these keys in this order:
+      name, date, start_time, duration_minutes, location, attendees.
+      Use ISO date YYYY-MM-DD. Use 24-hour HH:MM time. Convert hours to minutes. Attendees must be an array of first names in the order mentioned. Do not include markdown or explanation.
+
+      Note: "Book the onboarding workshop for Aisha Patel on 7/9/2026. Start is 08:15, location Lab C. Duration: half an hour. Marco plus Lin will join."
+    expected_answer: '{"name":"Aisha Patel","date":"2026-07-09","start_time":"08:15","duration_minutes":30,"location":"Lab C","attendees":["Marco","Lin"]}'
+    rubric: |
+      The answer must be strict JSON. This probe tests slash-date normalization, already-24-hour time, "half an hour" duration, and "plus" attendee wording.
+blind_test_tasks:
+  - id: blind_budget_review_json
+    instruction: |
+      Extract the event from this messy note and return only one valid JSON object with exactly these keys in this order:
+      name, date, start_time, duration_minutes, location, attendees.
+      Use ISO date YYYY-MM-DD. Use 24-hour HH:MM time. Convert hours to minutes. Attendees must be an array of first names in the order mentioned. Do not include markdown or explanation.
+
+      Note: "Budget review for Lucas Nguyen: Friday Aug 14 2026, 11:40 AM, Conference Room East. Set aside 2 hours. Invite Hannah, Omar, and Mei."
+    expected_answer: '{"name":"Lucas Nguyen","date":"2026-08-14","start_time":"11:40","duration_minutes":120,"location":"Conference Room East","attendees":["Hannah","Omar","Mei"]}'
+    rubric: |
+      The answer must be strict JSON with no wrapper text. This blind case tests month abbreviation, same AM time, duration in hours, and invite-style attendee wording.
+  - id: blind_sensor_check_json
+    instruction: |
+      Extract the event from this messy note and return only one valid JSON object with exactly these keys in this order:
+      name, date, start_time, duration_minutes, location, attendees.
+      Use ISO date YYYY-MM-DD. Use 24-hour HH:MM time. Convert hours to minutes. Attendees must be an array of first names in the order mentioned. Do not include markdown or explanation.
+
+      Note: "Sensor check - owner: Evelyn Park. Date is 2026-09-02. Kickoff at 6:45 pm in Bay 7. It should last ninety minutes. Kai and Rosa are on the attendee list."
+    expected_answer: '{"name":"Evelyn Park","date":"2026-09-02","start_time":"18:45","duration_minutes":90,"location":"Bay 7","attendees":["Kai","Rosa"]}'
+    rubric: |
+      The answer must be strict JSON. This blind case tests owner-label name extraction, lowercase pm conversion, word-number duration, and attendee-list phrasing.

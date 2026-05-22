@@ -15,6 +15,9 @@ def evaluate_success(task: TaskConfig, result: dict[str, Any]) -> bool:
     if categories:
         return False
     if task.expected_answer:
+        json_success = _json_answer_matches(task.expected_answer, answer)
+        if json_success is not None:
+            return json_success
         expected_numbers = _numbers(task.expected_answer)
         answer_numbers = _numbers(answer)
         if expected_numbers and not all(num in answer_numbers for num in expected_numbers):
@@ -68,3 +71,33 @@ def _numbers(text: str) -> list[str]:
     for match in re.findall(r"-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?", text):
         numbers.append(match.replace(",", ""))
     return numbers
+
+
+def _json_answer_matches(expected_text: str, answer_text: str) -> bool | None:
+    expected = _parse_json_object(expected_text)
+    if expected is None:
+        return None
+    answer = _parse_json_object(answer_text)
+    if answer is None:
+        return False
+    return answer == expected
+
+
+def _parse_json_object(text: str) -> Any | None:
+    stripped = _strip_json_fence(text.strip())
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _strip_json_fence(text: str) -> str:
+    if not text.startswith("```"):
+        return text
+    lines = text.splitlines()
+    if lines and lines[0].startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].startswith("```"):
+        lines = lines[:-1]
+    return "\n".join(lines).strip()

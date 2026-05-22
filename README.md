@@ -62,26 +62,22 @@ If a teacher-generated runtime policy exists, the runner evaluates it after the 
 
 ## Remote Server Workflow
 
-The code is API-first and does not require GPUs for the smoke loop. This is the fastest path for early iteration: use API weak/teacher models, collect traces, then decide which harness updates are worth automating.
-
-The H200 server becomes useful once we add local weak models, batch sweeps, or evaluation jobs.
+The code is API-first and does not require GPUs for the smoke loop. Use a small always-on cloud VM as the default runtime control plane: API weak/teacher models, trace collection, harness updates, and isolated `outputs/` runs all live there. The Mac stays for editing and lightweight checks.
 
 Suggested remote workflow:
 
 ```bash
-ssh cse_H200
-squeue
+ssh agentdistill
+cd ~/projects/AgentDistill
 ```
 
-When Duo asks for a device, choose `1`, then approve on your phone.
+Keep the cloud VM as the canonical checkout. Do not create a fresh clone for every experiment. Keep `.env` private on the VM and use SSH Git remotes.
 
-After login, clone or sync this project, create `.env` on the server, install dependencies, and run the same command:
+After login, sync the project, ensure `.env` exists, install dependencies, and run the same command:
 
 ```bash
 python -m agentdistill.run --config configs/smoke.yaml
 ```
-
-Do not commit `.env`.
 
 ### Suggested Phases
 
@@ -91,7 +87,7 @@ Phase 1: API-only loop on the remote server.
 - teacher model: frontier API model
 - goal: validate trace format, diagnosis quality, and harness patch taxonomy
 
-Phase 2: local weak model served on H200.
+Phase 2: local weak model served on a stronger GPU machine.
 
 - weak model: vLLM/OpenAI-compatible local endpoint
 - teacher model: API frontier model

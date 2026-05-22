@@ -31,7 +31,7 @@ from agentdistill.critic import parse_critic_audit, validate_critic_policy_cases
 from agentdistill.diagnosis import PatchBundle, parse_diagnosis
 from agentdistill.feedback import build_patch_feedback, build_transfer_feedback, merge_benchmark_context
 from agentdistill.metrics import build_benchmark_metrics
-from agentdistill.report import build_impact_report
+from agentdistill.report import build_impact_report, evaluate_success
 from agentdistill.repair_probe import run_repair_probe
 from agentdistill.repair_family import _weak_system, build_probe_filter_cases, build_repair_family_cases, run_probe_filter, run_repair_family
 from agentdistill.patches import apply_patch_bundles_atomically
@@ -1927,7 +1927,8 @@ def test_explicit_ops_v2_focused_repair_context_can_include_unresolved_transfer_
     assert [task.id for task in tasks] == ["focused_repair"]
     assert context["repair_mode"] == "focused"
     assert context["patch_feedback"] == patch_feedback
-    assert context["transfer_feedback"] == transfer_feedback
+    assert context["transfer_feedback"]["has_transfer_failures"] is True
+    assert context["transfer_feedback"]["failed_tasks"][0]["task_id"] == "dev_explicit_vouchers_semicolon"
 
 
 def test_run_focused_repair_task_calls_teacher_without_weak_model() -> None:
@@ -2659,6 +2660,33 @@ def test_impact_report_includes_tool_results(tmp_path: Path) -> None:
     assert rows[0]["before_tool_result"] == {"ok": False}
     assert rows[0]["after_tool_result"] == {"ok": True, "result": 1}
     assert rows[0]["before_runtime_policy_results"] == [{"requires_tool": True}]
+
+
+def test_evaluate_success_requires_exact_json_object_match() -> None:
+    task = TaskConfig(
+        id="json_task",
+        instruction="return json",
+        expected_answer='{"name":"Maya Chen","date":"2026-05-18","start_time":"09:30","duration_minutes":45,"location":"Room 4B","attendees":["Noah","Priya"]}',
+    )
+
+    assert evaluate_success(
+        task,
+        {
+            "weak_answer": '```json\n{"name":"Maya Chen","date":"2026-05-18","start_time":"09:30","duration_minutes":45,"location":"Room 4B","attendees":["Noah","Priya"]}\n```'
+        },
+    )
+    assert not evaluate_success(
+        task,
+        {
+            "weak_answer": 'Here is the JSON: {"name":"Maya Chen","date":"2026-05-18","start_time":"09:30","duration_minutes":45,"location":"Room 4B","attendees":["Noah","Priya"]}'
+        },
+    )
+    assert not evaluate_success(
+        task,
+        {
+            "weak_answer": '{"name":"Maya Chen","date":"2026-05-18","start_time":"9:30 AM","duration_minutes":45,"location":"Room 4B","attendees":["Noah","Priya"]}'
+        },
+    )
 
 
 def test_build_benchmark_metrics_counts_patch_quality_and_transfer() -> None:
