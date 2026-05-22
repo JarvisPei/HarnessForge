@@ -66,6 +66,8 @@ def run(input: dict) -> dict:
 
 Return JSON-serializable dictionaries only.
 
+When you write a tool, prefer the simplest syntax-safe implementation that can be tested directly. Favor small helper functions, explicit string splitting, and narrowly scoped parsing over long one-line regular expressions or clever text tricks. If the format is ambiguous or mixed, keep the parser conservative and let tests capture the exact supported cases rather than forcing a brittle general parser.
+
 If you write or revise a tool, you must also write a JSON test file under harness/tests with the same stem name in the same patch_bundles list. The framework will reject the whole patch group unless the matching test file exists and passes. The test file should be JSON-serializable and use a schema like:
 
 ```json
