@@ -3043,6 +3043,107 @@ def test_teacher_prompt_enrichment_lifts_repair_plan_and_boundaries() -> None:
     assert enriched["artifact_boundaries"]["required_regression_test"] == "runtime policy test covering the failed routing case and tool_input"
 
 
+def test_focused_repair_prioritizes_tool_failures_in_transfer_context() -> None:
+    patch_feedback = {
+        "has_rejections": True,
+        "rejected_bundles": [
+            {
+                "bundle_id": "force_quantity_arithmetic",
+                "rejected_patch_paths": [
+                    "harness/runtime_policies/force_quantity_arithmetic.py",
+                    "harness/tests/force_quantity_arithmetic.json",
+                ],
+                "failed_contracts": [
+                    {"path": "harness/runtime_policies/force_quantity_arithmetic.py", "reason": "runtime policy"},
+                ],
+            }
+        ],
+    }
+    transfer_feedback = {
+        "has_transfer_failures": True,
+        "failed_tasks": [
+            {
+                "task_id": "dev_routing_only",
+                "failure_mode": "policy_or_routing_failure",
+                "expected_answer": "17.65 meters remain.",
+                "task_instruction": "routing failure",
+                "first_seen_iteration": 1,
+            },
+            {
+                "task_id": "dev_tool_failure",
+                "failure_mode": "tool_failure",
+                "expected_answer": "5,025 milliliters remain.",
+                "task_instruction": "tool failure",
+                "first_seen_iteration": 1,
+            },
+        ],
+    }
+
+    task = _build_focused_repair_task(patch_feedback, transfer_feedback)
+    payload = json.loads(task.instruction)
+
+    assert payload["representative_transfer_failure"]["task_id"] == "dev_tool_failure"
+    assert payload["transfer_failures"][0]["task_id"] == "dev_tool_failure"
+    assert payload["transfer_failures"][1]["task_id"] == "dev_routing_only"
+
+
+def test_focused_repair_compacts_transfer_feedback_for_teacher_context() -> None:
+    transfer_feedback = {
+        "iteration": 2,
+        "has_transfer_failures": True,
+        "failed_tasks": [
+            {
+                "task_id": "dev_routing_only",
+                "failure_mode": "policy_or_routing_failure",
+                "task_instruction": "routing failure",
+                "expected_answer": "17.65 meters remain.",
+                "rubric": "route me",
+                "recommended_repair_target": "runtime_policy",
+                "repair_plan": {"primary_axis": "runtime_policy"},
+                "before_success": False,
+                "after_success": False,
+                "before_answer": "18.95 meters remain.",
+                "after_answer": "18.95 meters remain.",
+                "before_tool_call": None,
+                "after_tool_call": None,
+                "before_tool_result": None,
+                "after_tool_result": None,
+                "after_runtime_policy_results": [],
+                "first_seen_iteration": 1,
+                "last_seen_iteration": 2,
+            },
+            {
+                "task_id": "dev_tool_failure",
+                "failure_mode": "tool_failure",
+                "task_instruction": "tool failure",
+                "expected_answer": "5,025 milliliters remain.",
+                "rubric": "fix tool",
+                "recommended_repair_target": "tool",
+                "repair_plan": {"primary_axis": "tool"},
+                "before_success": True,
+                "after_success": False,
+                "before_answer": "5025 milliliters left.",
+                "after_answer": "3550 milliliters remain.",
+                "before_tool_call": None,
+                "after_tool_call": {"name": "volume_arithmetic"},
+                "before_tool_result": None,
+                "after_tool_result": {"ok": True, "result_liters": "3.55"},
+                "after_runtime_policy_results": [{"policy": "force_volume_arithmetic"}],
+                "first_seen_iteration": 1,
+                "last_seen_iteration": 2,
+            },
+        ],
+    }
+
+    compacted = benchmark_module._compact_transfer_feedback(transfer_feedback)
+
+    assert compacted is not None
+    assert compacted["failed_tasks"][0]["task_id"] == "dev_tool_failure"
+    assert compacted["failed_tasks"][1]["task_id"] == "dev_routing_only"
+    assert compacted["failed_tasks"][0]["after_tool_result"] == {"ok": True, "result_liters": "3.55"}
+    assert compacted["iteration"] == 2
+
+
 def test_teacher_prompt_mentions_raw_patch_bundle_content() -> None:
     text = Path("prompts/teacher_diagnosis.md").read_text()
     assert "patch_bundles.content" in text

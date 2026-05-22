@@ -813,8 +813,8 @@ def _build_focused_repair_task(
     failed_contracts = first_rejected.get("failed_contracts", []) if isinstance(first_rejected, dict) else []
     failed_paths = first_rejected.get("rejected_patch_paths", []) if isinstance(first_rejected, dict) else []
     bundle_id = first_rejected.get("bundle_id") if isinstance(first_rejected, dict) else None
-    transfer_tasks = (transfer_feedback or {}).get("failed_tasks", []) if isinstance(transfer_feedback, dict) else []
-    first_transfer = transfer_tasks[0] if isinstance(transfer_tasks, list) and transfer_tasks else {}
+    transfer_tasks = _prioritized_transfer_failures(transfer_feedback)
+    first_transfer = transfer_tasks[0] if transfer_tasks else {}
     expected_answer = first_transfer.get("expected_answer") if isinstance(first_transfer, dict) else None
     task_instruction = first_transfer.get("task_instruction") if isinstance(first_transfer, dict) else None
     instruction = {
@@ -825,6 +825,7 @@ def _build_focused_repair_task(
         "failed_contracts": failed_contracts,
         "repair_scope": repair_scope or {},
         "representative_transfer_failure": first_transfer,
+        "transfer_failures": transfer_tasks,
     }
     return TaskConfig(
         id="focused_repair",
@@ -838,6 +839,28 @@ def _build_focused_repair_task(
     )
 
 
+def _prioritized_transfer_failures(transfer_feedback: dict[str, object] | None) -> list[dict[str, object]]:
+    if not isinstance(transfer_feedback, dict):
+        return []
+    failed_tasks = transfer_feedback.get("failed_tasks", [])
+    if not isinstance(failed_tasks, list):
+        return []
+
+    def priority(task: dict[str, object]) -> tuple[int, int]:
+        failure_mode = str(task.get("failure_mode", ""))
+        first_seen = task.get("first_seen_iteration")
+        first_seen_index = first_seen if isinstance(first_seen, int) else 0
+        if failure_mode == "tool_failure":
+            return (0, first_seen_index)
+        if failure_mode == "policy_or_routing_failure":
+            return (1, first_seen_index)
+        if failure_mode == "finalization_failure":
+            return (2, first_seen_index)
+        return (3, first_seen_index)
+
+    return [task for task in sorted((task for task in failed_tasks if isinstance(task, dict)), key=priority)]
+
+
 def _benchmark_context_for_iteration(
     transfer_context: dict[str, object],
     patch_feedback: dict[str, object] | None,
@@ -847,8 +870,47 @@ def _benchmark_context_for_iteration(
     context = merge_benchmark_context(transfer_context, patch_feedback, transfer_feedback)
     if phase_kind == "focused_repair":
         context["repair_mode"] = "focused"
+        if transfer_feedback is not None:
+            context["transfer_feedback"] = _compact_transfer_feedback(transfer_feedback)
     enriched = enrich_benchmark_context(context)
     return enriched if enriched is not None else context
+
+
+def _compact_transfer_feedback(transfer_feedback: dict[str, object] | None, limit: int = 2) -> dict[str, object] | None:
+    prioritized = _prioritized_transfer_failures(transfer_feedback)
+    if not prioritized:
+        return transfer_feedback if isinstance(transfer_feedback, dict) else None
+
+    compacted: list[dict[str, object]] = []
+    for task in prioritized[:limit]:
+        compacted.append(
+            {
+                "task_id": task.get("task_id"),
+                "task_instruction": task.get("task_instruction"),
+                "expected_answer": task.get("expected_answer"),
+                "rubric": task.get("rubric"),
+                "failure_mode": task.get("failure_mode"),
+                "recommended_repair_target": task.get("recommended_repair_target"),
+                "repair_plan": task.get("repair_plan"),
+                "before_success": task.get("before_success"),
+                "after_success": task.get("after_success"),
+                "before_answer": task.get("before_answer"),
+                "after_answer": task.get("after_answer"),
+                "before_tool_call": task.get("before_tool_call"),
+                "after_tool_call": task.get("after_tool_call"),
+                "before_tool_result": task.get("before_tool_result"),
+                "after_tool_result": task.get("after_tool_result"),
+                "after_runtime_policy_results": task.get("after_runtime_policy_results"),
+                "first_seen_iteration": task.get("first_seen_iteration"),
+                "last_seen_iteration": task.get("last_seen_iteration"),
+            }
+        )
+
+    return {
+        "iteration": transfer_feedback.get("iteration"),
+        "has_transfer_failures": transfer_feedback.get("has_transfer_failures", True),
+        "failed_tasks": compacted,
+    }
 
 
 if __name__ == "__main__":
