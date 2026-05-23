@@ -9,7 +9,7 @@ This records the first transfer-tight run where a baseline-failing probe family 
 Server workspace:
 
 ```text
-/auxstore/cse/d11/data/s1155124388/projects/AgentDistill_repair_family_clean
+clean server workspace for the transfer-feedback repair run
 ```
 
 Commands:

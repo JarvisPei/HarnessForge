@@ -1,15 +1,46 @@
-# AgentDistill
+# HarnessForge
 
-AgentDistill is a small experimental scaffold for **harness distillation**: using a frontier teacher model to improve the external environment around a weaker model.
+HarnessForge is an open-source framework for **harness distillation**: using a frontier teacher model to improve the environment around a weaker model.
 
-The first loop is intentionally simple:
+It does not try to distill answers into the weak model. It distills the surrounding system:
+
+- prompts
+- skills
+- tools
+- validators
+- state representations
+- runtime policies
+
+The loop is intentionally simple:
 
 1. Run the weak model on a task with the current harness.
-2. Ask the teacher to diagnose the weak trace.
-3. Ask the teacher for a concrete harness patch: prompt guideline, skill, tool idea, validator, state representation, or runtime policy.
-4. Save the trace and patch for regression and later consolidation.
+2. Ask the teacher to diagnose the trace.
+3. Ask the teacher for a concrete harness patch.
+4. Save the trace, tests, and patch for regression and later consolidation.
 
-The goal is not to distill answers into the weak model. The goal is to distill frontier-agent behavior into a better runtime harness that the weak model can operate.
+The working hypothesis is that small models become much more useful when the teacher keeps improving the harness they operate inside.
+
+## Current Results
+
+The project already has working end-to-end runs on the cloud workflow.
+
+- inventory arithmetic exposed interface and transfer issues
+- unit conversion showed that deterministic normalization can improve transfer
+- structured extraction and validation improved both dev and blind probes with a normalization skill
+
+Latest structured extraction result:
+
+- dev improved: 2
+- blind improved: 2
+- accepted harness update: normalization skill
+
+## How It Works
+
+```text
+weak model -> trace -> teacher diagnosis -> harness patch -> regression probes
+```
+
+The teacher is asked to change the harness, not to solve the task directly.
 
 ## Setup
 
@@ -22,6 +53,8 @@ cp .env.example .env
 
 Fill `.env` with your relay base URLs, keys, and model names. The API client uses OpenAI-compatible `/chat/completions` endpoints and does not require the official SDK.
 
+For most demos, start with the default OpenAI GPT profile (`gpt-5.4-mini` weak / `gpt-5.5` teacher).
+
 ## Run a Smoke Experiment
 
 ```bash
@@ -30,7 +63,7 @@ python -m agentdistill.run --config configs/smoke.yaml
 
 Outputs are written under `outputs/`.
 
-To use an alternate env suffix such as `*_CLAUDE`:
+To use a different profile or relay suffix:
 
 ```bash
 python -m agentdistill.run --config configs/smoke.yaml --profile CLAUDE
@@ -60,20 +93,24 @@ python -m agentdistill.run --config configs/tool_stress.yaml --apply-patches --i
 
 If a teacher-generated runtime policy exists, the runner evaluates it after the weak model's initial answer. A policy may force a tool call before the final answer is produced.
 
-## Remote Server Workflow
+## Benchmark Families
 
-The code is API-first and does not require GPUs for the smoke loop. Use a small always-on cloud VM as the default runtime control plane: API weak/teacher models, trace collection, harness updates, and isolated `outputs/` runs all live there. The Mac stays for editing and lightweight checks.
+The public benchmark map is intentionally small and composable. These families are the current public test surface for harness distillation; detailed run logs live under `docs/experiments/`.
 
-Suggested remote workflow:
+- Inventory arithmetic: parser -> deterministic arithmetic tool -> runtime policy
+- Unit conversion arithmetic: unit normalization tool + conversion-table tests + mixed-unit policy
+- Structured extraction and validation: messy text -> strict JSON + normalization skill + schema-aware checks
+- Repair and transfer feedback: contract-gated repair loops that measure whether harness changes improve dev and blind probes
 
-```bash
-ssh agentdistill
-cd ~/projects/AgentDistill
-```
+The planning notes in [docs/benchmark_family_plan.md](docs/benchmark_family_plan.md) track how these families expand over time.
 
-Keep the cloud VM as the canonical checkout. Do not create a fresh clone for every experiment. Keep `.env` private on the VM and use SSH Git remotes.
+## Remote Workflow
 
-After login, sync the project, ensure `.env` exists, install dependencies, and run the same command:
+The code is API-first and does not require GPUs for the smoke loop. A single always-on cloud VM works well as the runtime control plane: API weak/teacher models, trace collection, harness updates, and isolated `outputs/` runs can all live there. The Mac stays for editing and lightweight checks.
+
+Keep one canonical checkout on the remote machine. Do not create a fresh clone for every experiment. Keep `.env` private and use SSH Git remotes.
+
+After login, sync the project, ensure `.env` exists, install dependencies, and run the smoke command:
 
 ```bash
 python -m agentdistill.run --config configs/smoke.yaml
@@ -98,3 +135,16 @@ Phase 3: batched evaluation.
 - run held-out suites
 - compare prompt-only, skill, tool, validator, and runtime-policy updates
 - measure teacher intervention cost and regression safety
+
+## Public / Private Split
+
+This repository is meant to stay public-safe.
+
+- public: code, configs, prompts, benchmark summaries, sanitized docs
+- private: `.env`, machine-specific runbooks, API keys, and anything under `docs/private/`
+
+Git cannot hide committed content in a public repository. If something must stay private, keep it outside the public repo and sync it with a separate private repository or an ignored local directory.
+
+## Contributing
+
+Issues and pull requests that improve benchmark families, harness contracts, or evaluation coverage are welcome.

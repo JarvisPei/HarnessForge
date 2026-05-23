@@ -9,14 +9,14 @@ This records a small controlled ablation on `benchmark_explicit_ops_v2` using th
 Server workspace:
 
 ```text
-/auxstore/cse/d11/data/s1155124388/projects/AgentDistill_scoped_repair_verify
+clean server workspace for the repair-efficiency ablation
 ```
 
 All ablation runs used:
 
 ```bash
 REQUEST_TIMEOUT_SECONDS=240 TEACHER_TIMEOUT_SECONDS=600 WEAK_TIMEOUT_SECONDS=300 \
-  ../AgentDistill_bench_clean/.venv/bin/python -m agentdistill.benchmark \
+  python -m agentdistill.benchmark \
   --config configs/benchmark_explicit_ops_v2.yaml \
   --evolve-iterations 2
 ```
@@ -34,7 +34,7 @@ The scoped-inner run was interrupted during `evolve_train_iter_02/train_explicit
 Aggregate command:
 
 ```bash
-../AgentDistill_bench_clean/.venv/bin/python -m agentdistill.repair_efficiency \
+python -m agentdistill.repair_efficiency \
   outputs/benchmark_explicit_ops_v2/default/ablate_full_train_v1 \
   outputs/benchmark_explicit_ops_v2/default/ablate_focused_only_v1 \
   outputs/benchmark_explicit_ops_v2/default/ablate_scoped_inner_v1 \
@@ -73,7 +73,7 @@ focused_repair_weak_calls_skipped = 1
 Historical reference, not a strict ablation:
 
 ```text
-/auxstore/cse/d11/data/s1155124388/projects/AgentDistill_inner_repair_clean/outputs/benchmark_explicit_ops_v2/default/explicit_ops_v2_inner_repair_v1
+historical reference output directory
 accepted_rate = 0.6
 dev improved = 1, regressed = 0
 blind improved = 2, regressed = 0

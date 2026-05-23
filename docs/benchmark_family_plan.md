@@ -124,4 +124,4 @@ For each run, compare:
 
 ## Near-Term Recommendation
 
-Add one family at a time. The next family should be unit conversion arithmetic because it is close enough to inventory arithmetic to reuse the loop, but different enough to require a new tool vocabulary and conversion tests.
+The next family after structured extraction should be a table lookup and aggregation task or a small code-debugging task. Both should still reward deterministic helpers, but they exercise a new failure mode beyond normalization: structured state handling or executable verification.

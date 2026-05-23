@@ -30,14 +30,14 @@ The task family is still explicit signed-operation counting, but shorter than `b
 Workspace:
 
 ```text
-/auxstore/cse/d11/data/s1155124388/projects/AgentDistill_scoped_repair_verify
+clean server workspace for the repair-mechanism benchmark
 ```
 
 Smoke command:
 
 ```bash
 REQUEST_TIMEOUT_SECONDS=240 TEACHER_TIMEOUT_SECONDS=600 WEAK_TIMEOUT_SECONDS=300 \
-  ../AgentDistill_bench_clean/.venv/bin/python -m agentdistill.benchmark \
+  python -m agentdistill.benchmark \
   --config configs/benchmark_repair_mechanism.yaml \
   --run-id mechanism_smoke_v2 \
   --evolve-iterations 2 \
@@ -62,7 +62,7 @@ Audit-enabled smoke command:
 
 ```bash
 REQUEST_TIMEOUT_SECONDS=240 TEACHER_TIMEOUT_SECONDS=600 WEAK_TIMEOUT_SECONDS=300 \
-  ../AgentDistill_bench_clean/.venv/bin/python -m agentdistill.benchmark \
+  python -m agentdistill.benchmark \
   --config configs/benchmark_repair_mechanism.yaml \
   --run-id mechanism_audit_smoke_v1 \
   --evolve-iterations 1 \
@@ -126,7 +126,7 @@ The deterministic fixture now reports repair outcome separately from outer patch
 Validation command:
 
 ```bash
-.venv/bin/python -m agentdistill.repair_fixture --output-dir /private/tmp/repair_fixture_v2
+.venv/bin/python -m agentdistill.repair_fixture --output-dir outputs/repair_fixture_v2
 ```
 
 Result:

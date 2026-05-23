@@ -20,9 +20,9 @@ Only after this loop is stable should we add local weak models through vLLM or a
 ## Server Setup
 
 ```bash
-ssh agentdistill
+ssh <your-remote-host>
 mkdir -p ~/projects ~/runs ~/tmp
-cd ~/projects/AgentDistill
+cd ~/projects/<repo-name>
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -90,29 +90,19 @@ TEACHER_PROVIDER_CLAUDE=anthropic
 
 For a relay that exposes Claude models through OpenAI-compatible chat completions, omit provider variables or set them to `openai`.
 
-## Working Agreement
+## Private Notes
 
-Keep this section current. It is the operational memory for long-running Codex sessions.
+Do not keep machine-specific runbooks or private credentials here if this repository is public. Put them in a separate private repo, a private gist, or an ignored local file under `docs/private/`.
 
-### Code Sync
+### Public-safe rules
 
-Use `main` as the working branch unless the user explicitly asks for a branch.
+- keep `.env` out of git
+- keep API keys out of git
+- keep machine hostnames and internal paths out of public docs unless they are intentionally generic
+- use `outputs/<run-id>/...` for experiment isolation instead of fresh clones
+- use SSH remotes for code sync
 
-The normal sync path is:
-
-```text
-Mac/local Codex edits -> push to GitHub main -> server pulls main
-```
-
-Current working rule set:
-
-- keep one canonical server checkout at `/auxstore/cse/d11/data/s1155124388/projects/AgentDistill`
-- keep `.env` on the server checkout and never commit or delete it during cleanup
-- use `outputs/<run-id>/...` for experiment isolation instead of creating fresh repo clones
-- clean only generated harness artifacts when needed; leave `.env`, `.venv`, and Git history intact
-- treat `main` as the shared sync branch unless the user explicitly asks otherwise
-
-On the Mac:
+### Recommended local pattern
 
 ```bash
 git add <changed files>
@@ -120,102 +110,16 @@ git commit -m "<message>"
 git push origin main
 ```
 
-On the server:
-
 ```bash
-cd ~/projects/AgentDistill
 git pull --ff-only origin main
 ```
 
-Do not create a new server clone for each experiment. The server should have one canonical checkout:
+### Private runbook option
+
+If you want to version a private remote runbook, keep it outside the public repository and load it locally from an ignored path, for example:
 
 ```text
-/home/ubuntu/projects/AgentDistill
+docs/private/remote_setup.local.md
 ```
 
-### Server Environment
-
-The server `.env` is private local state. It contains relay base URLs, API keys, and model names for weak/teacher profiles.
-
-Rules:
-
-- Never commit `.env`.
-- Never delete `.env` as part of experiment cleanup.
-- If the checkout is recreated, copy or recreate `.env` before running any API experiment.
-- Prefer SSH Git remotes on the server: `git@github.com:JarvisPei/AgentDistill.git`.
-- If GitHub SSH access is not working on the server, configure a dedicated server key in `~/.ssh/config` and keep it separate from the login key used to reach the VM.
-
-### Experiment Isolation
-
-Teacher runs can write generated harness files into `harness/` when patch application is enabled. Old generated harness files can contaminate later experiments, but creating a new clone for every experiment is not sustainable.
-
-Use one canonical checkout and isolate experiments by resetting only generated experiment state before a new run:
-
-```bash
-cd ~/projects/AgentDistill
-git status --short
-```
-
-If the dirty files are only previous generated harness artifacts, clean the harness back to the Git baseline before the next experiment:
-
-```bash
-git restore harness
-git clean -fd harness
-```
-
-This keeps `.env`, `.venv`, and Git history intact while removing old generated harness files. Do not run broader cleanup commands such as `rm -rf AgentDistill*` or `git clean -fdx` unless the user explicitly asks, because those can delete server-local state such as `.env` or cached environments.
-
-Experiment outputs should be isolated with unique output directories or run IDs under `outputs/`, not with new repo clones.
-If a run needs temporary scratch space, use `~/tmp` or a run-specific subdirectory under `~/runs`.
-
-### Terminal Discipline
-
-Avoid accumulating unused terminals. Prefer one active SSH session for cloud-server work, and close or ignore stale sessions once the current run is complete.
-
-## Codex On Server
-
-Running Codex directly on the server can be useful later, but it adds setup cost:
-
-- install/configure Codex on the server
-- provide a custom API base URL and key
-- handle auth/session state on the remote machine
-- ensure generated edits and experiment runs happen in the same repo checkout
-
-Recommended order:
-
-1. Use local Codex to edit code and SSH into the server for commands.
-2. Stabilize the API-only experiment loop.
-3. Add server-side Codex only if remote iteration becomes bottlenecked by SSH command orchestration.
-
-This keeps the first experimental loop simple and reproducible.
-
-## Legacy: H200 Workflow
-
-Keep this as a fallback path for GPU-heavy jobs, local weak model serving, or when we need the school cluster again.
-
-```bash
-ssh cse_H200
-ssh sandbox
-squeue
-```
-
-When Duo asks for a device, choose `1`, then approve on your phone.
-
-The old H200 checkout path was:
-
-```text
-/auxstore/cse/d11/data/s1155124388/projects/AgentDistill
-```
-
-Use it only if we explicitly switch back to the cluster. Do not make it the default control plane.
-
-## Later: Local Weak Model
-
-Once API-only harness evolution works, serve a local weak model on H200 or another stronger GPU machine with an OpenAI-compatible endpoint and only change:
-
-```text
-WEAK_BASE_URL=http://localhost:<port>/v1
-WEAK_MODEL=<local-model-name>
-```
-
-The rest of the harness loop should stay unchanged.
+You can then add that directory to `.gitignore` while keeping the public `docs/remote_setup.md` clean.

@@ -41,7 +41,7 @@ Lightweight server probe:
 
 ```bash
 REQUEST_TIMEOUT_SECONDS=120 TEACHER_TIMEOUT_SECONDS=600 WEAK_TIMEOUT_SECONDS=120 \
-  ../AgentDistill_bench_clean/.venv/bin/python -m agentdistill.repair_family \
+  .venv/bin/python -m agentdistill.repair_family \
   --output-dir outputs/repair_family_transfer_feedback_plan_v2 \
   --transfer-tight \
   --transfer-feedback-repair

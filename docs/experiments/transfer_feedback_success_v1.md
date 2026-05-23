@@ -9,14 +9,14 @@ This records the first successful run where an accepted harness failed on dev tr
 Server workspace:
 
 ```text
-/auxstore/cse/d11/data/s1155124388/projects/AgentDistill_transfer_feedback_only_clean
+clean server workspace for the transfer-feedback run
 ```
 
 Command:
 
 ```bash
 REQUEST_TIMEOUT_SECONDS=180 TEACHER_TIMEOUT_SECONDS=300 WEAK_TIMEOUT_SECONDS=300 \
-  ../AgentDistill_bench_clean/.venv/bin/python -m agentdistill.benchmark \
+  python -m agentdistill.benchmark \
   --config configs/benchmark_explicit_ops_v2.yaml \
   --run-id explicit_ops_v2_feedback_only_v1
 ```

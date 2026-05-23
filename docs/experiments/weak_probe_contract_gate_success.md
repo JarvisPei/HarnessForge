@@ -9,14 +9,14 @@ This records the first positive held-out transfer result from the harness distil
 Server workspace:
 
 ```text
-/auxstore/cse/d11/data/s1155124388/projects/AgentDistill_transfer_clean
+clean server workspace for the weak-probe run
 ```
 
 Command:
 
 ```bash
 REQUEST_TIMEOUT_SECONDS=120 TEACHER_TIMEOUT_SECONDS=300 WEAK_TIMEOUT_SECONDS=120 \
-  ../AgentDistill_bench_clean/.venv/bin/python -m agentdistill.benchmark \
+  python -m agentdistill.benchmark \
   --config configs/benchmark_inventory.yaml \
   --run-id weak_probe_contract_gate_v1
 ```

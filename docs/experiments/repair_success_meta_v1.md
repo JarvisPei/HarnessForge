@@ -9,14 +9,14 @@ This records the first inventory benchmark run after removing domain-specific pa
 Server workspace:
 
 ```text
-/auxstore/cse/d11/data/s1155124388/projects/AgentDistill_meta_inventory_clean
+clean server workspace for the meta-inventory run
 ```
 
 Command:
 
 ```bash
 REQUEST_TIMEOUT_SECONDS=120 TEACHER_TIMEOUT_SECONDS=300 WEAK_TIMEOUT_SECONDS=120 \
-  ../AgentDistill_bench_clean/.venv/bin/python -m agentdistill.benchmark \
+  python -m agentdistill.benchmark \
   --config configs/benchmark_inventory.yaml \
   --run-id repair_success_meta_v1
 ```
