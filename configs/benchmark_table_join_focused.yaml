@@ -1,0 +1,199 @@
+name: benchmark_table_join_focused
+output_dir: outputs/benchmark_table_join_focused
+weak:
+  role: weak
+teacher:
+  role: teacher
+harness:
+  system_prompt_path: prompts/weak_system.md
+  skills_dir: harness/skills
+  guidelines_dir: harness/guidelines
+  validators_dir: harness/validators
+  tools_dir: harness/tools
+  runtime_policies_dir: harness/runtime_policies
+evolve_iterations: 3
+transfer_context_mode: feedback_only
+repair_mode: focused
+inner_repair_attempts: 1
+teacher_policy_audit: true
+policy_generalization_audit: true
+train_tasks:
+  - id: train_west_ship_net_revenue
+    instruction: |
+      Two tables describe shipped orders and lookup data.
+
+      Orders:
+      | order_id | sku | region | status | qty |
+      | 101 | A1 | west | shipped | 4 |
+      | 102 | B2 | east | shipped | 7 |
+      | 103 | C3 | west | pending | 3 |
+      | 104 | A1 | west | shipped | 5 |
+      | 105 | D4 | west | shipped | 2 |
+      | 106 | B2 | west | shipped | 1 |
+
+      Prices:
+      | sku | unit_price |
+      | A1 | 19 |
+      | B2 | 11 |
+      | C3 | 25 |
+      | D4 | 8 |
+
+      Region fees:
+      | region | fee |
+      | west | 3 |
+      | east | 5 |
+
+      What is the total net revenue for west orders with shipped status, using qty * unit_price - fee for each matching row?
+      Give only the final number and one short explanation sentence.
+    expected_answer: "186 dollars total."
+    rubric: |
+      Correct computation is (4*19-3) + (5*19-3) + (2*8-3) + (1*11-3) = 186. A reliable harness should use a deterministic join-and-aggregate helper rather than prompt-only reasoning.
+  - id: train_north_ship_net_revenue
+    instruction: |
+      Two tables describe ticket shipments and lookup data.
+
+      Shipments:
+      | ticket | sku | region | status | qty |
+      | t1 | X1 | north | shipped | 6 |
+      | t2 | X2 | north | pending | 2 |
+      | t3 | X3 | south | shipped | 5 |
+      | t4 | X1 | north | shipped | 3 |
+      | t5 | X4 | north | shipped | 4 |
+      | t6 | X2 | south | shipped | 1 |
+
+      Prices:
+      | sku | unit_price |
+      | X1 | 14 |
+      | X2 | 9 |
+      | X3 | 20 |
+      | X4 | 6 |
+
+      Region fees:
+      | region | fee |
+      | north | 4 |
+      | south | 2 |
+
+      What is the total net revenue for north orders with shipped status, using qty * unit_price - fee for each matching row?
+      Give only the final number and one short explanation sentence.
+    expected_answer: "138 dollars total."
+    rubric: |
+      Correct computation is (6*14-4) + (3*14-4) + (4*6-4) = 138. The latent schema is a table join plus aggregation over filtered rows.
+dev_probe_tasks:
+  - id: dev_east_ship_net_revenue
+    instruction: |
+      Two tables describe purchase lines and lookup data.
+
+      Purchases:
+      | item | sku | region | status | qty |
+      | a1 | M5 | east | shipped | 3 |
+      | a2 | M6 | west | shipped | 2 |
+      | a3 | M5 | east | pending | 4 |
+      | a4 | M7 | east | shipped | 5 |
+      | a5 | M6 | east | shipped | 1 |
+
+      Prices:
+      | sku | unit_price |
+      | M5 | 17 |
+      | M6 | 12 |
+      | M7 | 9 |
+
+      Region fees:
+      | region | fee |
+      | east | 6 |
+      | west | 4 |
+
+      What is the total net revenue for east orders with shipped status, using qty * unit_price - fee for each matching row?
+      Give only the final number and one short explanation sentence.
+    expected_answer: "90 dollars total."
+    rubric: |
+      Correct computation is (3*17-6) + (5*9-6) + (1*12-6) = 90. This probe changes the table labels but keeps the same join-and-aggregate schema.
+  - id: dev_west_ship_net_revenue_csv
+    instruction: |
+      Two tables describe dispatches and lookup data.
+
+      Dispatches:
+      zone,sku,status,qty,entry
+      west,Q1,shipped,2,p1
+      east,Q2,shipped,1,p2
+      west,Q3,pending,5,p3
+      west,Q1,shipped,4,p4
+      west,Q4,shipped,3,p5
+      west,Q2,shipped,1,p6
+
+      Prices:
+      sku,unit_price
+      Q1,21
+      Q2,8
+      Q3,13
+      Q4,10
+
+      Region fees:
+      zone,fee
+      west,5
+      east,2
+
+      What is the total net revenue for west shipped orders, using qty * unit_price - fee for each matching row?
+      Give only the final number and one short explanation sentence.
+    expected_answer: "144 dollars total."
+    rubric: |
+      Correct computation is (2*21-5) + (4*21-5) + (3*10-5) + (1*8-5) = 144. This probe forces a CSV-style table and a different column order.
+blind_test_tasks:
+  - id: blind_partner_ship_net_revenue
+    instruction: |
+      Two tables describe invoice lines and lookup data.
+
+      Invoices:
+      | rec | sku | channel | status | qty |
+      | r1 | Z1 | partner | shipped | 4 |
+      | r2 | Z2 | direct | shipped | 2 |
+      | r3 | Z3 | partner | pending | 7 |
+      | r4 | Z1 | partner | shipped | 1 |
+      | r5 | Z4 | partner | shipped | 3 |
+      | r6 | Z2 | partner | shipped | 2 |
+
+      Prices:
+      | sku | unit_price |
+      | Z1 | 16 |
+      | Z2 | 9 |
+      | Z3 | 11 |
+      | Z4 | 14 |
+
+      Channel fees:
+      | channel | fee |
+      | partner | 2 |
+      | direct | 1 |
+
+      What is the total net revenue for partner orders with shipped status, using qty * unit_price - fee for each matching row?
+      Give only the final number and one short explanation sentence.
+    expected_answer: "132 dollars total."
+    rubric: |
+      Correct computation is (4*16-2) + (1*16-2) + (3*14-2) + (2*9-2) = 132. The blind case renames the external nouns but keeps the same lookup and aggregation structure.
+  - id: blind_direct_ship_net_revenue
+    instruction: |
+      Two tables describe line items and lookup data.
+
+      Lines:
+      | rec | sku | channel | status | qty |
+      | s1 | U1 | direct | shipped | 5 |
+      | s2 | U2 | partner | shipped | 1 |
+      | s3 | U3 | direct | shipped | 2 |
+      | s4 | U1 | direct | pending | 8 |
+      | s5 | U4 | direct | shipped | 4 |
+
+      Prices:
+      | sku | unit_price |
+      | U1 | 13 |
+      | U2 | 20 |
+      | U3 | 7 |
+      | U4 | 11 |
+
+      Channel fees:
+      | channel | fee |
+      | direct | 3 |
+      | partner | 4 |
+
+      What is the total net revenue for direct orders with shipped status, using qty * unit_price - fee for each matching row?
+      Give only the final number and one short explanation sentence.
+    expected_answer: "114 dollars total."
+    rubric: |
+      Correct computation is (5*13-3) + (2*7-3) + (4*11-3) = 114. This blind case changes the table names and column labels while preserving the latent join-and-aggregate schema.
