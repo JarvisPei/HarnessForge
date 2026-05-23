@@ -2,6 +2,12 @@
 
 This project should run experiments on a small always-on cloud VM even when both weak and teacher models are API models. The Mac is only for editing and lightweight checks.
 
+## Source Of Truth
+
+Keep code changes on the Mac working tree, push them to `main`, then pull `main` on the cloud VM before running experiments.
+
+Do not treat files created or patched directly on the cloud VM as canonical source files. The cloud machine is for running experiments, capturing outputs, and debugging live runs. If you need to inspect or tweak behavior there, mirror the change back into the local repo before considering it part of the project.
+
 ## Why API-Only First
 
 API-only iteration avoids the two slowest parts of early research:
