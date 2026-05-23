@@ -1,0 +1,174 @@
+name: benchmark_table_join_hard
+output_dir: outputs/benchmark_table_join_hard
+weak:
+  role: weak
+teacher:
+  role: teacher
+harness:
+  system_prompt_path: prompts/weak_system.md
+  skills_dir: harness/skills
+  guidelines_dir: harness/guidelines
+  validators_dir: harness/validators
+  tools_dir: harness/tools
+  runtime_policies_dir: harness/runtime_policies
+evolve_iterations: 3
+transfer_context_mode: feedback_only
+repair_mode: focused
+inner_repair_attempts: 1
+teacher_policy_audit: true
+policy_generalization_audit: true
+train_tasks:
+  - id: train_partner_final_margin
+    instruction: |
+      Compute the requested total from the three lookup tables.
+
+      Lines:
+      | line | sku | channel | state | qty |
+      | l1 | A7 | partner | final | 13 |
+      | l2 | B3 | direct | final | 9 |
+      | l3 | C4 | partner | draft | 8 |
+      | l4 | A7 | partner | final | 6 |
+      | l5 | D9 | partner | final | 11 |
+      | l6 | B3 | partner | final | 5 |
+      | l7 | D9 | direct | final | 4 |
+      | l8 | C4 | partner | final | 7 |
+
+      Prices:
+      | sku | price | unit_cost |
+      | A7 | 23 | 8 |
+      | B3 | 17 | 6 |
+      | C4 | 31 | 10 |
+      | D9 | 12 | 5 |
+
+      Channel fees:
+      | channel | fee |
+      | partner | 14 |
+      | direct | 9 |
+
+      For partner lines whose state is final, compute sum(qty * (price - unit_cost) - fee).
+      Give only the final number and one short explanation sentence.
+    expected_answer: "686 dollars total."
+    rubric: |
+      Correct computation is 13*(23-8)-14 + 6*(23-8)-14 + 11*(12-5)-14 + 5*(17-6)-14 + 7*(31-10)-14 = 686. This requires joining rows by sku, applying the channel fee per matching line, filtering by two conditions, and aggregating.
+dev_probe_tasks:
+  - id: dev_enterprise_active_margin
+    instruction: |
+      Compute the requested total from the three lookup tables.
+
+      Orders:
+      | rec | plan | segment | status | seats |
+      | r1 | P1 | enterprise | active | 8 |
+      | r2 | P2 | retail | active | 4 |
+      | r3 | P3 | enterprise | paused | 6 |
+      | r4 | P1 | enterprise | active | 3 |
+      | r5 | P4 | enterprise | active | 10 |
+      | r6 | P2 | enterprise | active | 5 |
+
+      Plan economics:
+      | plan | revenue | cost |
+      | P1 | 42 | 19 |
+      | P2 | 25 | 11 |
+      | P3 | 60 | 22 |
+      | P4 | 18 | 7 |
+
+      Segment fees:
+      | segment | fee |
+      | enterprise | 16 |
+      | retail | 6 |
+
+      For enterprise rows whose status is active, compute sum(seats * (revenue - cost) - fee).
+      Give only the final number and one short explanation sentence.
+    expected_answer: "386 dollars total."
+    rubric: |
+      Correct computation is 8*(42-19)-16 + 3*(42-19)-16 + 10*(18-7)-16 + 5*(25-11)-16 = 386. This dev probe renames tables and columns while preserving the same latent join/filter/aggregate schema.
+  - id: dev_west_closed_margin_csv
+    instruction: |
+      Compute the requested total from the three lookup tables.
+
+      Tickets:
+      zone,sku,status,count,ticket
+      west,Q1,closed,12,t1
+      east,Q2,closed,4,t2
+      west,Q3,open,9,t3
+      west,Q1,closed,5,t4
+      west,Q4,closed,10,t5
+      west,Q2,closed,6,t6
+
+      Economics:
+      sku,price,cost
+      Q1,18,7
+      Q2,15,5
+      Q3,22,8
+      Q4,9,3
+
+      Zone fees:
+      zone,fee
+      west,13
+      east,4
+
+      For west tickets whose status is closed, compute sum(count * (price - cost) - fee).
+      Give only the final number and one short explanation sentence.
+    expected_answer: "304 dollars total."
+    rubric: |
+      Correct computation is 12*(18-7)-13 + 5*(18-7)-13 + 10*(9-3)-13 + 6*(15-5)-13 = 304. This probe uses CSV-style tables and column names that differ from train.
+blind_test_tasks:
+  - id: blind_north_completed_margin
+    instruction: |
+      Compute the requested total from the three lookup tables.
+
+      Jobs:
+      | job | item | region | state | units |
+      | j1 | K1 | north | completed | 14 |
+      | j2 | K2 | south | completed | 9 |
+      | j3 | K3 | north | queued | 5 |
+      | j4 | K1 | north | completed | 4 |
+      | j5 | K4 | north | completed | 8 |
+      | j6 | K2 | north | completed | 7 |
+
+      Item economics:
+      | item | sale | base |
+      | K1 | 29 | 12 |
+      | K2 | 16 | 5 |
+      | K3 | 24 | 9 |
+      | K4 | 13 | 4 |
+
+      Region fees:
+      | region | fee |
+      | north | 15 |
+      | south | 8 |
+
+      For north jobs whose state is completed, compute sum(units * (sale - base) - fee).
+      Give only the final number and one short explanation sentence.
+    expected_answer: "429 dollars total."
+    rubric: |
+      Correct computation is 14*(29-12)-15 + 4*(29-12)-15 + 8*(13-4)-15 + 7*(16-5)-15 = 429. This blind case changes the domain nouns and lookup-column names.
+  - id: blind_priority_done_margin
+    instruction: |
+      Compute the requested total from the three lookup tables.
+
+      Cases:
+      | case | code | lane | done | amount |
+      | c1 | R1 | priority | yes | 11 |
+      | c2 | R2 | standard | yes | 8 |
+      | c3 | R3 | priority | no | 6 |
+      | c4 | R1 | priority | yes | 7 |
+      | c5 | R4 | priority | yes | 9 |
+      | c6 | R2 | priority | yes | 5 |
+
+      Code economics:
+      | code | gross | expense |
+      | R1 | 34 | 15 |
+      | R2 | 21 | 9 |
+      | R3 | 40 | 18 |
+      | R4 | 14 | 6 |
+
+      Lane fees:
+      | lane | fee |
+      | priority | 17 |
+      | standard | 7 |
+
+      For priority cases whose done value is yes, compute sum(amount * (gross - expense) - fee).
+      Give only the final number and one short explanation sentence.
+    expected_answer: "406 dollars total."
+    rubric: |
+      Correct computation is 11*(34-15)-17 + 7*(34-15)-17 + 9*(14-6)-17 + 5*(21-9)-17 = 406. This blind case uses yes/no status values and different economic column names.
