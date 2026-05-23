@@ -1,0 +1,119 @@
+name: benchmark_table_lookup_focused
+output_dir: outputs/benchmark_table_lookup_focused
+weak:
+  role: weak
+teacher:
+  role: teacher
+harness:
+  system_prompt_path: prompts/weak_system.md
+  skills_dir: harness/skills
+  guidelines_dir: harness/guidelines
+  validators_dir: harness/validators
+  tools_dir: harness/tools
+  runtime_policies_dir: harness/runtime_policies
+evolve_iterations: 3
+transfer_context_mode: feedback_only
+repair_mode: focused
+inner_repair_attempts: 1
+teacher_policy_audit: true
+policy_generalization_audit: true
+train_tasks:
+  - id: train_north_closed_minutes
+    instruction: |
+      A staffing table tracks support shifts.
+
+      | agent | team | status | minutes |
+      | Mira | North | open | 45 |
+      | Felix | South | closed | 60 |
+      | Noor | North | closed | 30 |
+      | Imani | East | closed | 75 |
+      | Joel | North | closed | 90 |
+
+      What is the total number of minutes for North team rows with status closed?
+      Give only the final number and one short explanation sentence.
+    expected_answer: "120 minutes total."
+    rubric: |
+      Correct computation is 30 + 90 = 120. A reliable harness should extract table rows, filter on two columns, and aggregate a numeric field rather than rely on prompt-only reasoning.
+  - id: train_west_hardware_dollars
+    instruction: |
+      A sales ledger tracks region, category, and dollars.
+
+      | id | category | region | dollars |
+      | 1 | hardware | west | 1200 |
+      | 2 | software | east | 800 |
+      | 3 | hardware | west | 450 |
+      | 4 | hardware | north | 300 |
+      | 5 | services | west | 250 |
+
+      What is the total dollars for west region hardware rows?
+      Give only the final number and one short explanation sentence.
+    expected_answer: "1,650 dollars total."
+    rubric: |
+      Correct computation is 1200 + 450 = 1650. A reliable harness should support row lookup by multiple conditions before aggregation.
+dev_probe_tasks:
+  - id: dev_west_closed_units
+    instruction: |
+      A dispatch table tracks zone, status, units, and owner.
+
+      | owner | units | status | zone |
+      | Lia | 8 | open | west |
+      | Omar | 21 | closed | west |
+      | Mei | 17 | closed | east |
+      | Priya | 26 | closed | west |
+      | Evan | 12 | open | west |
+
+      What is the total units for west rows with closed status?
+      Give only the final number and one short explanation sentence.
+    expected_answer: "47 units total."
+    rubric: |
+      Correct computation is 21 + 26 = 47. This probe changes the column order and uses a different noun surface but the same latent lookup-and-aggregate schema.
+  - id: dev_enterprise_active_minutes
+    instruction: |
+      A client log is listed below.
+
+      client,segment,active,minutes
+      A01,enterprise,yes,55
+      A02,enterprise,no,40
+      A03,enterprise,yes,35
+      A04,retail,yes,20
+      A05,enterprise,yes,50
+      A06,enterprise,no,15
+
+      What is the total minutes for enterprise rows with active yes?
+      Give only the final number and one short explanation sentence.
+    expected_answer: "140 minutes total."
+    rubric: |
+      Correct computation is 55 + 35 + 50 = 140. This probe tests a CSV-style table instead of a Markdown table.
+blind_test_tasks:
+  - id: blind_partner_shipped_cost
+    instruction: |
+      A project ledger tracks channel, status, and cost.
+
+      | project | channel | status | cost |
+      | P-17 | partner | shipped | 410 |
+      | P-18 | direct | shipped | 220 |
+      | P-19 | partner | pending | 180 |
+      | P-20 | partner | shipped | 390 |
+      | P-21 | direct | shipped | 140 |
+
+      What is the total cost for partner rows with shipped status?
+      Give only the final number and one short explanation sentence.
+    expected_answer: "800 dollars total."
+    rubric: |
+      Correct computation is 410 + 390 = 800. The blind case renames the domain noun and keeps the same latent filter-then-sum behavior.
+  - id: blind_legal_review_pages
+    instruction: |
+      A review tracker is listed below.
+
+      | id | department | reviewed | pages |
+      | 1 | legal | yes | 180 |
+      | 2 | hr | no | 90 |
+      | 3 | legal | yes | 240 |
+      | 4 | legal | no | 75 |
+      | 5 | finance | yes | 110 |
+
+      What is the total pages for legal rows with reviewed yes?
+      Give only the final number and one short explanation sentence.
+    expected_answer: "420 pages total."
+    rubric: |
+      Correct computation is 180 + 240 = 420. This blind case changes the row labels and keeps the same filtering and aggregation structure.

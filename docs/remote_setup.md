@@ -15,7 +15,7 @@ The first milestone is to validate the harness distillation loop:
 weak API run -> teacher API diagnosis -> harness patch -> regression
 ```
 
-Only after this loop is stable should we add local weak models through vLLM or another OpenAI-compatible server.
+Only after this loop is stable should we add local weak models through vLLM or another chat-completions-compatible server.
 
 ## Server Setup
 
@@ -43,10 +43,10 @@ Run:
 scripts/run_smoke.sh
 ```
 
-Run a named provider profile such as `*_CLAUDE`:
+Run a named provider profile such as a custom suffix:
 
 ```bash
-scripts/run_smoke.sh CLAUDE
+scripts/run_smoke.sh ALT_PROFILE
 ```
 
 By default, teacher harness patches are proposals only. To let the teacher write patch bundles into the allowed `harness/` directories:
@@ -79,16 +79,16 @@ TEACHER_API_KEY=
 TEACHER_MODEL=
 ```
 
-For relay APIs, the only requirement is OpenAI-compatible `/chat/completions` behavior.
+For relay APIs, the only requirement is chat-completions-style behavior.
 
-Provider defaults to `openai` for every profile. For Anthropic-native `/messages` behavior, set:
+Provider defaults to `openai` for every profile. For Anthropic-native `/messages` behavior, set the relevant profile to:
 
 ```text
-WEAK_PROVIDER_CLAUDE=anthropic
-TEACHER_PROVIDER_CLAUDE=anthropic
+WEAK_PROVIDER_<PROFILE_NAME>=anthropic
+TEACHER_PROVIDER_<PROFILE_NAME>=anthropic
 ```
 
-For a relay that exposes Claude models through OpenAI-compatible chat completions, omit provider variables or set them to `openai`.
+For a relay that exposes Claude models through chat-completions-style endpoints, omit provider variables or set them to `openai`.
 
 ## Private Notes
 

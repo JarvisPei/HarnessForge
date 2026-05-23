@@ -51,7 +51,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Fill `.env` with your relay base URLs, keys, and model names. The API client uses OpenAI-compatible `/chat/completions` endpoints and does not require the official SDK.
+Fill `.env` with your relay base URLs, keys, and model names. The current client uses chat-completions-style endpoints and does not require the official SDK.
 
 For most demos, start with the default OpenAI GPT profile (`gpt-5.4-mini` weak / `gpt-5.5` teacher).
 
@@ -66,10 +66,10 @@ Outputs are written under `outputs/`.
 To use a different profile or relay suffix:
 
 ```bash
-python -m agentdistill.run --config configs/smoke.yaml --profile CLAUDE
+python -m agentdistill.run --config configs/smoke.yaml --profile ALT_PROFILE
 ```
 
-Provider defaults to OpenAI-compatible chat completions for every profile. Set `WEAK_PROVIDER_<PROFILE>=anthropic` and `TEACHER_PROVIDER_<PROFILE>=anthropic` only for native Anthropic `/messages` endpoints.
+Provider defaults to the chat-completions path for every profile. Set `WEAK_PROVIDER_<PROFILE>=anthropic` and `TEACHER_PROVIDER_<PROFILE>=anthropic` only for native Anthropic `/messages` endpoints.
 
 By default, teacher-suggested harness changes are stored as proposals under `outputs/.../patches`. To let the teacher update the harness files directly within the allowed `harness/` directories:
 
@@ -100,6 +100,7 @@ The public benchmark map is intentionally small and composable. These families a
 - Inventory arithmetic: parser -> deterministic arithmetic tool -> runtime policy
 - Unit conversion arithmetic: unit normalization tool + conversion-table tests + mixed-unit policy
 - Structured extraction and validation: messy text -> strict JSON + normalization skill + schema-aware checks
+- Table lookup and aggregation: table parser + filter/aggregate tool + validator
 - Repair and transfer feedback: contract-gated repair loops that measure whether harness changes improve dev and blind probes
 
 The planning notes in [docs/benchmark_family_plan.md](docs/benchmark_family_plan.md) track how these families expand over time.
@@ -126,7 +127,7 @@ Phase 1: API-only loop on the remote server.
 
 Phase 2: local weak model served on a stronger GPU machine.
 
-- weak model: vLLM/OpenAI-compatible local endpoint
+- weak model: vLLM or other chat-completions-compatible local endpoint
 - teacher model: API frontier model
 - goal: test whether harness evolution compensates for local model weaknesses
 

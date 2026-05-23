@@ -124,4 +124,4 @@ For each run, compare:
 
 ## Near-Term Recommendation
 
-The next family after structured extraction should be a table lookup and aggregation task or a small code-debugging task. Both should still reward deterministic helpers, but they exercise a new failure mode beyond normalization: structured state handling or executable verification.
+The next family after structured extraction is table lookup and aggregation. It should force the teacher to choose between a parser, a filter/aggregate tool, and a validator rather than only improving normalization. After that, the next step can be small code debugging or another executable-verification family.
