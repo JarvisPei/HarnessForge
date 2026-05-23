@@ -47,9 +47,9 @@ train_tasks:
 
       For partner lines whose state is final, compute sum(qty * (price - unit_cost) - fee).
       Give only the final number and one short explanation sentence.
-    expected_answer: "686 dollars total."
+    expected_answer: "494 dollars total."
     rubric: |
-      Correct computation is 13*(23-8)-14 + 6*(23-8)-14 + 11*(12-5)-14 + 5*(17-6)-14 + 7*(31-10)-14 = 686. This requires joining rows by sku, applying the channel fee per matching line, filtering by two conditions, and aggregating.
+      Correct computation is 13*(23-8)-14 + 6*(23-8)-14 + 11*(12-5)-14 + 5*(17-6)-14 + 7*(31-10)-14 = 494. This requires joining rows by sku, applying the channel fee per matching line, filtering by two conditions, and aggregating.
 dev_probe_tasks:
   - id: dev_enterprise_active_margin
     instruction: |
@@ -78,9 +78,9 @@ dev_probe_tasks:
 
       For enterprise rows whose status is active, compute sum(seats * (revenue - cost) - fee).
       Give only the final number and one short explanation sentence.
-    expected_answer: "386 dollars total."
+    expected_answer: "369 dollars total."
     rubric: |
-      Correct computation is 8*(42-19)-16 + 3*(42-19)-16 + 10*(18-7)-16 + 5*(25-11)-16 = 386. This dev probe renames tables and columns while preserving the same latent join/filter/aggregate schema.
+      Correct computation is 8*(42-19)-16 + 3*(42-19)-16 + 10*(18-7)-16 + 5*(25-11)-16 = 369. This dev probe renames tables and columns while preserving the same latent join/filter/aggregate schema.
   - id: dev_west_closed_margin_csv
     instruction: |
       Compute the requested total from the three lookup tables.
@@ -108,9 +108,9 @@ dev_probe_tasks:
 
       For west tickets whose status is closed, compute sum(count * (price - cost) - fee).
       Give only the final number and one short explanation sentence.
-    expected_answer: "304 dollars total."
+    expected_answer: "255 dollars total."
     rubric: |
-      Correct computation is 12*(18-7)-13 + 5*(18-7)-13 + 10*(9-3)-13 + 6*(15-5)-13 = 304. This probe uses CSV-style tables and column names that differ from train.
+      Correct computation is 12*(18-7)-13 + 5*(18-7)-13 + 10*(9-3)-13 + 6*(15-5)-13 = 255. This probe uses CSV-style tables and column names that differ from train.
 blind_test_tasks:
   - id: blind_north_completed_margin
     instruction: |
@@ -139,9 +139,9 @@ blind_test_tasks:
 
       For north jobs whose state is completed, compute sum(units * (sale - base) - fee).
       Give only the final number and one short explanation sentence.
-    expected_answer: "429 dollars total."
+    expected_answer: "395 dollars total."
     rubric: |
-      Correct computation is 14*(29-12)-15 + 4*(29-12)-15 + 8*(13-4)-15 + 7*(16-5)-15 = 429. This blind case changes the domain nouns and lookup-column names.
+      Correct computation is 14*(29-12)-15 + 4*(29-12)-15 + 8*(13-4)-15 + 7*(16-5)-15 = 395. This blind case changes the domain nouns and lookup-column names.
   - id: blind_priority_done_margin
     instruction: |
       Compute the requested total from the three lookup tables.
