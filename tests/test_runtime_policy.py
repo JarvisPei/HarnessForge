@@ -29,6 +29,7 @@ from agentdistill.contracts import (
 )
 from agentdistill.critic import parse_critic_audit, validate_critic_policy_cases
 from agentdistill.diagnosis import PatchBundle, parse_diagnosis
+from agentdistill.evidence import build_evidence_report
 from agentdistill.feedback import build_patch_feedback, build_transfer_feedback, merge_benchmark_context
 from agentdistill.metrics import build_benchmark_metrics
 from agentdistill.report import build_impact_report, evaluate_success
@@ -3000,6 +3001,65 @@ def test_repair_efficiency_report_backfills_old_metrics_schema(tmp_path: Path) -
     assert run["patches"]["accepted_test_only"] == 1
     assert run["runtime_effect"]["dev"]["after_runtime_effect"] == 0
     assert report["aggregate"]["accepted_but_no_runtime_artifact"] == 1
+
+
+def test_evidence_report_classifies_end_to_end_transfer(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "metrics.json").write_text(
+        json.dumps(
+            {
+                "patches": {
+                    "accepted": 2,
+                    "accepted_runtime_artifact": 2,
+                    "accepted_test_only": 0,
+                    "accepted_but_no_runtime_artifact": 0,
+                },
+                "dev_transfer": {"improved": 2},
+                "blind_transfer": {"improved": 2},
+                "runtime_effect": {
+                    "dev": {"after_runtime_effect": 2, "improved_with_runtime_effect": 2},
+                    "blind": {"after_runtime_effect": 2, "improved_with_runtime_effect": 2},
+                },
+                "repair_efficiency": {"patch_attempts": 3, "accepted": 2},
+            }
+        )
+    )
+
+    report = build_evidence_report([run_dir])
+
+    assert report["runs"][0]["evidence_status"] == "end_to_end_transfer"
+    assert report["aggregate"]["end_to_end_transfer_runs"] == 1
+    assert report["aggregate"]["blind_improved_with_runtime_effect"] == 2
+
+
+def test_evidence_report_classifies_test_only_acceptance(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "metrics.json").write_text(
+        json.dumps(
+            {
+                "patches": {
+                    "accepted": 1,
+                    "accepted_runtime_artifact": 0,
+                    "accepted_test_only": 1,
+                    "accepted_but_no_runtime_artifact": 1,
+                },
+                "dev_transfer": {"improved": 0},
+                "blind_transfer": {"improved": 0},
+                "runtime_effect": {
+                    "dev": {"after_runtime_effect": 0, "improved_with_runtime_effect": 0},
+                    "blind": {"after_runtime_effect": 0, "improved_with_runtime_effect": 0},
+                },
+                "repair_efficiency": {"patch_attempts": 1, "accepted": 1},
+            }
+        )
+    )
+
+    report = build_evidence_report([run_dir])
+
+    assert report["runs"][0]["evidence_status"] == "no_runtime_artifact"
+    assert report["aggregate"]["test_only_runs"] == 1
 
 
 def test_repair_efficiency_report_recovers_interrupted_run_from_phase_results(tmp_path: Path) -> None:
