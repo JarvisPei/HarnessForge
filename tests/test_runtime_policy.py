@@ -10,6 +10,7 @@ from agentdistill.benchmark import (
     _benchmark_context_for_iteration,
     _build_focused_repair_task,
     _build_transfer_context,
+    _contract_task_for_repair,
     _critic_enabled,
     _initial_transfer_context,
     _infer_repair_scope,
@@ -179,6 +180,16 @@ def evaluate(input: dict) -> dict:
 
     assert result["ok"] is False
     assert result["reason"] == "forced tool result does not match expected answer"
+
+
+def test_focused_repair_contract_validation_uses_original_task() -> None:
+    original = TaskConfig(id="train", instruction="original task text", expected_answer="42")
+    repair = TaskConfig(id="focused_repair", instruction='{"repair_mode":"focused"}', expected_answer=None)
+
+    contract_task = _contract_task_for_repair(original, repair)
+
+    assert contract_task is original
+    assert contract_task.instruction == "original task text"
 
 
 def test_runtime_policy_tests_catch_comma_number_parse_errors(tmp_path: Path) -> None:

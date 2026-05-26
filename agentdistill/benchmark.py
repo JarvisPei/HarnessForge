@@ -700,7 +700,7 @@ async def _run_inner_repair_attempts(
                     cfg,
                     critic,
                     critic_system,
-                    repair_task,
+                    _contract_task_for_repair(task, repair_task),
                     diagnosis,
                     repo_root,
                 )
@@ -717,6 +717,12 @@ async def _run_inner_repair_attempts(
         if repair_result.get("patch_status") == "accepted":
             break
     return attempts
+
+
+def _contract_task_for_repair(original_task: TaskConfig, repair_task: TaskConfig) -> TaskConfig:
+    if repair_task.id != "focused_repair":
+        return repair_task
+    return original_task
 
 
 def _policy_names_from_patch_bundles(patch_bundles) -> list[str]:
