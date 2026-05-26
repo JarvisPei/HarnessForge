@@ -1278,6 +1278,109 @@ def run(input: dict) -> dict:
     assert not (tmp_path / "harness" / "tools" / "adder.py").exists()
 
 
+def test_executable_manifest_requires_generalization_contract(tmp_path: Path) -> None:
+    from agentdistill.manifest import HarnessManifest
+
+    _make_harness_dirs(tmp_path)
+    task = TaskConfig(id="t", instruction="add 2 and 3", expected_answer="5")
+    manifest = HarnessManifest.model_validate(
+        {
+            "bundle_id": "adder_bundle",
+            "intent": "Add deterministic addition as a reusable harness tool.",
+            "allowed_paths": ["harness/tools/adder.py", "harness/tests/adder.json"],
+            "artifacts": [
+                {"path": "harness/tools/adder.py", "type": "tool", "purpose": "addition helper"},
+                {"path": "harness/tests/adder.json", "type": "test", "purpose": "tool tests"},
+            ],
+            "contracts": ["tool tests pass"],
+        }
+    )
+
+    result = apply_patch_bundles_atomically(
+        tmp_path,
+        [
+            PatchBundle(
+                target_path="harness/tools/adder.py",
+                action="create_or_replace",
+                content="""
+def run(input: dict) -> dict:
+    return {"ok": True, "total": input["a"] + input["b"]}
+""".strip(),
+                rationale="Deterministic addition.",
+            ),
+            PatchBundle(
+                target_path="harness/tests/adder.json",
+                action="create_or_replace",
+                content='{"tool":"adder","cases":[{"input":{"a":2,"b":3},"expected":{"ok":true,"total":5}}]}',
+                rationale="Tool tests.",
+            ),
+        ],
+        task,
+        manifest,
+    )
+
+    assert result["patch_status"] == "rejected"
+    assert result["rejection_reason"] == "harness manifest validation failed"
+    assert any(
+        item.get("reason") == "executable harness bundles must include generalization_contract"
+        for item in result["contract_validation"]
+    )
+
+
+def test_generalization_contract_required_tests_must_reference_test_artifacts(tmp_path: Path) -> None:
+    from agentdistill.manifest import HarnessManifest
+
+    _make_harness_dirs(tmp_path)
+    task = TaskConfig(id="t", instruction="add 2 and 3", expected_answer="5")
+    manifest = HarnessManifest.model_validate(
+        {
+            "bundle_id": "adder_bundle",
+            "intent": "Add deterministic addition as a reusable harness tool.",
+            "allowed_paths": ["harness/tools/adder.py", "harness/tests/adder.json"],
+            "artifacts": [
+                {"path": "harness/tools/adder.py", "type": "tool", "purpose": "addition helper"},
+                {"path": "harness/tests/adder.json", "type": "test", "purpose": "tool tests"},
+            ],
+            "contracts": ["tool tests pass"],
+            "generalization_contract": {
+                "capability": "Deterministic addition.",
+                "expected_variations": ["different values"],
+                "excluded_variations": [],
+                "required_tests": ["harness/tests/missing_adder.json"],
+            },
+        }
+    )
+
+    result = apply_patch_bundles_atomically(
+        tmp_path,
+        [
+            PatchBundle(
+                target_path="harness/tools/adder.py",
+                action="create_or_replace",
+                content="""
+def run(input: dict) -> dict:
+    return {"ok": True, "total": input["a"] + input["b"]}
+""".strip(),
+                rationale="Deterministic addition.",
+            ),
+            PatchBundle(
+                target_path="harness/tests/adder.json",
+                action="create_or_replace",
+                content='{"tool":"adder","cases":[{"input":{"a":2,"b":3},"expected":{"ok":true,"total":5}}]}',
+                rationale="Tool tests.",
+            ),
+        ],
+        task,
+        manifest,
+    )
+
+    assert result["patch_status"] == "rejected"
+    assert any(
+        item.get("reason") == "generalization_contract required_tests must reference manifest test artifacts"
+        for item in result["contract_validation"]
+    )
+
+
 def test_runtime_policy_patch_requires_matching_policy_tests(tmp_path: Path) -> None:
     _make_harness_dirs(tmp_path)
     task = TaskConfig(id="t", instruction="add 2 and 3", expected_answer="5")
@@ -1388,18 +1491,24 @@ def _manifest_for(paths: list[str]):
         "tests": "test",
         "runtime_policies": "runtime_policy",
     }
-    return HarnessManifest.model_validate(
-        {
-            "bundle_id": "adder_bundle",
-            "intent": "Add deterministic addition as a reusable harness tool.",
-            "allowed_paths": paths,
-            "artifacts": [
-                {"path": path, "type": artifact_types[Path(path).parts[1]], "purpose": "test artifact"}
-                for path in paths
-            ],
-            "contracts": ["tool tests pass", "runtime policy forced tool result matches expected answer"],
+    payload = {
+        "bundle_id": "adder_bundle",
+        "intent": "Add deterministic addition as a reusable harness tool.",
+        "allowed_paths": paths,
+        "artifacts": [
+            {"path": path, "type": artifact_types[Path(path).parts[1]], "purpose": "test artifact"}
+            for path in paths
+        ],
+        "contracts": ["tool tests pass", "runtime policy forced tool result matches expected answer"],
+    }
+    if any(Path(path).parts[1] in {"tools", "runtime_policies"} for path in paths):
+        payload["generalization_contract"] = {
+            "capability": "Deterministic arithmetic helper for structurally similar addition tasks.",
+            "expected_variations": ["renamed entities", "different numeric values"],
+            "excluded_variations": ["non-addition tasks"],
+            "required_tests": [path for path in paths if Path(path).parts[1] == "tests"],
         }
-    )
+    return HarnessManifest.model_validate(payload)
 
 
 def test_load_model_settings_prefers_role_specific_timeout(monkeypatch) -> None:
@@ -3194,6 +3303,12 @@ def test_repair_probe_passes_patch_feedback_and_scope_to_teacher(tmp_path: Path)
                             },
                         ],
                         "contracts": ["fixture contracts pass"],
+                        "generalization_contract": {
+                            "capability": "Fixture runtime policy repair for signed update tasks.",
+                            "expected_variations": ["different signed update values"],
+                            "excluded_variations": ["tasks that require tool execution"],
+                            "required_tests": ["harness/tests/force_fixture.json"],
+                        },
                     },
                 }
                 )

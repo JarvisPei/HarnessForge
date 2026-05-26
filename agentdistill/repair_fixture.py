@@ -234,6 +234,12 @@ def _manifest(paths: list[str]) -> HarnessManifest:
         allowed_paths=paths,
         artifacts=artifacts,
         contracts=["fixture contracts pass"],
+        generalization_contract={
+            "capability": "Deterministic fixture policy repair for signed update tasks.",
+            "expected_variations": ["different signed update values"],
+            "excluded_variations": ["tasks that require tool execution"],
+            "required_tests": [path for path in paths if "/tests/" in path],
+        },
     )
 
 

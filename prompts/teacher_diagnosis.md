@@ -49,12 +49,17 @@ Each patch object has:
   - allowed_paths: exact target_path values from patch_bundles
   - artifacts: list of objects with path, type, and purpose. type is one of guideline, skill, validator, tool, runtime_policy, test
   - contracts: list of validation expectations, such as "tool tests pass" or "runtime policy forced tool result matches expected answer"
+  - generalization_contract: required when the bundle writes a tool or runtime policy. This is your architect-owned claim about what the executable harness is meant to cover.
+    - capability: concise domain-neutral capability description
+    - expected_variations: list of surface or schema variations the harness should support, such as renamed columns, renamed row nouns, reordered tables, aliases, numeric formats, or clause order changes
+    - excluded_variations: list of variations intentionally out of scope
+    - required_tests: exact harness/tests paths from this manifest that provide evidence for the claim
 - patch_bundle: the first object from patch_bundles, kept for backward compatibility
 - confidence: number from 0 to 1
 
 The patch_bundles list is the mechanism for updating the weak model's harness. Prefer narrowly scoped guideline, skill, validator, or tool files. Do not replace harness/guidelines/base.md; create a new focused file instead, such as harness/guidelines/output_contract.md.
 
-The framework applies patch_bundles atomically in a temporary code harness workspace first. If the manifest is missing for a code bundle, if any target path is outside the manifest, if any Python file fails safety checks, if any tool test fails, if any runtime policy test fails, or if any runtime policy contract fails, the entire group is rejected and rolled back. When you create or revise a tool, include the matching harness/tests JSON file in the same patch_bundles list. When you create or revise a runtime policy, include the matching harness/tests JSON file with the same stem in the same patch_bundles list. When a task needs both a new tool and a policy that forces that tool, include all related files in one patch_bundles list.
+The framework applies patch_bundles atomically in a temporary code harness workspace first. If the manifest is missing for a code bundle, if any target path is outside the manifest, if any Python file fails safety checks, if any tool test fails, if any runtime policy test fails, or if any runtime policy contract fails, the entire group is rejected and rolled back. When you create or revise a tool, include the matching harness/tests JSON file in the same patch_bundles list. When you create or revise a runtime policy, include the matching harness/tests JSON file with the same stem in the same patch_bundles list. When a task needs both a new tool and a policy that forces that tool, include all related files in one patch_bundles list. For executable bundles, the framework will reject the patch if harness_manifest.generalization_contract is missing, empty, or references tests that are not part of the manifest. The framework does not decide the domain-specific contract for you; you must state the capability boundary and provide tests that support it. If the reusable improvement is intentionally narrow, write a narrow capability and explicit excluded_variations rather than overclaiming.
 
 If benchmark_context is present, mention in diagnosis how the previous transfer attempt failed and what change would generalize better. Favor the smallest bundle that plausibly fixes the transfer issue across the heldout probe pattern.
 

@@ -24,12 +24,20 @@ class ManifestArtifact(BaseModel):
     purpose: str = ""
 
 
+class GeneralizationContract(BaseModel):
+    capability: str = ""
+    expected_variations: list[str] = Field(default_factory=list)
+    excluded_variations: list[str] = Field(default_factory=list)
+    required_tests: list[str] = Field(default_factory=list)
+
+
 class HarnessManifest(BaseModel):
     bundle_id: str = ""
     intent: str = ""
     allowed_paths: list[str] = Field(default_factory=list)
     artifacts: list[ManifestArtifact] = Field(default_factory=list)
     contracts: list[str] = Field(default_factory=list)
+    generalization_contract: GeneralizationContract | None = None
 
 
 def validate_harness_manifest(
@@ -83,6 +91,8 @@ def validate_harness_manifest(
 
     if not manifest.contracts:
         results.append({"ok": False, "reason": "manifest contracts must list at least one validation expectation"})
+    if _requires_generalization_contract(bundles):
+        results.extend(_validate_generalization_contract(repo_root, manifest))
 
     if not results:
         return [{"ok": True, "reason": "manifest matches patch bundle", "bundle_id": manifest.bundle_id}]
@@ -91,6 +101,41 @@ def validate_harness_manifest(
 
 def _requires_manifest(bundles: list[PatchBundle]) -> bool:
     return any(_harness_subdir(bundle.target_path) in CODE_ARTIFACT_DIRS for bundle in bundles)
+
+
+def _requires_generalization_contract(bundles: list[PatchBundle]) -> bool:
+    return any(_harness_subdir(bundle.target_path) in {"tools", "runtime_policies"} for bundle in bundles)
+
+
+def _validate_generalization_contract(repo_root: Path, manifest: HarnessManifest) -> list[dict[str, Any]]:
+    contract = manifest.generalization_contract
+    if contract is None:
+        return [{"ok": False, "reason": "executable harness bundles must include generalization_contract"}]
+
+    results: list[dict[str, Any]] = []
+    if not contract.capability.strip():
+        results.append({"ok": False, "reason": "generalization_contract capability must be non-empty"})
+    if not contract.expected_variations:
+        results.append({"ok": False, "reason": "generalization_contract expected_variations must list at least one variation"})
+    if not contract.required_tests:
+        results.append({"ok": False, "reason": "generalization_contract required_tests must reference at least one test artifact"})
+
+    test_artifact_paths = {
+        _normalized_harness_path(repo_root, artifact.path)
+        for artifact in manifest.artifacts
+        if artifact.type == "test"
+    }
+    referenced_tests = [_normalized_harness_path(repo_root, path) for path in contract.required_tests]
+    missing_tests = sorted(set(referenced_tests) - test_artifact_paths)
+    if missing_tests:
+        results.append(
+            {
+                "ok": False,
+                "reason": "generalization_contract required_tests must reference manifest test artifacts",
+                "paths": missing_tests,
+            }
+        )
+    return results
 
 
 def _normalized_harness_path(repo_root: Path, target_path: str) -> str:
