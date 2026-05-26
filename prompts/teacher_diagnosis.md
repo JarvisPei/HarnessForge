@@ -103,6 +103,8 @@ It receives task_instruction, initial_answer, tool_call, available_tools, and op
 
 If a validator spec already describes a mandatory rejection rule, but the weak model still violates it, the next patch should usually be a runtime policy implementing that rejection rule.
 
+If a runtime policy normalizes or rewrites task text before passing it to a tool, the tool_input must include source provenance under schema_mapping or normalization_trace. Do not silently rewrite filter columns, filter values, units, table names, or formulas. Preserve enough source-to-normalized evidence for policy tests and impact reports to show why the tool is solving the intended task. If the policy can pass the original task text through unchanged, prefer doing that and let the tested tool perform parsing.
+
 Runtime policy tests use this JSON schema:
 
 ```json

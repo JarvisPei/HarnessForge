@@ -249,6 +249,125 @@ def evaluate(input: dict) -> dict:
     assert result["failures"][0]["reason"] == "value mismatch for key: tool_input"
 
 
+def test_runtime_policy_tests_reject_silent_textual_rewrites_without_provenance(tmp_path: Path) -> None:
+    harness = tmp_path / "harness"
+    tools_dir = harness / "tools"
+    policies_dir = harness / "runtime_policies"
+    tests_dir = harness / "tests"
+    tools_dir.mkdir(parents=True)
+    policies_dir.mkdir(parents=True)
+    tests_dir.mkdir(parents=True)
+
+    (tools_dir / "echo_task.py").write_text(
+        """
+def run(input: dict) -> dict:
+    return {"ok": True, "task": input.get("task", "")}
+""".strip()
+    )
+    policy_path = policies_dir / "force_echo.py"
+    policy_path.write_text(
+        """
+def evaluate(input: dict) -> dict:
+    return {
+        "requires_tool": True,
+        "tool_name": "echo_task",
+        "tool_input": {"task": "For priority lines whose state is value, compute total."},
+        "reason": "bad normalization"
+    }
+""".strip()
+    )
+    (tests_dir / "force_echo.json").write_text(
+        """
+{
+  "policy": "force_echo",
+  "cases": [
+    {
+      "input": {
+        "task_instruction": "For priority cases whose done value is yes, compute total.",
+        "available_tools": ["echo_task"]
+      },
+      "expected": {
+        "requires_tool": true,
+        "tool_name": "echo_task"
+      }
+    }
+  ]
+}
+""".strip()
+    )
+
+    result = validate_runtime_policy_tests(tmp_path, policy_path)
+
+    assert result["ok"] is False
+    assert result["failures"][0]["reason"] == "rewritten textual tool_input must include schema_mapping or normalization_trace"
+
+
+def test_runtime_policy_tests_allow_textual_rewrites_with_schema_mapping(tmp_path: Path) -> None:
+    harness = tmp_path / "harness"
+    tools_dir = harness / "tools"
+    policies_dir = harness / "runtime_policies"
+    tests_dir = harness / "tests"
+    tools_dir.mkdir(parents=True)
+    policies_dir.mkdir(parents=True)
+    tests_dir.mkdir(parents=True)
+
+    (tools_dir / "echo_task.py").write_text(
+        """
+def run(input: dict) -> dict:
+    return {"ok": True, "task": input.get("task", "")}
+""".strip()
+    )
+    policy_path = policies_dir / "force_echo.py"
+    policy_path.write_text(
+        """
+def evaluate(input: dict) -> dict:
+    return {
+        "requires_tool": True,
+        "tool_name": "echo_task",
+        "tool_input": {
+            "task": "For priority lines whose state is yes, compute total.",
+            "schema_mapping": {
+                "filter_columns": [
+                    {"source_column": "done", "source_value": "yes", "normalized_column": "state"}
+                ]
+            }
+        },
+        "reason": "normalization with provenance"
+    }
+""".strip()
+    )
+    (tests_dir / "force_echo.json").write_text(
+        """
+{
+  "policy": "force_echo",
+  "cases": [
+    {
+      "input": {
+        "task_instruction": "For priority cases whose done value is yes, compute total.",
+        "available_tools": ["echo_task"]
+      },
+      "expected": {
+        "requires_tool": true,
+        "tool_name": "echo_task",
+        "tool_input": {
+          "schema_mapping": {
+            "filter_columns": [
+              {"source_column": "done", "source_value": "yes", "normalized_column": "state"}
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
+""".strip()
+    )
+
+    result = validate_runtime_policy_tests(tmp_path, policy_path)
+
+    assert result["ok"] is True
+
+
 def test_runtime_policy_generalization_rejects_surface_noun_overfit(tmp_path: Path) -> None:
     harness = tmp_path / "harness"
     tools_dir = harness / "tools"

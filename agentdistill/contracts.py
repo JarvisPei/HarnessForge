@@ -108,6 +108,8 @@ def validate_runtime_policy_case_data(
         ok, mismatch_reason = _matches_expected(expected, actual)
         tool_result = None
         expected_tool_result = case.get("expected_tool_result")
+        if ok:
+            ok, mismatch_reason = _validate_tool_input_provenance(policy_payload, actual)
         if ok and expected_tool_result is not None:
             if not isinstance(expected_tool_result, dict):
                 ok = False
@@ -453,6 +455,34 @@ def _matches_expected(expected: dict[str, Any], actual: dict[str, Any]) -> tuple
         if not _subset_match(exp_value, actual[key]):
             return False, f"value mismatch for key: {key}"
     return True, "ok"
+
+
+def _validate_tool_input_provenance(policy_payload: dict[str, Any], actual: dict[str, Any]) -> tuple[bool, str]:
+    if actual.get("requires_tool") is not True:
+        return True, "ok"
+    tool_input = actual.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return True, "ok"
+    if not _tool_input_rewrites_task_text(policy_payload.get("task_instruction"), tool_input):
+        return True, "ok"
+    if isinstance(tool_input.get("schema_mapping"), dict) or isinstance(tool_input.get("normalization_trace"), (dict, list)):
+        return True, "ok"
+    return False, "rewritten textual tool_input must include schema_mapping or normalization_trace"
+
+
+def _tool_input_rewrites_task_text(task_instruction: Any, tool_input: dict[str, Any]) -> bool:
+    if not isinstance(task_instruction, str) or not task_instruction.strip():
+        return False
+    source = _normalize_text(task_instruction)
+    for key in ("task", "text", "task_instruction", "normalized_task"):
+        value = tool_input.get(key)
+        if isinstance(value, str) and value.strip() and _normalize_text(value) != source:
+            return True
+    return False
+
+
+def _normalize_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def _subset_match(expected: Any, actual: Any) -> bool:
