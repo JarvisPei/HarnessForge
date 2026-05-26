@@ -2660,6 +2660,8 @@ def test_impact_report_includes_tool_results(tmp_path: Path) -> None:
     assert rows[0]["before_tool_result"] == {"ok": False}
     assert rows[0]["after_tool_result"] == {"ok": True, "result": 1}
     assert rows[0]["before_runtime_policy_results"] == [{"requires_tool": True}]
+    assert rows[0]["after_runtime_policy_fired"] is False
+    assert rows[0]["after_runtime_effect"] == "tool_call"
 
 
 def test_evaluate_success_requires_exact_json_object_match() -> None:
@@ -2721,7 +2723,14 @@ def test_build_benchmark_metrics_counts_patch_quality_and_transfer() -> None:
             },
         ],
         impact_rows=[
-            {"before_success": False, "after_success": True, "improved": True, "regressed": False},
+            {
+                "before_success": False,
+                "after_success": True,
+                "improved": True,
+                "regressed": False,
+                "after_tool_call": {"name": "inventory", "input": {}},
+                "after_runtime_policy_results": [{"requires_tool": True}],
+            },
             {"before_success": True, "after_success": True, "improved": False, "regressed": False},
         ],
         harness_files_after=[
@@ -2733,12 +2742,18 @@ def test_build_benchmark_metrics_counts_patch_quality_and_transfer() -> None:
 
     assert metrics["patches"]["accepted"] == 1
     assert metrics["patches"]["rejected"] == 1
+    assert metrics["patches"]["accepted_runtime_artifact"] == 1
+    assert metrics["patches"]["accepted_test_only"] == 0
+    assert metrics["patches"]["accepted_but_no_runtime_artifact"] == 0
     assert metrics["patches"]["accepted_tool_test_policy_bundles"] == 1
     assert metrics["patches"]["accepted_code_manifest_bundles"] == 1
     assert metrics["patches"]["contract_failures"] == 1
     assert metrics["transfer"]["improved"] == 1
     assert metrics["dev_transfer"]["improved"] == 1
     assert metrics["blind_transfer"]["improved"] == 1
+    assert metrics["runtime_effect"]["dev"]["after_tool_call"] == 1
+    assert metrics["runtime_effect"]["dev"]["after_runtime_policy_fired"] == 1
+    assert metrics["runtime_effect"]["dev"]["improved_with_runtime_effect"] == 1
     assert metrics["harness_after"]["type_counts"]["tool"] == 1
     assert metrics["repair_efficiency"]["patch_attempts"] == 2
     assert metrics["repair_efficiency"]["accepted_rate"] == 0.5
@@ -2760,6 +2775,36 @@ def test_build_benchmark_metrics_separates_blind_transfer() -> None:
 
     assert metrics["dev_transfer"]["improved"] == 1
     assert metrics["blind_transfer"]["improved"] == 0
+
+
+def test_build_benchmark_metrics_flags_test_only_acceptance_without_runtime_effect() -> None:
+    metrics = build_benchmark_metrics(
+        train_summary=[
+            {
+                "patch_status": "accepted",
+                "applied_patch_paths": ["/repo/harness/tests/table_margin.json"],
+                "contract_validation": [{"ok": True}],
+            }
+        ],
+        impact_rows=[
+            {
+                "before_success": False,
+                "after_success": False,
+                "improved": False,
+                "regressed": False,
+                "after_tool_call": None,
+                "after_runtime_policy_results": [{"requires_tool": False}],
+            }
+        ],
+        harness_files_after=["harness/tests/table_margin.json"],
+    )
+
+    assert metrics["patches"]["accepted"] == 1
+    assert metrics["patches"]["accepted_runtime_artifact"] == 0
+    assert metrics["patches"]["accepted_test_only"] == 1
+    assert metrics["patches"]["accepted_but_no_runtime_artifact"] == 1
+    assert metrics["runtime_effect"]["dev"]["after_runtime_effect"] == 0
+    assert metrics["runtime_effect"]["dev"]["improved_with_runtime_effect"] == 0
 
 
 def test_build_benchmark_metrics_counts_scoped_inner_repair_efficiency() -> None:
@@ -2842,9 +2887,18 @@ def test_repair_efficiency_report_aggregates_runs(tmp_path: Path) -> None:
                     "dev": {"improved": 1, "regressed": 0},
                     "blind": {"improved": 0, "regressed": 0},
                 },
-                "patches": {"accepted": 1},
+                "patches": {
+                    "accepted": 1,
+                    "accepted_runtime_artifact": 1,
+                    "accepted_test_only": 0,
+                    "accepted_but_no_runtime_artifact": 0,
+                },
                 "dev_transfer": {"improved": 1},
                 "blind_transfer": {"improved": 0},
+                "runtime_effect": {
+                    "dev": {"after_runtime_effect": 1, "improved_with_runtime_effect": 1},
+                    "blind": {"after_runtime_effect": 0, "improved_with_runtime_effect": 0},
+                },
             }
         )
     )
@@ -2859,8 +2913,12 @@ def test_repair_efficiency_report_aggregates_runs(tmp_path: Path) -> None:
             ]
         )
     )
-    (run_b / "dev_impact_report.json").write_text(json.dumps([{"improved": False, "regressed": False}]))
-    (run_b / "blind_impact_report.json").write_text(json.dumps([{"improved": True, "regressed": False}]))
+    (run_b / "dev_impact_report.json").write_text(
+        json.dumps([{"improved": False, "regressed": False, "after_tool_call": None}])
+    )
+    (run_b / "blind_impact_report.json").write_text(
+        json.dumps([{"improved": True, "regressed": False, "after_tool_call": {"name": "calc"}}])
+    )
     (run_b / "harness_files_after.json").write_text(json.dumps(["harness/tools/calc.py"]))
 
     report = build_repair_efficiency_report([run_a, run_b])
@@ -2869,6 +2927,9 @@ def test_repair_efficiency_report_aggregates_runs(tmp_path: Path) -> None:
     assert report["aggregate"]["patch_attempts"] == 3
     assert report["aggregate"]["accepted"] == 2
     assert report["aggregate"]["accepted_rate"] == 0.6667
+    assert report["aggregate"]["accepted_runtime_artifact"] == 2
+    assert report["aggregate"]["accepted_test_only"] == 0
+    assert report["aggregate"]["accepted_but_no_runtime_artifact"] == 0
     assert report["aggregate"]["repair_successes"] == 2
     assert report["aggregate"]["inner_repair_accepted"] == 1
     assert report["aggregate"]["scoped_inner_repair_attempts"] == 1
@@ -2876,6 +2937,10 @@ def test_repair_efficiency_report_aggregates_runs(tmp_path: Path) -> None:
     assert report["aggregate"]["scoped_inner_repair_successes"] == 1
     assert report["aggregate"]["dev_improved"] == 1
     assert report["aggregate"]["blind_improved"] == 1
+    assert report["aggregate"]["dev_runtime_effect"] == 1
+    assert report["aggregate"]["blind_runtime_effect"] == 1
+    assert report["aggregate"]["dev_improved_with_runtime_effect"] == 1
+    assert report["aggregate"]["blind_improved_with_runtime_effect"] == 1
     assert report["aggregate"]["teacher_call_proxy"] == 3
     assert report["aggregate"]["focused_repair_weak_calls_skipped"] == 1
 

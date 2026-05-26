@@ -57,6 +57,7 @@ def _summarize_run(run_dir: Path) -> dict[str, Any]:
         "patches": metrics.get("patches", {}),
         "dev_transfer": metrics.get("dev_transfer", {}),
         "blind_transfer": metrics.get("blind_transfer", {}),
+        "runtime_effect": metrics.get("runtime_effect", {}),
     }
 
 
@@ -69,6 +70,9 @@ def _aggregate_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
         "accepted": accepted,
         "rejected": _sum_nested(runs, "repair_efficiency", "rejected"),
         "accepted_rate": _safe_ratio(accepted, patch_attempts),
+        "accepted_runtime_artifact": _sum_nested(runs, "patches", "accepted_runtime_artifact"),
+        "accepted_test_only": _sum_nested(runs, "patches", "accepted_test_only"),
+        "accepted_but_no_runtime_artifact": _sum_nested(runs, "patches", "accepted_but_no_runtime_artifact"),
         "repair_successes": _count_successes(runs, "repair_efficiency", "repair_success"),
         "inner_repair_attempts": _sum_nested(runs, "repair_efficiency", "inner_repair_attempts"),
         "inner_repair_accepted": _sum_nested(runs, "repair_efficiency", "inner_repair_accepted"),
@@ -82,6 +86,20 @@ def _aggregate_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
         "dev_regressed": _sum_nested(runs, "repair_efficiency", "dev", "regressed"),
         "blind_improved": _sum_nested(runs, "repair_efficiency", "blind", "improved"),
         "blind_regressed": _sum_nested(runs, "repair_efficiency", "blind", "regressed"),
+        "dev_runtime_effect": _sum_nested(runs, "runtime_effect", "dev", "after_runtime_effect"),
+        "blind_runtime_effect": _sum_nested(runs, "runtime_effect", "blind", "after_runtime_effect"),
+        "dev_improved_with_runtime_effect": _sum_nested(
+            runs,
+            "runtime_effect",
+            "dev",
+            "improved_with_runtime_effect",
+        ),
+        "blind_improved_with_runtime_effect": _sum_nested(
+            runs,
+            "runtime_effect",
+            "blind",
+            "improved_with_runtime_effect",
+        ),
         "teacher_call_proxy": _sum_nested(runs, "repair_efficiency", "cost_proxies", "teacher_call_proxy"),
         "weak_call_proxy": _sum_nested(runs, "repair_efficiency", "cost_proxies", "weak_call_proxy"),
         "focused_repair_weak_calls_skipped": _sum_nested(

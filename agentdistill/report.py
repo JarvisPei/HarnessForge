@@ -53,6 +53,10 @@ def build_impact_report(
                 "after_tool_result": (after_result or {}).get("tool_result"),
                 "before_runtime_policy_results": (before_result or {}).get("runtime_policy_results", []),
                 "after_runtime_policy_results": (after_result or {}).get("runtime_policy_results", []),
+                "after_runtime_policy_fired": _runtime_policy_fired(
+                    (after_result or {}).get("runtime_policy_results", [])
+                ),
+                "after_runtime_effect": _runtime_effect(after_result or {}),
                 "before_failures": ((before_result or {}).get("teacher_diagnosis") or {}).get("failure_categories", []),
                 "after_failures": ((after_result or {}).get("teacher_diagnosis") or {}).get("failure_categories", []),
                 "before_patch_status": (before_result or {}).get("patch_status"),
@@ -64,6 +68,20 @@ def build_impact_report(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(rows, indent=2, ensure_ascii=False), encoding="utf-8")
     return rows
+
+
+def _runtime_policy_fired(policy_results: Any) -> bool:
+    if not isinstance(policy_results, list):
+        return False
+    return any(isinstance(item, dict) and item.get("requires_tool") is True for item in policy_results)
+
+
+def _runtime_effect(result: dict[str, Any]) -> str:
+    if result.get("tool_call") is not None:
+        return "tool_call"
+    if _runtime_policy_fired(result.get("runtime_policy_results", [])):
+        return "runtime_policy"
+    return "none"
 
 
 def _numbers(text: str) -> list[str]:

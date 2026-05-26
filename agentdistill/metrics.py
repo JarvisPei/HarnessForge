@@ -23,6 +23,8 @@ def build_benchmark_metrics(
 ) -> dict[str, Any]:
     accepted = [row for row in train_summary if row.get("patch_status") == "accepted"]
     rejected = [row for row in train_summary if row.get("patch_status") == "rejected"]
+    runtime_accepted = [row for row in accepted if _row_has_runtime_artifact(row)]
+    test_only_accepted = [row for row in accepted if _row_is_test_only(row)]
     applied_paths = [
         path
         for row in train_summary
@@ -50,6 +52,9 @@ def build_benchmark_metrics(
             "accepted_with_tool": _count_rows_with_type(accepted, "tool"),
             "accepted_with_test": _count_rows_with_type(accepted, "test"),
             "accepted_with_runtime_policy": _count_rows_with_type(accepted, "runtime_policy"),
+            "accepted_runtime_artifact": len(runtime_accepted),
+            "accepted_test_only": len(test_only_accepted),
+            "accepted_but_no_runtime_artifact": len(accepted) - len(runtime_accepted),
             "accepted_tool_test_policy_bundles": sum(
                 1
                 for row in accepted
@@ -67,6 +72,10 @@ def build_benchmark_metrics(
         "transfer": _build_transfer_metrics(impact_rows),
         "dev_transfer": _build_transfer_metrics(impact_rows),
         "blind_transfer": _build_transfer_metrics(blind_impact_rows or impact_rows),
+        "runtime_effect": {
+            "dev": _build_runtime_effect_metrics(impact_rows),
+            "blind": _build_runtime_effect_metrics(blind_impact_rows or impact_rows),
+        },
         "repair_efficiency": _build_repair_efficiency_metrics(train_summary, impact_rows, blind_impact_rows or impact_rows),
         "harness_after": {
             "files": len(harness_files_after),
@@ -96,6 +105,20 @@ def _path_type(path: str) -> str | None:
 
 def _row_has_type(row: dict[str, Any], path_type: str) -> bool:
     return any(_path_type(path) == path_type for path in row.get("applied_patch_paths", []) if isinstance(path, str))
+
+
+def _row_has_runtime_artifact(row: dict[str, Any]) -> bool:
+    return any(_row_has_type(row, path_type) for path_type in ("tool", "runtime_policy", "skill", "validator"))
+
+
+def _row_is_test_only(row: dict[str, Any]) -> bool:
+    path_types = {
+        path_type
+        for path in row.get("applied_patch_paths", [])
+        for path_type in [_path_type(path) if isinstance(path, str) else None]
+        if path_type is not None
+    }
+    return bool(path_types) and path_types <= {"test"}
 
 
 def _count_rows_with_type(rows: list[dict[str, Any]], path_type: str) -> int:
@@ -131,6 +154,31 @@ def _build_transfer_metrics(rows: list[dict[str, Any]]) -> dict[str, int]:
         "improved": sum(1 for row in rows if row.get("improved") is True),
         "regressed": sum(1 for row in rows if row.get("regressed") is True),
     }
+
+
+def _build_runtime_effect_metrics(rows: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "heldout_tasks": len(rows),
+        "after_tool_call": sum(1 for row in rows if row.get("after_tool_call") is not None),
+        "after_runtime_policy_fired": sum(1 for row in rows if _impact_row_policy_fired(row)),
+        "after_runtime_effect": sum(1 for row in rows if _impact_row_has_runtime_effect(row)),
+        "improved_with_runtime_effect": sum(
+            1 for row in rows if row.get("improved") is True and _impact_row_has_runtime_effect(row)
+        ),
+    }
+
+
+def _impact_row_has_runtime_effect(row: dict[str, Any]) -> bool:
+    return row.get("after_tool_call") is not None or _impact_row_policy_fired(row)
+
+
+def _impact_row_policy_fired(row: dict[str, Any]) -> bool:
+    if row.get("after_runtime_policy_fired") is True:
+        return True
+    policy_results = row.get("after_runtime_policy_results", [])
+    if not isinstance(policy_results, list):
+        return False
+    return any(isinstance(item, dict) and item.get("requires_tool") is True for item in policy_results)
 
 
 def _build_repair_efficiency_metrics(
