@@ -120,3 +120,41 @@ Does the teacher consistently generate runtime artifacts?
 Does the generated runtime policy consistently trigger on schema-renamed blind tasks?
 Does blind_improved_with_runtime_effect remain positive across clean repeats?
 ```
+
+## Repeatability Check
+
+Two clean repeats were run after adding the evidence reporter:
+
+```bash
+python -m agentdistill.evidence \
+  outputs/benchmark_table_join_hard/default/table_join_hard_runtime_effect_v1 \
+  outputs/benchmark_table_join_hard/default/table_join_hard_runtime_effect_v2 \
+  outputs/benchmark_table_join_hard/default/table_join_hard_runtime_effect_v3
+```
+
+Aggregate evidence:
+
+```text
+num_runs = 3
+runtime_artifact_runs = 3
+runtime_effect_runs = 3
+blind_runtime_effect_runs = 3
+end_to_end_transfer_runs = 1
+blind_improved_with_runtime_effect = 2
+```
+
+Status counts:
+
+```text
+end_to_end_transfer = 1
+runtime_effect_without_blind_transfer = 2
+```
+
+This changes the interpretation from "solved" to "mechanism established, transfer unstable." The teacher reliably produced or retained runtime-affecting harness artifacts, and blind tasks did trigger runtime behavior in all three runs. The main instability is inside the generated tool's schema generalization:
+
+```text
+v2 blind failure: tool returned "required tables or columns not found"
+v3 blind failure: tool returned "could not identify detail table"
+```
+
+The next project step should target generated-tool generalization, especially table parser/schema inference, rather than more evidence instrumentation.
