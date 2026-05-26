@@ -41,15 +41,15 @@ def _summarize_run(run_dir: Path) -> dict[str, Any]:
     dev_impact = _read_json(run_dir / "dev_impact_report.json", default=[])
     blind_impact = _read_json(run_dir / "blind_impact_report.json", default=[])
     harness_files_after = _read_json(run_dir / "harness_files_after.json", default=[])
-    if not isinstance(metrics, dict) or "repair_efficiency" not in metrics:
-        if not isinstance(train_summary, list):
-            train_summary = []
-        if not isinstance(dev_impact, list):
-            dev_impact = []
-        if not isinstance(blind_impact, list):
-            blind_impact = []
-        if not isinstance(harness_files_after, list):
-            harness_files_after = []
+    if not isinstance(train_summary, list):
+        train_summary = []
+    if not isinstance(dev_impact, list):
+        dev_impact = []
+    if not isinstance(blind_impact, list):
+        blind_impact = []
+    if not isinstance(harness_files_after, list):
+        harness_files_after = []
+    if not isinstance(metrics, dict) or _metrics_need_backfill(metrics):
         metrics = build_benchmark_metrics(train_summary, dev_impact, harness_files_after, blind_impact_rows=blind_impact)
     return {
         "run_dir": str(run_dir),
@@ -109,6 +109,16 @@ def _aggregate_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
             "focused_repair_weak_calls_skipped",
         ),
     }
+
+
+def _metrics_need_backfill(metrics: dict[str, Any]) -> bool:
+    if "repair_efficiency" not in metrics:
+        return True
+    patches = metrics.get("patches", {})
+    if not isinstance(patches, dict) or "accepted_runtime_artifact" not in patches:
+        return True
+    runtime_effect = metrics.get("runtime_effect", {})
+    return not isinstance(runtime_effect, dict) or "dev" not in runtime_effect or "blind" not in runtime_effect
 
 
 def _sum_nested(rows: list[dict[str, Any]], *keys: str) -> int:

@@ -2945,6 +2945,63 @@ def test_repair_efficiency_report_aggregates_runs(tmp_path: Path) -> None:
     assert report["aggregate"]["focused_repair_weak_calls_skipped"] == 1
 
 
+def test_repair_efficiency_report_backfills_old_metrics_schema(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "metrics.json").write_text(
+        json.dumps(
+            {
+                "repair_efficiency": {"patch_attempts": 1, "accepted": 1},
+                "patches": {"accepted": 1},
+                "dev_transfer": {"improved": 0},
+                "blind_transfer": {"improved": 0},
+            }
+        )
+    )
+    (run_dir / "train_summary.json").write_text(
+        json.dumps(
+            [
+                {
+                    "patch_status": "accepted",
+                    "applied_patch_paths": ["/repo/harness/tests/table_margin.json"],
+                }
+            ]
+        )
+    )
+    (run_dir / "dev_impact_report.json").write_text(
+        json.dumps(
+            [
+                {
+                    "improved": False,
+                    "regressed": False,
+                    "after_tool_call": None,
+                    "after_runtime_policy_results": [],
+                }
+            ]
+        )
+    )
+    (run_dir / "blind_impact_report.json").write_text(
+        json.dumps(
+            [
+                {
+                    "improved": False,
+                    "regressed": False,
+                    "after_tool_call": None,
+                    "after_runtime_policy_results": [],
+                }
+            ]
+        )
+    )
+    (run_dir / "harness_files_after.json").write_text(json.dumps(["harness/tests/table_margin.json"]))
+
+    report = build_repair_efficiency_report([run_dir])
+
+    run = report["runs"][0]
+    assert run["patches"]["accepted_test_only"] == 1
+    assert run["runtime_effect"]["dev"]["after_runtime_effect"] == 0
+    assert report["aggregate"]["accepted_but_no_runtime_artifact"] == 1
+
+
 def test_repair_efficiency_report_recovers_interrupted_run_from_phase_results(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     phase_dir = run_dir / "evolve_train_iter_02"
