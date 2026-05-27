@@ -66,9 +66,8 @@ def build_architect_sketch_messages(
         runtime_policy_results=runtime_policy_results,
         benchmark_context=benchmark_context,
     )
-    sketch_system = teacher_system + "\n\n" + ARCHITECT_SKETCH_INSTRUCTIONS
     return [
-        {"role": "system", "content": sketch_system},
+        {"role": "system", "content": ARCHITECT_SKETCH_SYSTEM_PROMPT},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False, indent=2)},
     ]
 
@@ -142,7 +141,8 @@ def build_teacher_payload(
     return payload
 
 
-ARCHITECT_SKETCH_INSTRUCTIONS = """Staged architect mode, sketch step.
+ARCHITECT_SKETCH_SYSTEM_PROMPT = """You are the frontier architect for a weak-model harness.
+Your job is to triage the trace and choose the smallest harness-development route.
 Return JSON only. Do not write code, markdown patch content, full tests, or patch_bundles.
 Choose route:
 - text_patch: the likely repair is only guideline, skill, or validator text.

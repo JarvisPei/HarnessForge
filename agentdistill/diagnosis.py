@@ -152,6 +152,8 @@ def parse_architect_sketch(raw: str) -> ArchitectSketch:
         value = data.get(key)
         if isinstance(value, str):
             data[key] = [value]
+    if "route" not in data:
+        data["route"] = "one_pass"
     data["parse_status"] = parse_status
     sketch = ArchitectSketch.model_validate(data)
     if sketch.route not in {"text_patch", "executable_patch", "no_patch", "one_pass"}:

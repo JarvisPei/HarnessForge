@@ -2552,7 +2552,7 @@ def test_run_phase_staged_architect_uses_sketch_then_bundle(tmp_path: Path, monk
         async def complete(self, messages, temperature=0.2):
             self.calls.append(messages)
             content = messages[0]["content"]
-            if "sketch step" in content:
+            if "smallest harness-development route" in content:
                 return json.dumps(
                     {
                         "route": "executable_patch",
@@ -2660,8 +2660,163 @@ def test_run_phase_staged_architect_uses_sketch_then_bundle(tmp_path: Path, monk
     assert result["architect_route"] == "staged_executable"
     assert result["architect_sketch"]["route"] == "executable_patch"
     assert result["patch_status"] == "accepted"
-    assert len(teacher.calls) == 3
-    assert "architect_sketch" in teacher.calls[2][1]["content"]
+    assert len(teacher.calls) == 2
+    assert teacher.calls[0][0]["content"] != "teacher"
+    assert "architect_sketch" in teacher.calls[1][1]["content"]
+
+
+def test_run_phase_staged_architect_falls_back_to_one_pass(tmp_path: Path, monkeypatch) -> None:
+    class WeakClient:
+        async def complete(self, messages, temperature=0.2):
+            return "wrong"
+
+    class TeacherClient:
+        def __init__(self):
+            self.calls = []
+
+        async def complete(self, messages, temperature=0.2):
+            self.calls.append(messages)
+            content = messages[0]["content"]
+            if "smallest harness-development route" in content:
+                return json.dumps({"route": "one_pass", "rationale": "Need normal diagnosis."})
+            return """
+            {
+              "diagnosis": "Need text guidance.",
+              "failure_categories": ["prompting"],
+              "harness_patch": "Add a guideline.",
+              "patch_type": "guideline",
+              "regression_test": "Check same task.",
+              "patch_bundles": [
+                {"target_path": "harness/guidelines/addition.md", "action": "create_or_replace", "content": "Use arithmetic carefully.\\n"}
+              ]
+            }
+            """
+
+    async def fake_apply(cfg, critic, critic_system, task, diagnosis, repo_root):
+        return {
+            "patch_status": "accepted",
+            "applied_patch_paths": [str(repo_root / bundle.target_path) for bundle in diagnosis.patch_bundles],
+            "rejected_patch_paths": [],
+            "contract_validation": [{"ok": True}],
+            "harness_manifest": None,
+        }
+
+    monkeypatch.setattr(benchmark_module, "_apply_diagnosis_with_optional_audit", fake_apply)
+
+    class HarnessConfig:
+        system_prompt_path = tmp_path / "weak_system.md"
+        skills_dir = tmp_path / "harness" / "skills"
+        guidelines_dir = tmp_path / "harness" / "guidelines"
+        validators_dir = tmp_path / "harness" / "validators"
+        tools_dir = tmp_path / "harness" / "tools"
+        runtime_policies_dir = tmp_path / "harness" / "runtime_policies"
+
+    class Config:
+        name = "test"
+        harness = HarnessConfig()
+        critic_mode = "off"
+        teacher_policy_audit = False
+        policy_generalization_audit = False
+        inner_repair_attempts = 0
+        architect_mode = "staged"
+
+    for directory in [
+        HarnessConfig.skills_dir,
+        HarnessConfig.guidelines_dir,
+        HarnessConfig.validators_dir,
+        HarnessConfig.tools_dir,
+        HarnessConfig.runtime_policies_dir,
+    ]:
+        directory.mkdir(parents=True)
+    HarnessConfig.system_prompt_path.write_text("system")
+
+    teacher = TeacherClient()
+    results = asyncio.run(
+        _run_phase(
+            Config(),
+            "train",
+            [TaskConfig(id="t", instruction="add", expected_answer="1")],
+            WeakClient(),
+            teacher,
+            None,
+            "teacher",
+            "critic",
+            tmp_path / "outputs",
+            True,
+            tmp_path,
+        )
+    )
+
+    result = results["t"]
+    assert result["architect_route"] == "one_pass_fallback"
+    assert result["patch_status"] == "accepted"
+    assert len(teacher.calls) == 2
+    assert "smallest harness-development route" in teacher.calls[0][0]["content"]
+    assert teacher.calls[1][0]["content"] == "teacher"
+
+
+def test_run_phase_staged_architect_no_patch_returns_parseable_diagnosis(tmp_path: Path) -> None:
+    class WeakClient:
+        async def complete(self, messages, temperature=0.2):
+            return "correct"
+
+    class TeacherClient:
+        def __init__(self):
+            self.calls = []
+
+        async def complete(self, messages, temperature=0.2):
+            self.calls.append(messages)
+            return json.dumps({"route": "no_patch", "rationale": "Weak answer is already sufficient."})
+
+    class HarnessConfig:
+        system_prompt_path = tmp_path / "weak_system.md"
+        skills_dir = tmp_path / "harness" / "skills"
+        guidelines_dir = tmp_path / "harness" / "guidelines"
+        validators_dir = tmp_path / "harness" / "validators"
+        tools_dir = tmp_path / "harness" / "tools"
+        runtime_policies_dir = tmp_path / "harness" / "runtime_policies"
+
+    class Config:
+        name = "test"
+        harness = HarnessConfig()
+        critic_mode = "off"
+        teacher_policy_audit = False
+        policy_generalization_audit = False
+        inner_repair_attempts = 0
+        architect_mode = "staged"
+
+    for directory in [
+        HarnessConfig.skills_dir,
+        HarnessConfig.guidelines_dir,
+        HarnessConfig.validators_dir,
+        HarnessConfig.tools_dir,
+        HarnessConfig.runtime_policies_dir,
+    ]:
+        directory.mkdir(parents=True)
+    HarnessConfig.system_prompt_path.write_text("system")
+
+    teacher = TeacherClient()
+    results = asyncio.run(
+        _run_phase(
+            Config(),
+            "train",
+            [TaskConfig(id="t", instruction="answer", expected_answer="correct")],
+            WeakClient(),
+            teacher,
+            None,
+            "teacher",
+            "critic",
+            tmp_path / "outputs",
+            True,
+            tmp_path,
+        )
+    )
+
+    result = results["t"]
+    assert result["architect_route"] == "no_patch"
+    assert result["teacher_diagnosis"]["failure_categories"] == []
+    assert result["teacher_diagnosis"]["patch_bundles"] == []
+    assert len(teacher.calls) == 1
 
 
 def test_staged_architect_rejects_paths_outside_sketch(tmp_path: Path) -> None:

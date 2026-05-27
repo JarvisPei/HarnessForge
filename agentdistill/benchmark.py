@@ -272,6 +272,14 @@ async def _run_phase(
         )
         if tools.names:
             weak_system = weak_system + "\n\n" + tools.describe()
+        effective_request_teacher_diagnosis = request_teacher_diagnosis
+        use_staged_architect = (
+            request_teacher_diagnosis
+            and getattr(cfg, "architect_mode", "one_pass") == "staged"
+            and not (benchmark_context and benchmark_context.get("repair_mode") == "focused")
+        )
+        if use_staged_architect:
+            effective_request_teacher_diagnosis = False
         if request_teacher_diagnosis and benchmark_context and benchmark_context.get("repair_mode") == "focused":
             result = await _run_focused_repair_task(task, teacher, teacher_system, weak_system, benchmark_context)
         else:
@@ -284,9 +292,9 @@ async def _run_phase(
                 tools,
                 policies,
                 benchmark_context=benchmark_context,
-                request_teacher_diagnosis=request_teacher_diagnosis,
+                request_teacher_diagnosis=effective_request_teacher_diagnosis,
             )
-        if request_teacher_diagnosis and getattr(cfg, "architect_mode", "one_pass") == "staged" and not result.get("focused_repair"):
+        if use_staged_architect:
             staged = await _maybe_run_staged_architect(
                 task=task,
                 result=result,
@@ -434,13 +442,6 @@ async def _maybe_run_staged_architect(
     weak_system: str,
     benchmark_context: dict[str, object] | None,
 ) -> dict[str, object]:
-    initial_raw = str(result.get("teacher_diagnosis_raw", ""))
-    initial_diagnosis = parse_diagnosis(initial_raw)
-    if not initial_diagnosis.failure_categories:
-        return {}
-    if initial_diagnosis.patch_bundles and not patch_group_is_executable(initial_diagnosis.patch_bundles):
-        return {"architect_mode": "staged", "architect_route": "one_pass_text"}
-
     sketch_messages = build_architect_sketch_messages(
         teacher_system,
         task_id=task.id,
@@ -463,7 +464,26 @@ async def _maybe_run_staged_architect(
         "architect_sketch": sketch.model_dump(),
         "architect_route": sketch.route,
     }
+    if sketch.route == "no_patch":
+        staged_result["teacher_diagnosis_raw"] = _no_patch_diagnosis(task.id, sketch.rationale)
+        return staged_result
     if sketch.route != "executable_patch":
+        fallback_messages = build_teacher_messages(
+            teacher_system,
+            task_id=task.id,
+            task_instruction=task.instruction,
+            expected_answer=task.expected_answer,
+            rubric=task.rubric,
+            weak_system_prompt=weak_system,
+            weak_answer=str(result.get("weak_answer", "")),
+            initial_weak_answer=str(result.get("initial_weak_answer", "")),
+            tool_call=result.get("tool_call") if isinstance(result.get("tool_call"), dict) else None,
+            tool_result=result.get("tool_result") if isinstance(result.get("tool_result"), dict) else None,
+            runtime_policy_results=_runtime_policy_results_for_prompt(result.get("runtime_policy_results")),
+            benchmark_context=benchmark_context,
+        )
+        staged_result["teacher_diagnosis_raw"] = await teacher.complete(fallback_messages, temperature=0.1)
+        staged_result["architect_route"] = "one_pass_fallback"
         return staged_result
 
     bundle_messages = build_staged_bundle_messages(
@@ -484,6 +504,21 @@ async def _maybe_run_staged_architect(
     staged_result["teacher_diagnosis_raw"] = await teacher.complete(bundle_messages, temperature=0.1)
     staged_result["architect_route"] = "staged_executable"
     return staged_result
+
+
+def _no_patch_diagnosis(task_id: str, rationale: str) -> str:
+    return json.dumps(
+        {
+            "diagnosis": rationale or f"No harness change is justified for {task_id}.",
+            "failure_categories": [],
+            "harness_patch": "",
+            "patch_type": "none",
+            "regression_test": "No regression test needed because the architect sketch selected no_patch.",
+            "patch_bundles": [],
+            "confidence": 0.0,
+        },
+        ensure_ascii=False,
+    )
 
 
 def _runtime_policy_results_for_prompt(value: object) -> list[dict[str, object]]:
