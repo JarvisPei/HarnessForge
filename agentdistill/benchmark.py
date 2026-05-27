@@ -468,7 +468,10 @@ async def _maybe_run_staged_architect(
     if sketch.route == "no_patch":
         staged_result["teacher_diagnosis_raw"] = _no_patch_diagnosis(task.id, sketch.rationale)
         return staged_result
-    sketch_validation = _validate_architect_sketch_artifacts(sketch.model_dump())
+    sketch_validation = _validate_architect_sketch_artifacts(
+        sketch.model_dump(),
+        weak_already_called_tool=isinstance(result.get("tool_call"), dict),
+    )
     if sketch_validation is not None:
         staged_result["architect_sketch_validation"] = sketch_validation
         fallback_messages = build_teacher_messages(
@@ -527,7 +530,11 @@ async def _maybe_run_staged_architect(
     return staged_result
 
 
-def _validate_architect_sketch_artifacts(sketch: dict[str, object]) -> dict[str, object] | None:
+def _validate_architect_sketch_artifacts(
+    sketch: dict[str, object],
+    *,
+    weak_already_called_tool: bool = False,
+) -> dict[str, object] | None:
     artifacts = sketch.get("artifacts")
     if not isinstance(artifacts, list):
         return {"ok": False, "reason": "architect sketch artifacts must be a list", "failures": []}
@@ -581,6 +588,14 @@ def _validate_architect_sketch_artifacts(sketch: dict[str, object]) -> dict[str,
         failures.append({"reason": "tool artifacts require same-stem harness/tests/<name>.json", "missing_tests_for": missing_tool_tests})
     if missing_policy_tests:
         failures.append({"reason": "runtime_policy artifacts require same-stem harness/tests/<name>.json", "missing_tests_for": missing_policy_tests})
+    if tool_stems and not policy_stems and not weak_already_called_tool:
+        failures.append(
+            {
+                "reason": "tool artifacts require an activation path when the weak trace did not call a tool",
+                "tool_artifacts": sorted(tool_stems),
+                "required_activation": "add a runtime_policy artifact plus same-stem policy test, or choose one_pass/text_patch",
+            }
+        )
     if not failures:
         return None
     return {"ok": False, "reason": "architect sketch artifact paths violate harness interface rules", "failures": failures}

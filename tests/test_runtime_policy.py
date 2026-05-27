@@ -2561,11 +2561,13 @@ def test_run_phase_staged_architect_uses_sketch_then_bundle(tmp_path: Path, monk
                         "artifacts": [
                             {"path": "harness/tools/calc.py", "type": "tool", "purpose": "calculator"},
                             {"path": "harness/tests/calc.json", "type": "test", "purpose": "calculator tests"},
+                            {"path": "harness/runtime_policies/force_calc.py", "type": "runtime_policy", "purpose": "force calculator"},
+                            {"path": "harness/tests/force_calc.json", "type": "test", "purpose": "policy tests"},
                         ],
                         "capability": "calculate",
                         "operation_semantics": ["add numbers"],
                         "test_axes": ["train case"],
-                        "complexity_budget": {"max_artifacts": 2},
+                        "complexity_budget": {"max_artifacts": 4},
                     }
                 )
             if "harness developer" in content:
@@ -2578,15 +2580,19 @@ def test_run_phase_staged_architect_uses_sketch_then_bundle(tmp_path: Path, monk
                   "regression_test": "tool test",
                   "patch_bundles": [
                     {"target_path": "harness/tools/calc.py", "action": "create_or_replace", "content": "def run(input):\\n    return {\\\"ok\\\": True, \\\"result\\\": 1}\\n"},
-                    {"target_path": "harness/tests/calc.json", "action": "create_or_replace", "content": "{\\"tool\\": \\"calc\\", \\"cases\\": []}"}
+                    {"target_path": "harness/tests/calc.json", "action": "create_or_replace", "content": "{\\"tool\\": \\"calc\\", \\"cases\\": []}"},
+                    {"target_path": "harness/runtime_policies/force_calc.py", "action": "create_or_replace", "content": "def evaluate(input):\\n    return {\\\"requires_tool\\\": True, \\\"tool_name\\\": \\\"calc\\\", \\\"tool_input\\\": {}, \\\"reason\\\": \\\"force calc\\\"}\\n"},
+                    {"target_path": "harness/tests/force_calc.json", "action": "create_or_replace", "content": "{\\"policy\\": \\"force_calc\\", \\"cases\\": []}"}
                   ],
                   "harness_manifest": {
                     "bundle_id": "calc",
                     "intent": "calculate",
-                    "allowed_paths": ["harness/tools/calc.py", "harness/tests/calc.json"],
+                    "allowed_paths": ["harness/tools/calc.py", "harness/tests/calc.json", "harness/runtime_policies/force_calc.py", "harness/tests/force_calc.json"],
                     "artifacts": [
                       {"path": "harness/tools/calc.py", "type": "tool", "purpose": "calculator"},
-                      {"path": "harness/tests/calc.json", "type": "test", "purpose": "calculator tests"}
+                      {"path": "harness/tests/calc.json", "type": "test", "purpose": "calculator tests"},
+                      {"path": "harness/runtime_policies/force_calc.py", "type": "runtime_policy", "purpose": "force calculator"},
+                      {"path": "harness/tests/force_calc.json", "type": "test", "purpose": "policy tests"}
                     ],
                     "contracts": ["tool tests pass"],
                     "generalization_contract": {
@@ -2772,6 +2778,38 @@ def test_staged_architect_rejects_invalid_sketch_artifact_shape() -> None:
     assert validation is not None
     assert validation["ok"] is False
     assert any("tool artifacts must be" in failure["reason"] for failure in validation["failures"])
+
+
+def test_staged_architect_rejects_tool_without_activation_when_weak_did_not_call_tool() -> None:
+    validation = _validate_architect_sketch_artifacts(
+        {
+            "route": "executable_patch",
+            "artifacts": [
+                {"path": "harness/tools/arithmetic_eval.py", "type": "tool", "purpose": "calculator"},
+                {"path": "harness/tests/arithmetic_eval.json", "type": "test", "purpose": "calculator tests"},
+            ],
+        },
+        weak_already_called_tool=False,
+    )
+
+    assert validation is not None
+    assert validation["ok"] is False
+    assert any("activation path" in failure["reason"] for failure in validation["failures"])
+
+
+def test_staged_architect_allows_tool_without_policy_when_weak_already_called_tool() -> None:
+    validation = _validate_architect_sketch_artifacts(
+        {
+            "route": "executable_patch",
+            "artifacts": [
+                {"path": "harness/tools/arithmetic_eval.py", "type": "tool", "purpose": "calculator"},
+                {"path": "harness/tests/arithmetic_eval.json", "type": "test", "purpose": "calculator tests"},
+            ],
+        },
+        weak_already_called_tool=True,
+    )
+
+    assert validation is None
 
 
 def test_run_phase_staged_architect_falls_back_on_invalid_sketch(tmp_path: Path, monkeypatch) -> None:
