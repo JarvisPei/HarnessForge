@@ -2568,7 +2568,7 @@ def test_run_phase_staged_architect_uses_sketch_then_bundle(tmp_path: Path, monk
                         "complexity_budget": {"max_artifacts": 2},
                     }
                 )
-            if "bundle step" in content:
+            if "harness developer" in content:
                 return """
                 {
                   "diagnosis": "Need a tool.",
@@ -2663,6 +2663,8 @@ def test_run_phase_staged_architect_uses_sketch_then_bundle(tmp_path: Path, monk
     assert result["patch_status"] == "accepted"
     assert len(teacher.calls) == 2
     assert teacher.calls[0][0]["content"] != "teacher"
+    assert teacher.calls[1][0]["content"] != "teacher"
+    assert "harness developer" in teacher.calls[1][0]["content"]
     assert "architect_sketch" in teacher.calls[1][1]["content"]
 
 

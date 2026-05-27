@@ -102,9 +102,8 @@ def build_staged_bundle_messages(
         benchmark_context=benchmark_context,
     )
     payload["architect_sketch"] = sketch
-    bundle_system = teacher_system + "\n\n" + STAGED_BUNDLE_INSTRUCTIONS
     return [
-        {"role": "system", "content": bundle_system},
+        {"role": "system", "content": STAGED_BUNDLE_SYSTEM_PROMPT},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False, indent=2)},
     ]
 
@@ -168,16 +167,85 @@ Artifact path rules:
 For text_patch or one_pass, artifacts may be empty or only text artifacts. Keep rationale to one sentence."""
 
 
-STAGED_BUNDLE_INSTRUCTIONS = """Staged architect mode, bundle step.
-Use architect_sketch as a frozen scope contract.
-Return the normal teacher diagnosis JSON with patch_bundles and harness_manifest.
+STAGED_BUNDLE_SYSTEM_PROMPT = """You are the harness developer in a staged harness-distillation workflow.
+You receive a weak-model trace and a frozen architect_sketch. Your job is to implement only that sketch as a valid harness patch bundle.
+
+Return JSON only with these fields:
+- diagnosis: concise explanation of the weak-model failure and the implemented harness change.
+- failure_categories: list using prompt_guideline, skill, tool, validator, state_representation, runtime_policy.
+- harness_patch: short description of the files changed.
+- patch_type: one of prompt_guideline, skill, tool, validator, state_representation, runtime_policy.
+- regression_test: concise future regression test description.
+- policy_audit_cases: optional map from runtime policy name to extra policy test cases.
+- patch_bundles: list of patch objects.
+- harness_manifest: required for any tool, runtime_policy, or test file.
+- patch_bundle: the first patch object, kept for backward compatibility.
+- confidence: number from 0 to 1.
+
+Patch object schema:
+- target_path: one relative path under harness/guidelines, harness/skills, harness/validators, harness/tools, harness/runtime_policies, or harness/tests.
+- action: create_or_replace.
+- content: complete file text to write directly to disk. Do not JSON-escape newlines inside Python or markdown content.
+- rationale: why this change should help future weak-model runs.
+
 Hard constraints:
 - Write only target_path values listed in architect_sketch.artifacts.
 - Do not add files outside the sketch.
 - Do not exceed architect_sketch.complexity_budget.
 - For executable sketches, include tests for the listed test_axes and a harness_manifest generalization_contract.
 - Do not change expected values to make code pass; preserve operation_semantics.
-- If the frozen sketch is insufficient, return a text diagnosis with no patch_bundles explaining the missing scope instead of adding files."""
+- If the frozen sketch is insufficient, return a text diagnosis with no patch_bundles explaining the missing scope instead of adding files.
+
+Harness file interface:
+- tool files live at harness/tools/<name>.py and expose exactly def run(input: dict) -> dict.
+- runtime policy files live at harness/runtime_policies/<name>.py and expose exactly def evaluate(input: dict) -> dict.
+- test files live at harness/tests/<name>.json and must share the same stem as the tool or runtime policy they test.
+- skill, guideline, and validator files are markdown under harness/skills, harness/guidelines, and harness/validators.
+
+Executable harness rules:
+- Python must be deterministic and self-contained. Do not use network, filesystem, subprocess, eval, exec, or non-standard-library imports.
+- Tools return JSON-serializable dictionaries and should expose trace fields for operation semantics such as selected rows, per-row contributions, source columns, signs, units, conversion factors, and final formula when relevant.
+- Runtime policies should be thin routers when possible. If they normalize or rewrite task text before tool use, include provenance in tool_input so tests can inspect source-to-normalized mappings.
+
+Harness manifest schema for executable bundles:
+- bundle_id: short safe identifier.
+- intent: why this bundle should improve future weak-model runs.
+- allowed_paths: exact target_path values from patch_bundles.
+- artifacts: list of objects with path, type, and purpose.
+- contracts: list of validation expectations.
+- generalization_contract:
+  - capability: concise domain-neutral capability.
+  - expected_variations: supported surface/schema variations.
+  - excluded_variations: intentionally unsupported variations.
+  - required_tests: exact harness/tests paths from this manifest.
+  - operation_semantics: semantic invariants copied from or consistent with architect_sketch.operation_semantics.
+  - semantic_trace_requirements: intermediate fields tests/results expose for audit.
+
+Tool test schema:
+{
+  "tool": "<name>",
+  "cases": [
+    {"input": {...}, "expected": {"ok": true}}
+  ]
+}
+
+Runtime policy test schema:
+{
+  "policy": "<name>",
+  "cases": [
+    {
+      "input": {"task_instruction": "...", "initial_answer": "", "available_tools": ["<tool>"], "expected_answer": "..."},
+      "expected": {"requires_tool": true, "tool_name": "<tool>", "tool_input": {...}},
+      "expected_tool_result": {"ok": true}
+    }
+  ]
+}
+
+Generalization discipline:
+- Do not hard-code final answers, task IDs, or one-off strings that only solve the observed example.
+- Preserve the frozen operation semantics. Do not alter per-row vs group-level scope, sign polarity, unit direction, join keys, or output format just to make a test pass.
+- Prefer small helper functions and explicit parsing over clever brittle expressions.
+- If the sketch asks for an invalid or insufficient scope, return no patch_bundles and explain the missing scope."""
 
 
 def enrich_benchmark_context(benchmark_context: dict[str, object] | None) -> dict[str, object] | None:
