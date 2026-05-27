@@ -137,18 +137,26 @@ def _classify_transfer_failure(expected_answer: str | None, before: dict[str, An
             after_tool = after.get("tool_result")
             if isinstance(after_tool, dict):
                 if after_tool.get("ok") is False:
-                    return "tool_failure"
+                    return "tool_error"
                 if not _tool_result_matches_expected(expected_answer, after_tool):
-                    return "tool_failure"
-                return "finalization_failure"
-            return "policy_or_routing_failure"
+                    return "tool_wrong_result"
+                return "weak_finalization_error"
+            return "tool_call_missing"
+        if any(isinstance(item, dict) and item.get("requires_tool") is False for item in after_runtime):
+            return "policy_not_triggered"
     before_tool = before.get("tool_result")
     after_tool = after.get("tool_result")
     if isinstance(before_tool, dict) and before_tool.get("ok") is True and isinstance(after_tool, dict) and after_tool.get("ok") is False:
-        return "tool_failure"
+        return "tool_error"
     if after.get("tool_call") is None:
-        return "policy_or_routing_failure"
-    return "finalization_failure"
+        return "no_runtime_artifact"
+    if isinstance(after_tool, dict):
+        if after_tool.get("ok") is False:
+            return "tool_error"
+        if not _tool_result_matches_expected(expected_answer, after_tool):
+            return "tool_wrong_result"
+        return "weak_finalization_error"
+    return "weak_finalization_error"
 
 
 def _tool_result_matches_expected(expected_answer: str | None, tool_result: dict[str, Any]) -> bool:
@@ -163,15 +171,19 @@ def _tool_result_matches_expected(expected_answer: str | None, tool_result: dict
     return all(expected in tool_numbers for expected in expected_numbers)
 
 
-def _recommend_transfer_repair_target(before: dict[str, Any], after: dict[str, Any]) -> str:
-    failure_mode = _classify_transfer_failure(before, after)
+def _recommend_transfer_repair_target(
+    expected_answer: str | None,
+    before: dict[str, Any],
+    after: dict[str, Any],
+) -> str:
+    failure_mode = _classify_transfer_failure(expected_answer, before, after)
     return _repair_target_for_failure_mode(failure_mode)
 
 
 def _repair_target_for_failure_mode(failure_mode: str) -> str:
-    if failure_mode == "tool_failure":
+    if failure_mode in {"tool_error", "tool_wrong_result", "tool_failure"}:
         return "tool"
-    if failure_mode == "policy_or_routing_failure":
+    if failure_mode in {"policy_not_triggered", "tool_call_missing", "no_runtime_artifact", "policy_or_routing_failure"}:
         return "runtime_policy"
     return "finalization"
 

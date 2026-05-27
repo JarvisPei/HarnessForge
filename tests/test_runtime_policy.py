@@ -1889,7 +1889,7 @@ def test_transfer_feedback_summarizes_failed_accepted_harness_probe() -> None:
     failed = feedback["failed_tasks"][0]
     assert failed["task_id"] == "dev_semicolon"
     assert failed["regressed"] is True
-    assert failed["failure_mode"] == "tool_failure"
+    assert failed["failure_mode"] == "tool_error"
     assert failed["recommended_repair_target"] == "tool"
     assert failed["repair_plan"] == {
         "primary_axis": "tool",
@@ -1929,11 +1929,11 @@ def test_transfer_feedback_labels_policy_and_finalization_failures() -> None:
     )
 
     by_id = {item["task_id"]: item for item in feedback["failed_tasks"]}
-    assert by_id["dev_policy"]["failure_mode"] == "finalization_failure"
+    assert by_id["dev_policy"]["failure_mode"] == "weak_finalization_error"
     assert by_id["dev_policy"]["recommended_repair_target"] == "finalization"
     assert by_id["dev_policy"]["repair_plan"]["primary_axis"] == "finalization"
     assert by_id["dev_policy"]["repair_plan"]["allowed_artifact_types"] == ["guideline", "validator"]
-    assert by_id["dev_final"]["failure_mode"] == "policy_or_routing_failure"
+    assert by_id["dev_final"]["failure_mode"] == "policy_not_triggered"
     assert by_id["dev_final"]["recommended_repair_target"] == "runtime_policy"
     assert by_id["dev_final"]["repair_plan"]["primary_axis"] == "runtime_policy"
     assert by_id["dev_final"]["repair_plan"]["allowed_artifact_types"] == ["runtime_policy", "test"]
@@ -1958,7 +1958,7 @@ def test_transfer_feedback_treats_wrong_forced_tool_result_as_tool_failure() -> 
     )
 
     failed = feedback["failed_tasks"][0]
-    assert failed["failure_mode"] == "tool_failure"
+    assert failed["failure_mode"] == "tool_wrong_result"
     assert failed["recommended_repair_target"] == "tool"
     assert failed["repair_plan"]["primary_axis"] == "tool"
 
@@ -1991,10 +1991,51 @@ def test_transfer_feedback_classifies_posted_updates_as_runtime_policy() -> None
     )
 
     failed = feedback["failed_tasks"][0]
-    assert failed["failure_mode"] == "policy_or_routing_failure"
+    assert failed["failure_mode"] == "policy_not_triggered"
     assert failed["recommended_repair_target"] == "runtime_policy"
     assert failed["repair_plan"]["primary_axis"] == "runtime_policy"
     assert failed["repair_plan"]["allowed_artifact_types"] == ["runtime_policy", "test"]
+
+
+def test_transfer_feedback_classifies_policy_coverage_gap_from_runtime_reason() -> None:
+    tasks = [
+        TaskConfig(
+            id="blind_priority_done_margin",
+            instruction=(
+                "Cases:\n"
+                "| case | priority | done | amount |\n"
+                "| c1 | high | yes | 10 |\n\n"
+                "For high priority cases whose done is yes, compute sum(amount * (gross - expense) - fee)."
+            ),
+            expected_answer="406 dollars total.",
+        )
+    ]
+    feedback = build_transfer_feedback(
+        tasks,
+        baseline_results={"blind_priority_done_margin": {"weak_answer": "199"}},
+        probe_results={
+            "blind_priority_done_margin": {
+                "weak_answer": "316",
+                "runtime_policy_results": [
+                    {
+                        "policy": "force_table_margin_aggregator",
+                        "requires_tool": False,
+                        "reason": "task does not match direct multi-table margin aggregation schema",
+                    }
+                ],
+                "tool_call": None,
+                "tool_result": None,
+            }
+        },
+        iteration=3,
+        accepted_harness=True,
+    )
+
+    failed = feedback["failed_tasks"][0]
+    assert failed["failure_mode"] == "policy_not_triggered"
+    assert failed["recommended_repair_target"] == "runtime_policy"
+    assert failed["repair_plan"]["primary_axis"] == "runtime_policy"
+    assert failed["after_runtime_policy_results"][0]["reason"] == "task does not match direct multi-table margin aggregation schema"
 
 
 def test_transfer_feedback_persists_until_probe_success_resolves_it() -> None:
