@@ -32,6 +32,24 @@ class PatchBundle(BaseModel):
     rationale: str = ""
 
 
+class ArchitectSketchArtifact(BaseModel):
+    path: str
+    type: str
+    purpose: str = ""
+
+
+class ArchitectSketch(BaseModel):
+    route: str
+    patch_type: str = ""
+    artifacts: list[ArchitectSketchArtifact] = Field(default_factory=list)
+    capability: str = ""
+    operation_semantics: list[str] = Field(default_factory=list)
+    test_axes: list[str] = Field(default_factory=list)
+    complexity_budget: dict[str, Any] = Field(default_factory=dict)
+    rationale: str = ""
+    parse_status: str = "parsed"
+
+
 def parse_diagnosis(raw: str) -> Diagnosis:
     payload = _extract_json(raw)
     if payload is None:
@@ -99,6 +117,46 @@ def parse_diagnosis(raw: str) -> Diagnosis:
         data["policy_audit_cases"] = normalized_policy_audit_cases
     data["parse_status"] = parse_status
     return Diagnosis.model_validate(data)
+
+
+def parse_architect_sketch(raw: str) -> ArchitectSketch:
+    payload = _extract_json(raw)
+    if payload is None:
+        return ArchitectSketch(
+            route="one_pass",
+            patch_type="",
+            rationale="Teacher sketch could not be parsed as JSON; fall back to one-pass.",
+            parse_status="unparsed",
+        )
+    parse_status = "parsed"
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        repaired_payload = _repair_json_payload(payload)
+        if repaired_payload != payload:
+            try:
+                data = json.loads(repaired_payload)
+                parse_status = "parsed_repaired"
+            except json.JSONDecodeError:
+                data = None
+        else:
+            data = None
+    if not isinstance(data, dict):
+        return ArchitectSketch(
+            route="one_pass",
+            patch_type="",
+            rationale="Teacher sketch contained malformed JSON; fall back to one-pass.",
+            parse_status="unparsed",
+        )
+    for key in ["operation_semantics", "test_axes"]:
+        value = data.get(key)
+        if isinstance(value, str):
+            data[key] = [value]
+    data["parse_status"] = parse_status
+    sketch = ArchitectSketch.model_validate(data)
+    if sketch.route not in {"text_patch", "executable_patch", "no_patch", "one_pass"}:
+        sketch.route = "one_pass"
+    return sketch
 
 
 def _normalize_patch_bundle_content(data: dict[str, Any]) -> None:

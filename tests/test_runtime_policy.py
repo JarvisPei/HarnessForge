@@ -18,6 +18,7 @@ from agentdistill.benchmark import (
     _reject_out_of_scope_repair,
     _run_focused_repair_task,
     _run_inner_repair_attempts,
+    _reject_outside_architect_sketch,
     _run_phase,
     _should_request_critic_cases,
     _tasks_for_evolve_iteration,
@@ -29,7 +30,7 @@ from agentdistill.contracts import (
     validate_tool_contract,
 )
 from agentdistill.critic import parse_critic_audit, validate_critic_policy_cases
-from agentdistill.diagnosis import PatchBundle, parse_diagnosis
+from agentdistill.diagnosis import PatchBundle, parse_architect_sketch, parse_diagnosis
 from agentdistill.evidence import build_evidence_report
 from agentdistill.feedback import build_patch_feedback, build_transfer_feedback, merge_benchmark_context
 from agentdistill.metrics import build_benchmark_metrics
@@ -988,6 +989,30 @@ def test_parse_diagnosis_normalizes_contract_string_fields() -> None:
     assert contract is not None
     assert contract.operation_semantics == ["Preserve local operation scope."]
     assert contract.semantic_trace_requirements == ["Expose selected rows and per-row contributions."]
+
+
+def test_parse_architect_sketch_normalizes_scalar_lists() -> None:
+    sketch = parse_architect_sketch(
+        """
+{
+  "route": "executable_patch",
+  "patch_type": "tool",
+  "artifacts": [
+    {"path": "harness/tools/calc.py", "type": "tool", "purpose": "calculator"},
+    {"path": "harness/tests/calc.json", "type": "test", "purpose": "calculator tests"}
+  ],
+  "capability": "Compute deterministic totals.",
+  "operation_semantics": "preserve signs",
+  "test_axes": "train case",
+  "complexity_budget": {"max_artifacts": 2}
+}
+""".strip()
+    )
+
+    assert sketch.route == "executable_patch"
+    assert sketch.operation_semantics == ["preserve signs"]
+    assert sketch.test_axes == ["train case"]
+    assert sketch.artifacts[0].path == "harness/tools/calc.py"
 
 
 def test_parse_diagnosis_repairs_raw_newlines_inside_content_strings() -> None:
@@ -2515,6 +2540,162 @@ def test_run_phase_focused_repair_skips_weak_and_records_contexts(tmp_path: Path
     assert result["context_transfer_feedback"] == context["transfer_feedback"]
 
 
+def test_run_phase_staged_architect_uses_sketch_then_bundle(tmp_path: Path, monkeypatch) -> None:
+    class WeakClient:
+        async def complete(self, messages, temperature=0.2):
+            return "wrong"
+
+    class TeacherClient:
+        def __init__(self):
+            self.calls = []
+
+        async def complete(self, messages, temperature=0.2):
+            self.calls.append(messages)
+            content = messages[0]["content"]
+            if "sketch step" in content:
+                return json.dumps(
+                    {
+                        "route": "executable_patch",
+                        "patch_type": "tool",
+                        "artifacts": [
+                            {"path": "harness/tools/calc.py", "type": "tool", "purpose": "calculator"},
+                            {"path": "harness/tests/calc.json", "type": "test", "purpose": "calculator tests"},
+                        ],
+                        "capability": "calculate",
+                        "operation_semantics": ["add numbers"],
+                        "test_axes": ["train case"],
+                        "complexity_budget": {"max_artifacts": 2},
+                    }
+                )
+            if "bundle step" in content:
+                return """
+                {
+                  "diagnosis": "Need a tool.",
+                  "failure_categories": ["tool"],
+                  "harness_patch": "Add tool.",
+                  "patch_type": "tool",
+                  "regression_test": "tool test",
+                  "patch_bundles": [
+                    {"target_path": "harness/tools/calc.py", "action": "create_or_replace", "content": "def run(input):\\n    return {\\\"ok\\\": True, \\\"result\\\": 1}\\n"},
+                    {"target_path": "harness/tests/calc.json", "action": "create_or_replace", "content": "{\\"tool\\": \\"calc\\", \\"cases\\": []}"}
+                  ],
+                  "harness_manifest": {
+                    "bundle_id": "calc",
+                    "intent": "calculate",
+                    "allowed_paths": ["harness/tools/calc.py", "harness/tests/calc.json"],
+                    "artifacts": [
+                      {"path": "harness/tools/calc.py", "type": "tool", "purpose": "calculator"},
+                      {"path": "harness/tests/calc.json", "type": "test", "purpose": "calculator tests"}
+                    ],
+                    "contracts": ["tool tests pass"],
+                    "generalization_contract": {
+                      "capability": "calculate",
+                      "expected_variations": ["different values"],
+                      "excluded_variations": ["non arithmetic"],
+                      "required_tests": ["harness/tests/calc.json"],
+                      "operation_semantics": ["add numbers"],
+                      "semantic_trace_requirements": ["return result"]
+                    }
+                  }
+                }
+                """
+            return '{"diagnosis":"Need executable harness.","failure_categories":["tool"],"patch_type":"tool","patch_bundles":[{"target_path":"harness/tools/initial.py","content":"def run(input):\\n    return {\\"ok\\": True}\\n"}]}'
+
+    async def fake_apply(cfg, critic, critic_system, task, diagnosis, repo_root):
+        return {
+            "patch_status": "accepted",
+            "applied_patch_paths": [str(repo_root / bundle.target_path) for bundle in diagnosis.patch_bundles],
+            "rejected_patch_paths": [],
+            "contract_validation": [{"ok": True}],
+            "harness_manifest": diagnosis.harness_manifest.model_dump() if diagnosis.harness_manifest else None,
+        }
+
+    monkeypatch.setattr(benchmark_module, "_apply_diagnosis_with_optional_audit", fake_apply)
+
+    class HarnessConfig:
+        system_prompt_path = tmp_path / "weak_system.md"
+        skills_dir = tmp_path / "harness" / "skills"
+        guidelines_dir = tmp_path / "harness" / "guidelines"
+        validators_dir = tmp_path / "harness" / "validators"
+        tools_dir = tmp_path / "harness" / "tools"
+        runtime_policies_dir = tmp_path / "harness" / "runtime_policies"
+
+    class Config:
+        name = "test"
+        harness = HarnessConfig()
+        critic_mode = "off"
+        teacher_policy_audit = False
+        policy_generalization_audit = False
+        inner_repair_attempts = 0
+        architect_mode = "staged"
+
+    for directory in [
+        HarnessConfig.skills_dir,
+        HarnessConfig.guidelines_dir,
+        HarnessConfig.validators_dir,
+        HarnessConfig.tools_dir,
+        HarnessConfig.runtime_policies_dir,
+    ]:
+        directory.mkdir(parents=True)
+    HarnessConfig.system_prompt_path.write_text("system")
+
+    teacher = TeacherClient()
+    results = asyncio.run(
+        _run_phase(
+            Config(),
+            "train",
+            [TaskConfig(id="t", instruction="add", expected_answer="1")],
+            WeakClient(),
+            teacher,
+            None,
+            "teacher",
+            "critic",
+            tmp_path / "outputs",
+            True,
+            tmp_path,
+        )
+    )
+
+    result = results["t"]
+    assert result["architect_route"] == "staged_executable"
+    assert result["architect_sketch"]["route"] == "executable_patch"
+    assert result["patch_status"] == "accepted"
+    assert len(teacher.calls) == 3
+    assert "architect_sketch" in teacher.calls[2][1]["content"]
+
+
+def test_staged_architect_rejects_paths_outside_sketch(tmp_path: Path) -> None:
+    diagnosis = parse_diagnosis(
+        """
+{
+  "diagnosis": "Need a tool.",
+  "failure_categories": ["tool"],
+  "harness_patch": "Add files.",
+  "patch_type": "tool",
+  "regression_test": "tool test",
+  "patch_bundles": [
+    {"target_path": "harness/tools/calc.py", "action": "create_or_replace", "content": "def run(input):\\n    return {\\"ok\\": True}\\n"},
+    {"target_path": "harness/tests/extra.json", "action": "create_or_replace", "content": "{\\"tool\\": \\"extra\\", \\"cases\\": []}"}
+  ]
+}
+""".strip()
+    )
+    sketch = {
+        "route": "executable_patch",
+        "artifacts": [
+            {"path": "harness/tools/calc.py", "type": "tool", "purpose": "calculator"},
+            {"path": "harness/tests/calc.json", "type": "test", "purpose": "calculator tests"},
+        ],
+    }
+
+    result = _reject_outside_architect_sketch(diagnosis, sketch, tmp_path)
+
+    assert result is not None
+    assert result["patch_status"] == "rejected"
+    assert result["rejection_reason"] == "staged patch targets outside architect sketch"
+    assert result["contract_validation"][0]["out_of_scope_paths"] == ["harness/tests/extra.json"]
+
+
 def test_inner_repair_attempt_retries_rejected_bundle_without_weak_model(tmp_path: Path, monkeypatch) -> None:
     class Config:
         name = "test"
@@ -2722,6 +2903,12 @@ def test_repair_mechanism_config_loads() -> None:
     assert len(cfg.train_tasks) == 1
     assert len(cfg.dev_probe_tasks) == 2
     assert len(cfg.blind_test_tasks) == 1
+
+
+def test_benchmark_architect_mode_defaults_to_one_pass() -> None:
+    cfg = load_benchmark_config("configs/benchmark_table_join_hard.yaml")
+
+    assert cfg.architect_mode == "one_pass"
 
 
 def test_table_join_hard_has_abstract_schema_dev_probe() -> None:

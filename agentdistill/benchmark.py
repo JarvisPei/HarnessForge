@@ -12,7 +12,7 @@ from rich.console import Console
 
 from agentdistill.config import BenchmarkConfig, TaskConfig, load_benchmark_config
 from agentdistill.critic import request_policy_audit_cases
-from agentdistill.diagnosis import Diagnosis, parse_diagnosis, write_patch_artifact
+from agentdistill.diagnosis import Diagnosis, parse_architect_sketch, parse_diagnosis, write_patch_artifact
 from agentdistill.feedback import build_patch_feedback, build_transfer_feedback, merge_benchmark_context
 from agentdistill.harness import load_system_prompt
 from agentdistill.harness_snapshot import list_harness_files, snapshot_harness
@@ -20,7 +20,7 @@ from agentdistill.metrics import build_benchmark_metrics
 from agentdistill.models import ChatClient, load_model_settings
 from agentdistill.patches import apply_patch_bundles_atomically, patch_group_is_executable
 from agentdistill.report import build_impact_report, evaluate_success
-from agentdistill.teacher_prompt import build_teacher_messages, enrich_benchmark_context
+from agentdistill.teacher_prompt import build_architect_sketch_messages, build_staged_bundle_messages, build_teacher_messages, enrich_benchmark_context
 from agentdistill.run import run_task
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
 
@@ -38,6 +38,7 @@ def main(
     inner_repair_attempts: int | None = typer.Option(None, "--inner-repair-attempts", min=0),
     evolve_iterations: int | None = typer.Option(None, "--evolve-iterations", min=1),
     teacher_policy_audit: bool | None = typer.Option(None, "--teacher-policy-audit/--no-teacher-policy-audit"),
+    architect_mode: Literal["one_pass", "staged"] | None = typer.Option(None, "--architect-mode"),
 ) -> None:
     load_dotenv(override=True)
     cfg = load_benchmark_config(config)
@@ -49,6 +50,8 @@ def main(
         cfg.evolve_iterations = evolve_iterations
     if teacher_policy_audit is not None:
         cfg.teacher_policy_audit = teacher_policy_audit
+    if architect_mode is not None:
+        cfg.architect_mode = architect_mode
     asyncio.run(run_benchmark(cfg, profile, run_id))
 
 
@@ -283,6 +286,16 @@ async def _run_phase(
                 benchmark_context=benchmark_context,
                 request_teacher_diagnosis=request_teacher_diagnosis,
             )
+        if request_teacher_diagnosis and getattr(cfg, "architect_mode", "one_pass") == "staged" and not result.get("focused_repair"):
+            staged = await _maybe_run_staged_architect(
+                task=task,
+                result=result,
+                teacher=teacher,
+                teacher_system=teacher_system,
+                weak_system=weak_system,
+                benchmark_context=benchmark_context,
+            )
+            result.update(staged)
         if request_teacher_diagnosis and benchmark_context and benchmark_context.get("patch_feedback"):
             result["context_patch_feedback"] = benchmark_context["patch_feedback"]
         if request_teacher_diagnosis and benchmark_context and benchmark_context.get("transfer_feedback"):
@@ -292,14 +305,16 @@ async def _run_phase(
             result["teacher_diagnosis"] = diagnosis.model_dump()
         applied_patch_paths: list[str] = []
         if apply_patches and diagnosis is not None and diagnosis.patch_bundles and diagnosis.failure_categories:
-            patch_result = await _apply_diagnosis_with_optional_audit(
-                cfg,
-                critic,
-                critic_system,
-                task,
-                diagnosis,
-                repo_root,
-            )
+            patch_result = _reject_outside_architect_sketch(diagnosis, result.get("architect_sketch"), repo_root)
+            if patch_result is None:
+                patch_result = await _apply_diagnosis_with_optional_audit(
+                    cfg,
+                    critic,
+                    critic_system,
+                    task,
+                    diagnosis,
+                    repo_root,
+                )
             if patch_result.get("critic_audits"):
                 result["critic_audits"] = patch_result["critic_audits"]
             result.update({key: value for key, value in patch_result.items() if key != "critic_audits"})
@@ -408,6 +423,73 @@ async def _run_focused_repair_task(
         "focused_repair": True,
         "teacher_diagnosis_raw": await teacher.complete(messages, temperature=0.1),
     }
+
+
+async def _maybe_run_staged_architect(
+    *,
+    task: TaskConfig,
+    result: dict[str, object],
+    teacher: ChatClient,
+    teacher_system: str,
+    weak_system: str,
+    benchmark_context: dict[str, object] | None,
+) -> dict[str, object]:
+    initial_raw = str(result.get("teacher_diagnosis_raw", ""))
+    initial_diagnosis = parse_diagnosis(initial_raw)
+    if not initial_diagnosis.failure_categories:
+        return {}
+    if initial_diagnosis.patch_bundles and not patch_group_is_executable(initial_diagnosis.patch_bundles):
+        return {"architect_mode": "staged", "architect_route": "one_pass_text"}
+
+    sketch_messages = build_architect_sketch_messages(
+        teacher_system,
+        task_id=task.id,
+        task_instruction=task.instruction,
+        expected_answer=task.expected_answer,
+        rubric=task.rubric,
+        weak_system_prompt=weak_system,
+        weak_answer=str(result.get("weak_answer", "")),
+        initial_weak_answer=str(result.get("initial_weak_answer", "")),
+        tool_call=result.get("tool_call") if isinstance(result.get("tool_call"), dict) else None,
+        tool_result=result.get("tool_result") if isinstance(result.get("tool_result"), dict) else None,
+        runtime_policy_results=_runtime_policy_results_for_prompt(result.get("runtime_policy_results")),
+        benchmark_context=benchmark_context,
+    )
+    sketch_raw = await teacher.complete(sketch_messages, temperature=0.1)
+    sketch = parse_architect_sketch(sketch_raw)
+    staged_result: dict[str, object] = {
+        "architect_mode": "staged",
+        "architect_sketch_raw": sketch_raw,
+        "architect_sketch": sketch.model_dump(),
+        "architect_route": sketch.route,
+    }
+    if sketch.route != "executable_patch":
+        return staged_result
+
+    bundle_messages = build_staged_bundle_messages(
+        teacher_system,
+        sketch=sketch.model_dump(),
+        task_id=task.id,
+        task_instruction=task.instruction,
+        expected_answer=task.expected_answer,
+        rubric=task.rubric,
+        weak_system_prompt=weak_system,
+        weak_answer=str(result.get("weak_answer", "")),
+        initial_weak_answer=str(result.get("initial_weak_answer", "")),
+        tool_call=result.get("tool_call") if isinstance(result.get("tool_call"), dict) else None,
+        tool_result=result.get("tool_result") if isinstance(result.get("tool_result"), dict) else None,
+        runtime_policy_results=_runtime_policy_results_for_prompt(result.get("runtime_policy_results")),
+        benchmark_context=benchmark_context,
+    )
+    staged_result["teacher_diagnosis_raw"] = await teacher.complete(bundle_messages, temperature=0.1)
+    staged_result["architect_route"] = "staged_executable"
+    return staged_result
+
+
+def _runtime_policy_results_for_prompt(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
 
 
 async def _apply_diagnosis_with_optional_audit(
@@ -554,6 +636,44 @@ def _reject_out_of_scope_repair(
             }
         ],
         "rejection_reason": "inner repair patch targets outside allowed repair scope",
+        "harness_manifest": diagnosis.harness_manifest.model_dump() if diagnosis.harness_manifest is not None else None,
+    }
+
+
+def _reject_outside_architect_sketch(
+    diagnosis: Diagnosis,
+    sketch: object,
+    repo_root: Path,
+) -> dict[str, Any] | None:
+    if not isinstance(sketch, dict) or sketch.get("route") != "executable_patch":
+        return None
+    artifacts = sketch.get("artifacts", [])
+    if not isinstance(artifacts, list):
+        return None
+    allowed_paths = {
+        str(artifact.get("path"))
+        for artifact in artifacts
+        if isinstance(artifact, dict) and isinstance(artifact.get("path"), str)
+    }
+    if not allowed_paths:
+        return None
+    target_paths = [_normalize_harness_path(bundle.target_path) or bundle.target_path for bundle in diagnosis.patch_bundles]
+    out_of_scope = [path for path in target_paths if path not in allowed_paths]
+    if not out_of_scope:
+        return None
+    return {
+        "patch_status": "rejected",
+        "applied_patch_paths": [],
+        "rejected_patch_paths": [_absolute_harness_path(repo_root, path) for path in target_paths],
+        "contract_validation": [
+            {
+                "ok": False,
+                "reason": "staged patch targets outside architect sketch",
+                "allowed_sketch_paths": sorted(allowed_paths),
+                "out_of_scope_paths": out_of_scope,
+            }
+        ],
+        "rejection_reason": "staged patch targets outside architect sketch",
         "harness_manifest": diagnosis.harness_manifest.model_dump() if diagnosis.harness_manifest is not None else None,
     }
 
