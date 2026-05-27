@@ -166,6 +166,7 @@ Artifact path rules:
 - every tool or runtime_policy artifact needs a same-stem test artifact.
 Activation rule:
 - If the weak trace did not already call a tool and the sketch adds a tool, include a runtime_policy artifact that can force that tool plus its same-stem test artifact. A tool without an activation path will not affect future weak-model runs.
+- If benchmark_context.activation_transfer_hints is present, the runtime_policy test_axes must cover at least one listed dev-style schema variation without hard-coding task ids, expected answers, row ids, or final totals.
 For text_patch or one_pass, artifacts may be empty or only text artifacts. Keep rationale to one sentence."""
 
 
@@ -195,6 +196,7 @@ Hard constraints:
 - Do not add files outside the sketch.
 - Do not exceed architect_sketch.complexity_budget.
 - If the sketch includes a tool and runtime_policy, implement both so future weak-model runs can actually call the tool.
+- If benchmark_context.activation_transfer_hints is present, include at least one runtime policy test that exercises a listed dev-style schema variation while preserving the same latent operation.
 - For executable sketches, include tests for the listed test_axes and a harness_manifest generalization_contract.
 - Do not change expected values to make code pass; preserve operation_semantics.
 - If the frozen sketch is insufficient, return a text diagnosis with no patch_bundles explaining the missing scope instead of adding files.

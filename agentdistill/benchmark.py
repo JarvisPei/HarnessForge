@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -166,6 +167,7 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
             request_teacher_diagnosis=False,
         )
         transfer_context = _build_transfer_context(cfg.dev_probe_tasks, probe_results)
+        _attach_activation_transfer_hints(transfer_context, cfg.dev_probe_tasks)
         transfer_feedback = build_transfer_feedback(
             cfg.dev_probe_tasks,
             dev_baseline,
@@ -1037,10 +1039,89 @@ def _build_transfer_context(tasks: list[TaskConfig], results: dict[str, dict[str
 
 def _initial_transfer_context(cfg: BenchmarkConfig, dev_baseline: dict[str, dict[str, object]]) -> dict[str, object]:
     if cfg.transfer_context_mode == "heldout_probe":
-        return _build_transfer_context(cfg.dev_probe_tasks, dev_baseline)
+        context = _build_transfer_context(cfg.dev_probe_tasks, dev_baseline)
+        _attach_activation_transfer_hints(context, cfg.dev_probe_tasks)
+        return context
     if cfg.transfer_context_mode == "feedback_only":
-        return {"heldout_probe": []}
+        context = {"heldout_probe": []}
+        _attach_activation_transfer_hints(context, cfg.dev_probe_tasks)
+        return context
     raise ValueError(f"Unsupported transfer_context_mode: {cfg.transfer_context_mode}")
+
+
+def _attach_activation_transfer_hints(context: dict[str, object], dev_probe_tasks: list[TaskConfig]) -> None:
+    hints = _build_activation_transfer_hints(dev_probe_tasks)
+    if hints:
+        context["activation_transfer_hints"] = hints
+
+
+def _build_activation_transfer_hints(dev_probe_tasks: list[TaskConfig]) -> dict[str, object] | None:
+    variations = []
+    for task in dev_probe_tasks[:3]:
+        variation = _summarize_activation_variation(task.instruction)
+        if variation:
+            variations.append(variation)
+    if not variations:
+        return None
+    return {
+        "source": "dev_probe_tasks",
+        "visibility": "abstract dev-style schema hints only; blind tasks and expected answers are omitted",
+        "purpose": "Use these hints to design runtime_policy triggers and policy tests that transfer beyond the train surface form.",
+        "must_cover_in_runtime_policy_tests": variations,
+        "must_not_hardcode": ["task ids", "expected answers", "row ids", "specific final totals"],
+    }
+
+
+def _summarize_activation_variation(instruction: str) -> dict[str, object] | None:
+    table_summaries = _extract_table_summaries(instruction)
+    objective = _extract_objective_sentence(instruction)
+    if not table_summaries and objective is None:
+        return None
+    return {
+        "table_formats": sorted({summary["format"] for summary in table_summaries}),
+        "tables": table_summaries[:4],
+        "objective_pattern": objective,
+    }
+
+
+def _extract_table_summaries(instruction: str) -> list[dict[str, object]]:
+    lines = [line.rstrip() for line in instruction.splitlines()]
+    summaries: list[dict[str, object]] = []
+    for index, line in enumerate(lines):
+        label_match = re.match(r"^([A-Za-z][A-Za-z0-9 _/-]{0,40}):\s*$", line.strip())
+        if not label_match:
+            continue
+        label = label_match.group(1)
+        for next_line in lines[index + 1 : index + 5]:
+            stripped = next_line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("|") and "|" in stripped[1:]:
+                columns = [part.strip() for part in stripped.strip("|").split("|") if part.strip()]
+                if columns:
+                    summaries.append({"label": label, "format": "markdown_table", "columns": columns[:8]})
+                break
+            if "," in stripped and not stripped.startswith("|"):
+                columns = [part.strip() for part in stripped.split(",") if part.strip()]
+                if len(columns) >= 2:
+                    summaries.append({"label": label, "format": "csv", "columns": columns[:8]})
+                break
+    return summaries
+
+
+def _extract_objective_sentence(instruction: str) -> str | None:
+    for line in instruction.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("For ") and "compute" in stripped:
+            return _abstract_objective_sentence(stripped)
+    return None
+
+
+def _abstract_objective_sentence(sentence: str) -> str:
+    formula_match = re.search(r"compute\s+(.+?)(?:\.|$)", sentence, flags=re.IGNORECASE)
+    formula = formula_match.group(1) if formula_match else sentence
+    identifiers = sorted(set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", formula)))
+    return "compute " + re.sub(r"\b[a-z][a-z0-9_]*\b", "<field>", formula) + f"; referenced_fields={identifiers[:12]}"
 
 
 def _phase_kind(cfg: BenchmarkConfig, patch_feedback: dict[str, object] | None) -> str:

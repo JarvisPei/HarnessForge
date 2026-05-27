@@ -9,6 +9,7 @@ from agentdistill.config import TaskConfig, load_benchmark_config
 from agentdistill.benchmark import (
     _benchmark_context_for_iteration,
     _build_focused_repair_task,
+    _build_activation_transfer_hints,
     _build_transfer_context,
     _contract_task_for_repair,
     _critic_enabled,
@@ -1841,12 +1842,69 @@ def test_initial_transfer_context_can_hide_dev_probe_until_feedback() -> None:
     class Config:
         transfer_context_mode = "feedback_only"
         dev_probe_tasks = [
-            TaskConfig(id="heldout_a", instruction="hidden", expected_answer="1"),
+            TaskConfig(
+                id="heldout_a",
+                instruction="""
+Tickets:
+zone,sku,status,count,ticket
+west,Q1,closed,12,t1
+
+For west tickets whose status is closed, compute sum(count * (price - cost) - fee).
+""".strip(),
+                expected_answer="255 dollars total.",
+            ),
         ]
 
     context = _initial_transfer_context(Config(), {"heldout_a": {"weak_answer": "0"}})
 
-    assert context == {"heldout_probe": []}
+    assert context["heldout_probe"] == []
+    assert context["activation_transfer_hints"]["source"] == "dev_probe_tasks"
+    dumped = json.dumps(context["activation_transfer_hints"], ensure_ascii=False)
+    assert "Tickets" in dumped
+    assert "255" not in dumped
+    assert "Q1" not in dumped
+
+
+def test_activation_transfer_hints_summarize_dev_schema_without_answers() -> None:
+    hints = _build_activation_transfer_hints(
+        [
+            TaskConfig(
+                id="dev",
+                instruction="""
+Compute the requested total from the three lookup tables.
+
+Tickets:
+zone,sku,status,count,ticket
+west,Q1,closed,12,t1
+
+Economics:
+sku,price,cost
+Q1,18,7
+
+Zone fees:
+zone,fee
+west,13
+
+For west tickets whose status is closed, compute sum(count * (price - cost) - fee).
+Give only the final number.
+""".strip(),
+                expected_answer="255 dollars total.",
+            )
+        ]
+    )
+
+    assert hints is not None
+    dumped = json.dumps(hints, ensure_ascii=False)
+    assert "csv" in dumped
+    assert "Tickets" in dumped
+    assert "zone" in dumped
+    assert "referenced_fields" in dumped
+    assert "count" in dumped
+    assert "price" in dumped
+    assert "255" not in dumped
+    assert "Q1" not in dumped
+    assert "west" not in dumped
+    assert "closed" not in dumped
 
 
 def test_patch_feedback_summarizes_rejected_contract_failures() -> None:
