@@ -111,6 +111,36 @@ dev_probe_tasks:
     expected_answer: "255 dollars total."
     rubric: |
       Correct computation is 12*(18-7)-13 + 5*(18-7)-13 + 10*(9-3)-13 + 6*(15-5)-13 = 255. This probe uses CSV-style tables and column names that differ from train.
+  - id: dev_urgent_approved_value_margin
+    instruction: |
+      Compute the requested total from the three lookup tables.
+
+      Claims:
+      | claim | ref | bucket | approved | volume |
+      | a1 | M1 | urgent | yes | 12 |
+      | a2 | M2 | standard | yes | 6 |
+      | a3 | M3 | urgent | no | 7 |
+      | a4 | M3 | urgent | yes | 5 |
+      | a5 | M4 | urgent | yes | 9 |
+      | a6 | M2 | urgent | yes | 4 |
+
+      Reference economics:
+      | ref | income | outlay |
+      | M1 | 30 | 14 |
+      | M2 | 22 | 10 |
+      | M3 | 18 | 7 |
+      | M4 | 25 | 15 |
+
+      Bucket fees:
+      | bucket | fee |
+      | urgent | 11 |
+      | standard | 5 |
+
+      For urgent claims whose approved value is yes, compute sum(volume * (income - outlay) - fee).
+      Give only the final number and one short explanation sentence.
+    expected_answer: "341 dollars total."
+    rubric: |
+      Correct computation is 12*(30-14)-11 + 5*(18-7)-11 + 9*(25-15)-11 + 4*(22-10)-11 = 341. This dev probe keeps the same latent join/filter/aggregate operation but uses abstract column names and a yes/no filter phrased as "whose approved value is yes".
 blind_test_tasks:
   - id: blind_north_completed_margin
     instruction: |

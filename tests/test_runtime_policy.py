@@ -2724,6 +2724,18 @@ def test_repair_mechanism_config_loads() -> None:
     assert len(cfg.blind_test_tasks) == 1
 
 
+def test_table_join_hard_has_abstract_schema_dev_probe() -> None:
+    cfg = load_benchmark_config("configs/benchmark_table_join_hard.yaml")
+
+    by_id = {task.id: task for task in cfg.dev_probe_tasks}
+    task = by_id["dev_urgent_approved_value_margin"]
+    assert task.expected_answer == "341 dollars total."
+    assert "approved value is yes" in task.instruction
+    assert "gross" not in task.instruction
+    assert all(task.id != "blind_priority_done_margin" for task in cfg.dev_probe_tasks)
+    assert len(cfg.blind_test_tasks) == 2
+
+
 def test_merge_benchmark_context_adds_patch_feedback_only_for_rejections() -> None:
     transfer_context = {"heldout_probe": [{"task_id": "dev"}]}
     empty_feedback = {"iteration": 1, "has_rejections": False, "rejected_bundles": []}
