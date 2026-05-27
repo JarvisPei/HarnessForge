@@ -940,6 +940,56 @@ def test_parse_diagnosis_serializes_non_string_patch_bundle_content() -> None:
     assert '"tool": "adder"' in diagnosis.patch_bundles[0].content
 
 
+def test_parse_diagnosis_normalizes_contract_string_fields() -> None:
+    diagnosis = parse_diagnosis(
+        """
+{
+  "diagnosis": "Contract fields may be emitted as strings.",
+  "failure_categories": ["tool"],
+  "harness_patch": "Add a calculator.",
+  "patch_type": "tool",
+  "regression_test": "Parser should normalize contract scalar fields.",
+  "patch_bundles": [
+    {
+      "target_path": "harness/tools/calc.py",
+      "action": "create_or_replace",
+      "content": "def run(input: dict) -> dict:\\n    return {\\"ok\\": True}"
+    },
+    {
+      "target_path": "harness/tests/calc.json",
+      "action": "create_or_replace",
+      "content": "{\\"tool\\": \\"calc\\", \\"cases\\": []}"
+    }
+  ],
+  "harness_manifest": {
+    "bundle_id": "calc_bundle",
+    "intent": "Add a deterministic calculator.",
+    "allowed_paths": ["harness/tools/calc.py", "harness/tests/calc.json"],
+    "artifacts": [
+      {"path": "harness/tools/calc.py", "type": "tool", "purpose": "calculator"},
+      {"path": "harness/tests/calc.json", "type": "test", "purpose": "calculator tests"}
+    ],
+    "contracts": ["tool tests pass"],
+    "generalization_contract": {
+      "capability": "Compute deterministic totals.",
+      "expected_variations": ["renamed rows"],
+      "excluded_variations": ["ambiguous operations"],
+      "required_tests": ["harness/tests/calc.json"],
+      "operation_semantics": "Preserve local operation scope.",
+      "semantic_trace_requirements": "Expose selected rows and per-row contributions."
+    }
+  }
+}
+""".strip()
+    )
+
+    assert diagnosis.harness_manifest is not None
+    contract = diagnosis.harness_manifest.generalization_contract
+    assert contract is not None
+    assert contract.operation_semantics == ["Preserve local operation scope."]
+    assert contract.semantic_trace_requirements == ["Expose selected rows and per-row contributions."]
+
+
 def test_parse_diagnosis_repairs_raw_newlines_inside_content_strings() -> None:
     raw = """
 {

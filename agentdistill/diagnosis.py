@@ -86,6 +86,7 @@ def parse_diagnosis(raw: str) -> Diagnosis:
     if "patch_bundle" not in data and data["patch_bundles"]:
         data["patch_bundle"] = data["patch_bundles"][0]
     _normalize_patch_bundle_content(data)
+    _normalize_harness_manifest(data)
     if "policy_audit_cases" not in data or not isinstance(data.get("policy_audit_cases"), dict):
         data["policy_audit_cases"] = {}
     else:
@@ -117,6 +118,19 @@ def _normalize_patch_bundle_content(data: dict[str, Any]) -> None:
         data["patch_bundles"] = [normalize_bundle(bundle) for bundle in data["patch_bundles"]]
     if isinstance(data.get("patch_bundle"), dict):
         data["patch_bundle"] = normalize_bundle(data["patch_bundle"])
+
+
+def _normalize_harness_manifest(data: dict[str, Any]) -> None:
+    manifest = data.get("harness_manifest")
+    if not isinstance(manifest, dict):
+        return
+    contract = manifest.get("generalization_contract")
+    if not isinstance(contract, dict):
+        return
+    for key in ["operation_semantics", "semantic_trace_requirements"]:
+        value = contract.get(key)
+        if isinstance(value, str):
+            contract[key] = [value]
 
 
 def _repair_json_payload(text: str) -> str:
