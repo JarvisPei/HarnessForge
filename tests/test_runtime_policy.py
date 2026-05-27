@@ -22,6 +22,7 @@ from agentdistill.benchmark import (
     _run_phase,
     _should_request_critic_cases,
     _tasks_for_evolve_iteration,
+    _validate_architect_sketch_artifacts,
 )
 from agentdistill.contracts import (
     validate_runtime_policy_contract,
@@ -2753,6 +2754,120 @@ def test_run_phase_staged_architect_falls_back_to_one_pass(tmp_path: Path, monke
     assert len(teacher.calls) == 2
     assert "smallest harness-development route" in teacher.calls[0][0]["content"]
     assert teacher.calls[1][0]["content"] == "teacher"
+
+
+def test_staged_architect_rejects_invalid_sketch_artifact_shape() -> None:
+    validation = _validate_architect_sketch_artifacts(
+        {
+            "route": "executable_patch",
+            "artifacts": [
+                {"path": "harness/tools/table_lookup_aggregate.json", "type": "tool", "purpose": "bad suffix"},
+                {"path": "harness/tests/table_lookup_aggregate_cases.json", "type": "test", "purpose": "wrong stem"},
+            ],
+        }
+    )
+
+    assert validation is not None
+    assert validation["ok"] is False
+    assert any("tool artifacts must be" in failure["reason"] for failure in validation["failures"])
+
+
+def test_run_phase_staged_architect_falls_back_on_invalid_sketch(tmp_path: Path, monkeypatch) -> None:
+    class WeakClient:
+        async def complete(self, messages, temperature=0.2):
+            return "wrong"
+
+    class TeacherClient:
+        def __init__(self):
+            self.calls = []
+
+        async def complete(self, messages, temperature=0.2):
+            self.calls.append(messages)
+            content = messages[0]["content"]
+            if "smallest harness-development route" in content:
+                return json.dumps(
+                    {
+                        "route": "executable_patch",
+                        "patch_type": "tool",
+                        "artifacts": [
+                            {"path": "harness/tools/table_lookup_aggregate.json", "type": "tool", "purpose": "bad suffix"},
+                            {"path": "harness/tests/table_lookup_aggregate_cases.json", "type": "test", "purpose": "wrong stem"},
+                        ],
+                    }
+                )
+            return """
+            {
+              "diagnosis": "Fallback generated a valid skill.",
+              "failure_categories": ["prompting"],
+              "harness_patch": "Add skill.",
+              "patch_type": "skill",
+              "regression_test": "Check same task.",
+              "patch_bundles": [
+                {"target_path": "harness/skills/table_lookup.md", "action": "create_or_replace", "content": "Use table lookup carefully.\\n"}
+              ]
+            }
+            """
+
+    async def fake_apply(cfg, critic, critic_system, task, diagnosis, repo_root):
+        return {
+            "patch_status": "accepted",
+            "applied_patch_paths": [str(repo_root / bundle.target_path) for bundle in diagnosis.patch_bundles],
+            "rejected_patch_paths": [],
+            "contract_validation": [{"ok": True}],
+            "harness_manifest": None,
+        }
+
+    monkeypatch.setattr(benchmark_module, "_apply_diagnosis_with_optional_audit", fake_apply)
+
+    class HarnessConfig:
+        system_prompt_path = tmp_path / "weak_system.md"
+        skills_dir = tmp_path / "harness" / "skills"
+        guidelines_dir = tmp_path / "harness" / "guidelines"
+        validators_dir = tmp_path / "harness" / "validators"
+        tools_dir = tmp_path / "harness" / "tools"
+        runtime_policies_dir = tmp_path / "harness" / "runtime_policies"
+
+    class Config:
+        name = "test"
+        harness = HarnessConfig()
+        critic_mode = "off"
+        teacher_policy_audit = False
+        policy_generalization_audit = False
+        inner_repair_attempts = 0
+        architect_mode = "staged"
+
+    for directory in [
+        HarnessConfig.skills_dir,
+        HarnessConfig.guidelines_dir,
+        HarnessConfig.validators_dir,
+        HarnessConfig.tools_dir,
+        HarnessConfig.runtime_policies_dir,
+    ]:
+        directory.mkdir(parents=True)
+    HarnessConfig.system_prompt_path.write_text("system")
+
+    teacher = TeacherClient()
+    results = asyncio.run(
+        _run_phase(
+            Config(),
+            "train",
+            [TaskConfig(id="t", instruction="join table", expected_answer="1")],
+            WeakClient(),
+            teacher,
+            None,
+            "teacher",
+            "critic",
+            tmp_path / "outputs",
+            True,
+            tmp_path,
+        )
+    )
+
+    result = results["t"]
+    assert result["architect_route"] == "one_pass_fallback"
+    assert result["architect_sketch_validation"]["ok"] is False
+    assert result["patch_status"] == "accepted"
+    assert len(teacher.calls) == 2
 
 
 def test_run_phase_staged_architect_no_patch_returns_parseable_diagnosis(tmp_path: Path) -> None:

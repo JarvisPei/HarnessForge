@@ -160,6 +160,11 @@ For executable_patch, keep the sketch short and bounded:
   "complexity_budget": {"max_artifacts": 4, "max_test_cases": 4, "max_code_files": 2},
   "rationale": "one sentence"
 }
+Artifact path rules:
+- tool artifacts must be Python files: harness/tools/<name>.py.
+- runtime_policy artifacts must be Python files: harness/runtime_policies/<name>.py.
+- tests must be JSON files: harness/tests/<same_tool_or_policy_name>.json.
+- every tool or runtime_policy artifact needs a same-stem test artifact.
 For text_patch or one_pass, artifacts may be empty or only text artifacts. Keep rationale to one sentence."""
 
 

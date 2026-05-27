@@ -313,7 +313,8 @@ async def _run_phase(
             result["teacher_diagnosis"] = diagnosis.model_dump()
         applied_patch_paths: list[str] = []
         if apply_patches and diagnosis is not None and diagnosis.patch_bundles and diagnosis.failure_categories:
-            patch_result = _reject_outside_architect_sketch(diagnosis, result.get("architect_sketch"), repo_root)
+            architect_sketch = result.get("architect_sketch") if result.get("architect_route") == "staged_executable" else None
+            patch_result = _reject_outside_architect_sketch(diagnosis, architect_sketch, repo_root)
             if patch_result is None:
                 patch_result = await _apply_diagnosis_with_optional_audit(
                     cfg,
@@ -467,6 +468,26 @@ async def _maybe_run_staged_architect(
     if sketch.route == "no_patch":
         staged_result["teacher_diagnosis_raw"] = _no_patch_diagnosis(task.id, sketch.rationale)
         return staged_result
+    sketch_validation = _validate_architect_sketch_artifacts(sketch.model_dump())
+    if sketch_validation is not None:
+        staged_result["architect_sketch_validation"] = sketch_validation
+        fallback_messages = build_teacher_messages(
+            teacher_system,
+            task_id=task.id,
+            task_instruction=task.instruction,
+            expected_answer=task.expected_answer,
+            rubric=task.rubric,
+            weak_system_prompt=weak_system,
+            weak_answer=str(result.get("weak_answer", "")),
+            initial_weak_answer=str(result.get("initial_weak_answer", "")),
+            tool_call=result.get("tool_call") if isinstance(result.get("tool_call"), dict) else None,
+            tool_result=result.get("tool_result") if isinstance(result.get("tool_result"), dict) else None,
+            runtime_policy_results=_runtime_policy_results_for_prompt(result.get("runtime_policy_results")),
+            benchmark_context=benchmark_context,
+        )
+        staged_result["teacher_diagnosis_raw"] = await teacher.complete(fallback_messages, temperature=0.1)
+        staged_result["architect_route"] = "one_pass_fallback"
+        return staged_result
     if sketch.route != "executable_patch":
         fallback_messages = build_teacher_messages(
             teacher_system,
@@ -504,6 +525,65 @@ async def _maybe_run_staged_architect(
     staged_result["teacher_diagnosis_raw"] = await teacher.complete(bundle_messages, temperature=0.1)
     staged_result["architect_route"] = "staged_executable"
     return staged_result
+
+
+def _validate_architect_sketch_artifacts(sketch: dict[str, object]) -> dict[str, object] | None:
+    artifacts = sketch.get("artifacts")
+    if not isinstance(artifacts, list):
+        return {"ok": False, "reason": "architect sketch artifacts must be a list", "failures": []}
+    failures: list[dict[str, object]] = []
+    tool_stems: set[str] = set()
+    policy_stems: set[str] = set()
+    test_stems: set[str] = set()
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            failures.append({"artifact": artifact, "reason": "artifact must be an object"})
+            continue
+        path_value = artifact.get("path")
+        type_value = artifact.get("type")
+        if not isinstance(path_value, str) or not isinstance(type_value, str):
+            failures.append({"artifact": artifact, "reason": "artifact path and type must be strings"})
+            continue
+        path = Path(path_value)
+        parts = path.parts
+        stem = path.stem
+        if len(parts) != 3 or parts[0] != "harness":
+            failures.append({"path": path_value, "type": type_value, "reason": "artifact path must be under a direct harness subdirectory"})
+            continue
+        if type_value == "tool":
+            if parts[1] != "tools" or path.suffix != ".py":
+                failures.append({"path": path_value, "type": type_value, "reason": "tool artifacts must be harness/tools/<name>.py"})
+            else:
+                tool_stems.add(stem)
+        elif type_value == "runtime_policy":
+            if parts[1] != "runtime_policies" or path.suffix != ".py":
+                failures.append(
+                    {"path": path_value, "type": type_value, "reason": "runtime_policy artifacts must be harness/runtime_policies/<name>.py"}
+                )
+            else:
+                policy_stems.add(stem)
+        elif type_value == "test":
+            if parts[1] != "tests" or path.suffix != ".json":
+                failures.append({"path": path_value, "type": type_value, "reason": "test artifacts must be harness/tests/<name>.json"})
+            else:
+                test_stems.add(stem)
+        elif type_value in {"skill", "guideline", "validator"}:
+            expected_dir = {"skill": "skills", "guideline": "guidelines", "validator": "validators"}[type_value]
+            if parts[1] != expected_dir or path.suffix != ".md":
+                failures.append(
+                    {"path": path_value, "type": type_value, "reason": f"{type_value} artifacts must be harness/{expected_dir}/<name>.md"}
+                )
+        else:
+            failures.append({"path": path_value, "type": type_value, "reason": "unknown artifact type"})
+    missing_tool_tests = sorted(tool_stems - test_stems)
+    missing_policy_tests = sorted(policy_stems - test_stems)
+    if missing_tool_tests:
+        failures.append({"reason": "tool artifacts require same-stem harness/tests/<name>.json", "missing_tests_for": missing_tool_tests})
+    if missing_policy_tests:
+        failures.append({"reason": "runtime_policy artifacts require same-stem harness/tests/<name>.json", "missing_tests_for": missing_policy_tests})
+    if not failures:
+        return None
+    return {"ok": False, "reason": "architect sketch artifact paths violate harness interface rules", "failures": failures}
 
 
 def _no_patch_diagnosis(task_id: str, rationale: str) -> str:
