@@ -239,6 +239,8 @@ def _manifest(paths: list[str]) -> HarnessManifest:
             "expected_variations": ["different signed update values"],
             "excluded_variations": ["tasks that require tool execution"],
             "required_tests": [path for path in paths if "/tests/" in path],
+            "operation_semantics": ["preserve the signed update operation from the task text"],
+            "semantic_trace_requirements": ["policy decision exposes whether a forced fixture applies"],
         },
     )
 

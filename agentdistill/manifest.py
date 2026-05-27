@@ -29,6 +29,8 @@ class GeneralizationContract(BaseModel):
     expected_variations: list[str] = Field(default_factory=list)
     excluded_variations: list[str] = Field(default_factory=list)
     required_tests: list[str] = Field(default_factory=list)
+    operation_semantics: list[str] = Field(default_factory=list)
+    semantic_trace_requirements: list[str] = Field(default_factory=list)
 
 
 class HarnessManifest(BaseModel):
@@ -119,6 +121,10 @@ def _validate_generalization_contract(repo_root: Path, manifest: HarnessManifest
         results.append({"ok": False, "reason": "generalization_contract expected_variations must list at least one variation"})
     if not contract.required_tests:
         results.append({"ok": False, "reason": "generalization_contract required_tests must reference at least one test artifact"})
+    if not contract.operation_semantics:
+        results.append({"ok": False, "reason": "generalization_contract operation_semantics must list at least one invariant"})
+    if not contract.semantic_trace_requirements:
+        results.append({"ok": False, "reason": "generalization_contract semantic_trace_requirements must list at least one trace requirement"})
 
     test_artifact_paths = {
         _normalized_harness_path(repo_root, artifact.path)

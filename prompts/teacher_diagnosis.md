@@ -54,6 +54,8 @@ Each patch object has:
     - expected_variations: list of surface or schema variations the harness should support, such as renamed columns, renamed row nouns, reordered tables, aliases, numeric formats, or clause order changes
     - excluded_variations: list of variations intentionally out of scope
     - required_tests: exact harness/tests paths from this manifest that provide evidence for the claim
+    - operation_semantics: required for executable bundles. State semantic invariants such as local operation binding, whether a fee/penalty applies per row or once per group, sign polarity, unit conversion direction, join keys, and output-unit semantics.
+    - semantic_trace_requirements: required for executable bundles. State which intermediate fields tool tests/results should expose so operation semantics can be audited, such as per-row contributions, selected rows, source columns/values, applied fees, signs, units, conversion factors, and final aggregation formula.
 - patch_bundle: the first object from patch_bundles, kept for backward compatibility
 - confidence: number from 0 to 1
 
@@ -138,6 +140,10 @@ When a deterministic helper requires structured input, infer the latent schema f
 ## Meta-Skill: Tool Interface Design
 
 Design tools around stable domain-neutral schemas: an operation list, normalized quantities, target output, and trace fields when useful. The tool interface should make the weak model's job smaller and more reliable, but it should not hard-code task answers. If the benchmark suggests a family-level invariant, encode the invariant as reusable tool behavior with tests. It is acceptable for a tool to accept raw task text when the reliable improvement is a deterministic parser plus executor; in that case, tool tests must cover the parser's intermediate trace, not only the final result.
+
+## Meta-Skill: Operation Semantics
+
+When a helper performs arithmetic, aggregation, unit conversion, or structured extraction, preserve the operation semantics as first-class evidence. Do not change local operation scope to make a test pass: for example, keep per-row fees per-row, group-level fees group-level, subtractive cues subtractive, target-unit requests directional, and filter values bound to their source columns. Add tool tests that inspect trace fields, not only final totals. Useful trace fields include selected rows, rejected rows when relevant, per-row contributions, applied fee scope, signs, units, conversion factors, source column/value mappings, and final formula. If an expected test value disagrees with the trace semantics, repair the test expectation or explain the excluded variation; do not silently alter the operation semantics.
 
 ## Meta-Skill: Runtime Policy Test Design
 

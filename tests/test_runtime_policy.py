@@ -1477,6 +1477,8 @@ def test_generalization_contract_required_tests_must_reference_test_artifacts(tm
                 "expected_variations": ["different values"],
                 "excluded_variations": [],
                 "required_tests": ["harness/tests/missing_adder.json"],
+                "operation_semantics": ["addition is binary and commutative"],
+                "semantic_trace_requirements": ["return operands and total"],
             },
         }
     )
@@ -1509,6 +1511,89 @@ def run(input: dict) -> dict:
         item.get("reason") == "generalization_contract required_tests must reference manifest test artifacts"
         for item in result["contract_validation"]
     )
+
+
+def test_generalization_contract_requires_operation_semantics(tmp_path: Path) -> None:
+    from agentdistill.manifest import HarnessManifest
+
+    _make_harness_dirs(tmp_path)
+    task = TaskConfig(id="t", instruction="add 2 and 3", expected_answer="5")
+    manifest = HarnessManifest.model_validate(
+        {
+            "bundle_id": "adder_bundle",
+            "intent": "Add deterministic addition as a reusable harness tool.",
+            "allowed_paths": ["harness/tools/adder.py", "harness/tests/adder.json"],
+            "artifacts": [
+                {"path": "harness/tools/adder.py", "type": "tool", "purpose": "addition helper"},
+                {"path": "harness/tests/adder.json", "type": "test", "purpose": "tool tests"},
+            ],
+            "contracts": ["tool tests pass"],
+            "generalization_contract": {
+                "capability": "Deterministic addition.",
+                "expected_variations": ["different values"],
+                "excluded_variations": [],
+                "required_tests": ["harness/tests/adder.json"],
+            },
+        }
+    )
+
+    result = apply_patch_bundles_atomically(
+        tmp_path,
+        [
+            PatchBundle(
+                target_path="harness/tools/adder.py",
+                action="create_or_replace",
+                content="""
+def run(input: dict) -> dict:
+    return {"ok": True, "total": input["a"] + input["b"]}
+""".strip(),
+                rationale="Deterministic addition.",
+            ),
+            PatchBundle(
+                target_path="harness/tests/adder.json",
+                action="create_or_replace",
+                content='{"tool":"adder","cases":[{"input":{"a":2,"b":3},"expected":{"ok":true,"total":5}}]}',
+                rationale="Tool tests.",
+            ),
+        ],
+        task,
+        manifest,
+    )
+
+    assert result["patch_status"] == "rejected"
+    reasons = {item.get("reason") for item in result["contract_validation"]}
+    assert "generalization_contract operation_semantics must list at least one invariant" in reasons
+    assert "generalization_contract semantic_trace_requirements must list at least one trace requirement" in reasons
+
+
+def test_generalization_contract_preserves_operation_semantics_fields() -> None:
+    from agentdistill.manifest import HarnessManifest
+
+    manifest = HarnessManifest.model_validate(
+        {
+            "bundle_id": "semantic_bundle",
+            "intent": "Declare operation semantics.",
+            "allowed_paths": ["harness/tools/calc.py", "harness/tests/calc.json"],
+            "artifacts": [
+                {"path": "harness/tools/calc.py", "type": "tool", "purpose": "calculator"},
+                {"path": "harness/tests/calc.json", "type": "test", "purpose": "calculator tests"},
+            ],
+            "contracts": ["tool tests pass"],
+            "generalization_contract": {
+                "capability": "Compute row-level fee-adjusted totals.",
+                "expected_variations": ["renamed row labels"],
+                "excluded_variations": ["group-level fees"],
+                "required_tests": ["harness/tests/calc.json"],
+                "operation_semantics": ["fee is applied once per selected row"],
+                "semantic_trace_requirements": ["per-row contribution includes fee"],
+            },
+        }
+    )
+
+    contract = manifest.generalization_contract
+    assert contract is not None
+    assert contract.operation_semantics == ["fee is applied once per selected row"]
+    assert contract.semantic_trace_requirements == ["per-row contribution includes fee"]
 
 
 def test_runtime_policy_patch_requires_matching_policy_tests(tmp_path: Path) -> None:
@@ -1637,6 +1722,8 @@ def _manifest_for(paths: list[str]):
             "expected_variations": ["renamed entities", "different numeric values"],
             "excluded_variations": ["non-addition tasks"],
             "required_tests": [path for path in paths if Path(path).parts[1] == "tests"],
+            "operation_semantics": ["add the two numeric operands without changing their signs"],
+            "semantic_trace_requirements": ["return the operands and final total"],
         }
     return HarnessManifest.model_validate(payload)
 
@@ -3438,6 +3525,8 @@ def test_repair_probe_passes_patch_feedback_and_scope_to_teacher(tmp_path: Path)
                             "expected_variations": ["different signed update values"],
                             "excluded_variations": ["tasks that require tool execution"],
                             "required_tests": ["harness/tests/force_fixture.json"],
+                            "operation_semantics": ["preserve the signed update operation from the task text"],
+                            "semantic_trace_requirements": ["policy decision exposes whether a forced fixture applies"],
                         },
                     },
                 }
