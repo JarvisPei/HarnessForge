@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -19,6 +20,8 @@ class ModelSettings:
     api_key: str
     model: str
     timeout_seconds: float = 120.0
+    max_retries: int = 2
+    retry_backoff_seconds: float = 2.0
 
 
 class ChatClient:
@@ -41,10 +44,7 @@ class ChatClient:
             "Authorization": f"Bearer {self.settings.api_key}",
             "Content-Type": "application/json",
         }
-        async with httpx.AsyncClient(timeout=self.settings.timeout_seconds) as client:
-            response = await client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-            data = response.json()
+        data = await self._post_json_with_retries(url, headers, payload)
         return data["choices"][0]["message"]["content"]
 
     async def _complete_anthropic(self, messages: list[dict[str, str]], temperature: float) -> str:
@@ -64,11 +64,25 @@ class ChatClient:
             "anthropic-version": "2023-06-01",
             "Content-Type": "application/json",
         }
+        data = await self._post_json_with_retries(url, headers, payload)
+        return _extract_anthropic_text(data)
+
+    async def _post_json_with_retries(self, url: str, headers: dict[str, str], payload: dict[str, Any]) -> dict[str, Any]:
+        attempts = self.settings.max_retries + 1
+        for attempt in range(attempts):
+            try:
+                return await self._post_json_once(url, headers, payload)
+            except (httpx.HTTPStatusError, httpx.TimeoutException, httpx.TransportError) as exc:
+                if attempt >= self.settings.max_retries or not _is_retryable_error(exc):
+                    raise
+                await asyncio.sleep(self.settings.retry_backoff_seconds * (2**attempt))
+        raise RuntimeError("unreachable retry state")
+
+    async def _post_json_once(self, url: str, headers: dict[str, str], payload: dict[str, Any]) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=self.settings.timeout_seconds) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
-            data = response.json()
-        return _extract_anthropic_text(data)
+            return response.json()
 
 
 def load_model_settings(role: Role, profile: str | None = None) -> ModelSettings:
@@ -82,6 +96,20 @@ def load_model_settings(role: Role, profile: str | None = None) -> ModelSettings
             os.getenv(f"{fallback_prefix}_TIMEOUT_SECONDS{suffix}", str(default_timeout)),
         )
     )
+    default_max_retries = int(os.getenv("REQUEST_MAX_RETRIES", "2"))
+    max_retries = int(
+        os.getenv(
+            f"{prefix}_MAX_RETRIES{suffix}",
+            os.getenv(f"{fallback_prefix}_MAX_RETRIES{suffix}", str(default_max_retries)),
+        )
+    )
+    default_backoff = float(os.getenv("REQUEST_RETRY_BACKOFF_SECONDS", "2"))
+    retry_backoff = float(
+        os.getenv(
+            f"{prefix}_RETRY_BACKOFF_SECONDS{suffix}",
+            os.getenv(f"{fallback_prefix}_RETRY_BACKOFF_SECONDS{suffix}", str(default_backoff)),
+        )
+    )
     provider = os.getenv(f"{prefix}_PROVIDER{suffix}", os.getenv(f"{fallback_prefix}_PROVIDER{suffix}", "openai")).lower()
     if provider not in {"openai", "anthropic"}:
         raise RuntimeError(f"{prefix}_PROVIDER{suffix} must be openai or anthropic, got: {provider}")
@@ -92,7 +120,17 @@ def load_model_settings(role: Role, profile: str | None = None) -> ModelSettings
         api_key=_env_with_fallback(f"{prefix}_API_KEY{suffix}", f"{fallback_prefix}_API_KEY{suffix}"),
         model=_env_with_fallback(f"{prefix}_MODEL{suffix}", f"{fallback_prefix}_MODEL{suffix}"),
         timeout_seconds=timeout,
+        max_retries=max_retries,
+        retry_backoff_seconds=retry_backoff,
     )
+
+
+def _is_retryable_error(exc: Exception) -> bool:
+    if isinstance(exc, (httpx.TimeoutException, httpx.TransportError)):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in {408, 409, 425, 429, 500, 502, 503, 504}
+    return False
 
 
 def _env_with_fallback(name: str, fallback_name: str) -> str:

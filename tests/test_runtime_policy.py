@@ -43,7 +43,7 @@ from agentdistill.patches import apply_patch_bundles_atomically
 from agentdistill.patches import patch_group_is_executable
 from agentdistill.repair_efficiency import build_repair_efficiency_report
 from agentdistill.repair_fixture import run_repair_fixture
-from agentdistill.models import load_model_settings
+from agentdistill.models import ChatClient, ModelSettings, load_model_settings
 from agentdistill.run import run_task
 from agentdistill.teacher_prompt import build_teacher_payload, enrich_benchmark_context
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
@@ -1815,6 +1815,87 @@ def test_load_model_settings_prefers_role_specific_timeout(monkeypatch) -> None:
     monkeypatch.setenv("TEACHER_MODEL", "m")
     settings = load_model_settings("teacher")
     assert settings.timeout_seconds == 33.0
+
+
+def test_load_model_settings_reads_retry_controls(monkeypatch) -> None:
+    monkeypatch.setenv("REQUEST_MAX_RETRIES", "4")
+    monkeypatch.setenv("TEACHER_RETRY_BACKOFF_SECONDS", "0.5")
+    monkeypatch.setenv("TEACHER_PROVIDER", "openai")
+    monkeypatch.setenv("TEACHER_BASE_URL", "https://example.com")
+    monkeypatch.setenv("TEACHER_API_KEY", "k")
+    monkeypatch.setenv("TEACHER_MODEL", "m")
+
+    settings = load_model_settings("teacher")
+
+    assert settings.max_retries == 4
+    assert settings.retry_backoff_seconds == 0.5
+
+
+def test_chat_client_retries_retryable_status(monkeypatch) -> None:
+    calls = {"count": 0}
+
+    async def fake_post_once(self, url, headers, payload):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            request = httpx.Request("POST", url)
+            response = httpx.Response(504, request=request)
+            raise httpx.HTTPStatusError("gateway timeout", request=request, response=response)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    async def no_sleep(seconds):
+        return None
+
+    import httpx
+    import agentdistill.models as models_module
+
+    monkeypatch.setattr(ChatClient, "_post_json_once", fake_post_once)
+    monkeypatch.setattr(models_module.asyncio, "sleep", no_sleep)
+
+    client = ChatClient(
+        ModelSettings(
+            role="teacher",
+            provider="openai",
+            base_url="https://example.com/v1",
+            api_key="k",
+            model="m",
+            max_retries=1,
+        )
+    )
+
+    assert asyncio.run(client.complete([{"role": "user", "content": "hi"}])) == "ok"
+    assert calls["count"] == 2
+
+
+def test_chat_client_does_not_retry_bad_request(monkeypatch) -> None:
+    calls = {"count": 0}
+
+    async def fake_post_once(self, url, headers, payload):
+        calls["count"] += 1
+        request = httpx.Request("POST", url)
+        response = httpx.Response(400, request=request)
+        raise httpx.HTTPStatusError("bad request", request=request, response=response)
+
+    import httpx
+
+    monkeypatch.setattr(ChatClient, "_post_json_once", fake_post_once)
+    client = ChatClient(
+        ModelSettings(
+            role="teacher",
+            provider="openai",
+            base_url="https://example.com/v1",
+            api_key="k",
+            model="m",
+            max_retries=3,
+        )
+    )
+
+    try:
+        asyncio.run(client.complete([{"role": "user", "content": "hi"}]))
+    except httpx.HTTPStatusError:
+        pass
+    else:
+        raise AssertionError("Expected HTTPStatusError")
+    assert calls["count"] == 1
 
 
 def test_build_transfer_context_uses_heldout_probe_results() -> None:
