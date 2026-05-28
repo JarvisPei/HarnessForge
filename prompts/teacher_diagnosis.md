@@ -65,6 +65,8 @@ The framework applies patch_bundles atomically in a temporary code harness works
 
 If benchmark_context is present, mention in diagnosis how the previous transfer attempt failed and what change would generalize better. Favor the smallest bundle that plausibly fixes the transfer issue across the heldout probe pattern.
 
+If you add a tool and the weak trace did not already call a tool, the bundle must also include an activation path: a runtime policy plus its same-stem policy test. A tool-only patch that is never called is usually not a useful harness improvement. If benchmark_context.activation_transfer_hints is present, use it as abstract dev-style schema evidence for activation design: include at least one runtime policy test covering a listed schema variation, but do not hard-code task ids, expected answers, row ids, or final totals from those hints.
+
 If a deterministic helper would be more reliable than instructions, write a small Python tool under harness/tools. Python tools must be self-contained, deterministic, and avoid network, filesystem, subprocess, eval, exec, and imports outside the standard library. A callable tool must expose exactly this function:
 
 ```python
