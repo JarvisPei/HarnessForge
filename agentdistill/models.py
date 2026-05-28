@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -74,8 +75,24 @@ class ChatClient:
                 return await self._post_json_once(url, headers, payload)
             except (httpx.HTTPStatusError, httpx.TimeoutException, httpx.TransportError) as exc:
                 if attempt >= self.settings.max_retries or not _is_retryable_error(exc):
+                    print(
+                        "[model-retry] exhausted "
+                        f"role={self.settings.role} model={self.settings.model} "
+                        f"attempt={attempt + 1}/{attempts} error={_error_summary(exc)}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                     raise
-                await asyncio.sleep(self.settings.retry_backoff_seconds * (2**attempt))
+                sleep_seconds = self.settings.retry_backoff_seconds * (2**attempt)
+                print(
+                    "[model-retry] retrying "
+                    f"role={self.settings.role} model={self.settings.model} "
+                    f"attempt={attempt + 1}/{attempts} wait_seconds={sleep_seconds:g} "
+                    f"error={_error_summary(exc)}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                await asyncio.sleep(sleep_seconds)
         raise RuntimeError("unreachable retry state")
 
     async def _post_json_once(self, url: str, headers: dict[str, str], payload: dict[str, Any]) -> dict[str, Any]:
@@ -131,6 +148,12 @@ def _is_retryable_error(exc: Exception) -> bool:
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code in {408, 409, 425, 429, 500, 502, 503, 504}
     return False
+
+
+def _error_summary(exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"http_status_{exc.response.status_code}"
+    return exc.__class__.__name__
 
 
 def _env_with_fallback(name: str, fallback_name: str) -> str:
