@@ -16,7 +16,8 @@ The loop is intentionally simple:
 1. Run the weak model on a task with the current harness.
 2. Ask the teacher to diagnose the trace.
 3. Ask the teacher for a concrete harness patch.
-4. Save the trace, tests, and patch for regression and later consolidation.
+4. Apply contract-gated patches and repair rejected bundles.
+5. Save the trace, tests, and patch for regression and later consolidation.
 
 The working hypothesis is that small models become much more useful when the teacher keeps improving the harness they operate inside.
 
@@ -37,10 +38,12 @@ Latest structured extraction result:
 ## How It Works
 
 ```text
-weak model -> trace -> teacher diagnosis -> harness patch -> regression probes
+weak model -> trace -> teacher one-pass draft -> contract checks -> focused repair -> regression probes
 ```
 
 The teacher is asked to change the harness, not to solve the task directly.
+
+The current mainline is a one-pass teacher draft followed by focused repair feedback. A staged architect mode exists behind `--architect-mode staged` for ablations, but it is experimental and not the default path.
 
 ## Setup
 
