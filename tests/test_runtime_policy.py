@@ -4140,7 +4140,7 @@ def test_evidence_report_classifies_skill_transfer_without_runtime_effect(tmp_pa
     assert report["runs"][0]["evidence_status"] == "end_to_end_harness_transfer"
     assert report["aggregate"]["end_to_end_transfer_runs"] == 1
     assert report["aggregate"]["end_to_end_harness_transfer_runs"] == 1
-    assert "| structured_extraction_v2 | end_to_end_harness_transfer | skill | 1 | 2/0 | 2/0 | 0 |" in markdown
+    assert "| structured_extraction_v2 | end_to_end_harness_transfer | skill | 1 | 2/0 | 2/0 | 0 | 0 |" in markdown
 
 
 def test_evidence_report_classifies_test_only_acceptance(tmp_path: Path) -> None:

@@ -156,8 +156,8 @@ def render_evidence_markdown(report: dict[str, Any]) -> str:
         "",
         "## Runs",
         "",
-        "| run | status | artifacts | accepted | dev +/- | blind +/- | blind runtime |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: |",
+        "| run | status | artifacts | accepted | dev +/- | blind +/- | blind runtime effects | blind runtime wins |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |",
     ]
     if isinstance(rows, list):
         for row in rows:
@@ -172,6 +172,7 @@ def render_evidence_markdown(report: dict[str, Any]) -> str:
                 f"{_int(row.get('accepted'))} | "
                 f"{_int(row.get('dev_improved'))}/{_int(row.get('dev_regressed'))} | "
                 f"{_int(row.get('blind_improved'))}/{_int(row.get('blind_regressed'))} | "
+                f"{_int(row.get('blind_runtime_effect'))} | "
                 f"{_int(row.get('blind_improved_with_runtime_effect'))} |"
             )
     return "\n".join(lines) + "\n"

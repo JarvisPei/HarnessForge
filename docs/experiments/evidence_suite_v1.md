@@ -26,10 +26,10 @@ blind improved/regressed = 4/0
 blind improved with runtime effect = 2
 ```
 
-| run | status | artifacts | accepted | dev +/- | blind +/- | blind runtime |
-| --- | --- | --- | ---: | ---: | ---: | ---: |
-| table_join_hard_onepass_activation_hints_retry_v2 | end_to_end_runtime_transfer | runtime_policy, test, tool | 2 | 3/0 | 2/0 | 2 |
-| structured_extraction_v2 | end_to_end_harness_transfer | skill | 1 | 2/0 | 2/0 | 0 |
+| run | status | artifacts | accepted | dev +/- | blind +/- | blind runtime effects | blind runtime wins |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| table_join_hard_onepass_activation_hints_retry_v2 | end_to_end_runtime_transfer | runtime_policy, test, tool | 2 | 3/0 | 2/0 | 2 | 2 |
+| structured_extraction_v2 | end_to_end_harness_transfer | skill | 1 | 2/0 | 2/0 | 0 | 0 |
 
 ## Interpretation
 
