@@ -28,12 +28,22 @@ The project already has working end-to-end runs on the cloud workflow.
 - inventory arithmetic exposed interface and transfer issues
 - unit conversion showed that deterministic normalization can improve transfer
 - structured extraction and validation improved both dev and blind probes with a normalization skill
+- table-join aggregation improved dev and blind probes through a teacher-generated tool plus runtime policy
 
 Latest structured extraction result:
 
 - dev improved: 2
 - blind improved: 2
 - accepted harness update: normalization skill
+
+Latest table-join runtime result:
+
+- dev improved: 3
+- blind improved: 2
+- blind improvements with runtime effect: 2
+- accepted harness update: deterministic table calculator + runtime policy + tests
+
+The first compact evidence suite is documented in [docs/experiments/evidence_suite_v1.md](docs/experiments/evidence_suite_v1.md).
 
 ## How It Works
 
@@ -107,6 +117,12 @@ The public benchmark map is intentionally small and composable. These families a
 - Repair and transfer feedback: contract-gated repair loops that measure whether harness changes improve dev and blind probes
 
 The planning notes in [docs/benchmark_family_plan.md](docs/benchmark_family_plan.md) track how these families expand over time.
+
+To summarize completed benchmark runs as an evidence table:
+
+```bash
+python -m agentdistill.evidence --format markdown <run_dir> [<run_dir> ...]
+```
 
 ## Remote Workflow
 

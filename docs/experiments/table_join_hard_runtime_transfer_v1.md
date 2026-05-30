@@ -150,11 +150,51 @@ end_to_end_transfer = 1
 runtime_effect_without_blind_transfer = 2
 ```
 
-This changes the interpretation from "solved" to "mechanism established, transfer unstable." The teacher reliably produced or retained runtime-affecting harness artifacts, and blind tasks did trigger runtime behavior in all three runs. The main instability is inside the generated tool's schema generalization:
+This changed the interpretation from "solved" to "mechanism established, transfer unstable." The teacher reliably produced or retained runtime-affecting harness artifacts, and blind tasks did trigger runtime behavior in all three runs. The main instability was inside the generated tool's schema generalization:
 
 ```text
 v2 blind failure: tool returned "required tables or columns not found"
 v3 blind failure: tool returned "could not identify detail table"
 ```
 
-The next project step should target generated-tool generalization, especially table parser/schema inference, rather than more evidence instrumentation.
+The next project step targeted generated-tool generalization, especially table parser/schema inference, rather than more evidence instrumentation.
+
+## Updated Strong Run
+
+After feeding activation transfer hints into the one-pass teacher path and adding transient model API retry support, a new cloud run completed successfully:
+
+```bash
+REQUEST_TIMEOUT_SECONDS=1200 TEACHER_TIMEOUT_SECONDS=1200 WEAK_TIMEOUT_SECONDS=1200 \
+TEACHER_MAX_RETRIES=5 TEACHER_RETRY_BACKOFF_SECONDS=10 \
+  python -m agentdistill.benchmark \
+  --config configs/benchmark_table_join_hard.yaml \
+  --run-id table_join_hard_onepass_activation_hints_retry_v2
+```
+
+Result:
+
+```text
+dev_improved = 3 / 3
+blind_improved = 2 / 2
+dev_runtime_effect = 3 / 3
+blind_runtime_effect = 2 / 2
+blind_improved_with_runtime_effect = 2 / 2
+```
+
+The accepted harness contained:
+
+```text
+harness/tools/margin_table_calculator.py
+harness/runtime_policies/force_margin_table_calculator.py
+harness/tests/margin_table_calculator.json
+harness/tests/force_margin_table_calculator.json
+```
+
+Blind evidence:
+
+```text
+blind_north_completed_margin: weak before = 600, tool result after = 395
+blind_priority_done_margin: weak before = 418, tool result after = 406
+```
+
+The current interpretation is stronger than the initial repeatability check: `table_join_hard` is now a clean evidence case for end-to-end runtime transfer. The important caveat is that this is still a benchmark-family result, not proof that all generated tools generalize robustly across arbitrary table schemas.

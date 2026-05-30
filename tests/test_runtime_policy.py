@@ -33,7 +33,7 @@ from agentdistill.contracts import (
 )
 from agentdistill.critic import parse_critic_audit, validate_critic_policy_cases
 from agentdistill.diagnosis import PatchBundle, parse_architect_sketch, parse_diagnosis
-from agentdistill.evidence import build_evidence_report
+from agentdistill.evidence import build_evidence_report, render_evidence_markdown
 from agentdistill.feedback import build_patch_feedback, build_transfer_feedback, merge_benchmark_context
 from agentdistill.metrics import build_benchmark_metrics
 from agentdistill.report import build_impact_report, evaluate_success
@@ -4095,9 +4095,52 @@ def test_evidence_report_classifies_end_to_end_transfer(tmp_path: Path) -> None:
 
     report = build_evidence_report([run_dir])
 
-    assert report["runs"][0]["evidence_status"] == "end_to_end_transfer"
+    assert report["runs"][0]["evidence_status"] == "end_to_end_runtime_transfer"
     assert report["aggregate"]["end_to_end_transfer_runs"] == 1
+    assert report["aggregate"]["end_to_end_runtime_transfer_runs"] == 1
     assert report["aggregate"]["blind_improved_with_runtime_effect"] == 2
+
+
+def test_evidence_report_classifies_skill_transfer_without_runtime_effect(tmp_path: Path) -> None:
+    run_dir = tmp_path / "structured_extraction_v2"
+    run_dir.mkdir()
+    (run_dir / "metrics.json").write_text(
+        json.dumps(
+            {
+                "patches": {
+                    "accepted": 1,
+                    "accepted_runtime_artifact": 1,
+                    "accepted_test_only": 0,
+                    "accepted_but_no_runtime_artifact": 0,
+                    "applied_type_counts": {
+                        "guideline": 0,
+                        "skill": 1,
+                        "validator": 0,
+                        "tool": 0,
+                        "runtime_policy": 0,
+                        "test": 0,
+                    },
+                },
+                "dev_transfer": {"improved": 2, "regressed": 0},
+                "blind_transfer": {"improved": 2, "regressed": 0},
+                "runtime_effect": {
+                    "dev": {"after_runtime_effect": 0, "improved_with_runtime_effect": 0},
+                    "blind": {"after_runtime_effect": 0, "improved_with_runtime_effect": 0},
+                },
+                "repair_efficiency": {"patch_attempts": 1, "accepted": 1},
+            }
+        )
+    )
+
+    report = build_evidence_report([run_dir])
+    markdown = render_evidence_markdown(report)
+
+    assert report["runs"][0]["run_name"] == "structured_extraction_v2"
+    assert report["runs"][0]["artifact_types"] == ["skill"]
+    assert report["runs"][0]["evidence_status"] == "end_to_end_harness_transfer"
+    assert report["aggregate"]["end_to_end_transfer_runs"] == 1
+    assert report["aggregate"]["end_to_end_harness_transfer_runs"] == 1
+    assert "| structured_extraction_v2 | end_to_end_harness_transfer | skill | 1 | 2/0 | 2/0 | 0 |" in markdown
 
 
 def test_evidence_report_classifies_test_only_acceptance(tmp_path: Path) -> None:
