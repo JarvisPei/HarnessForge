@@ -363,3 +363,31 @@ should receive compact train-trace evidence and decide whether to improve the
 weak harness through a skill, state representation, validator, or a runtime
 policy that triggers official tau2 tools only. Do not manually write the tau
 harness content from this note, and do not use official test traces for repair.
+
+## Teacher Probe And Repair
+
+Date: 2026-06-03
+
+The train digest was passed to the teacher with the real tau2 weak system
+prompt and official tool specs. The teacher proposed a minimal executable
+bundle:
+
+- `harness/runtime_policies/tau_airline_force_initial_lookup.py`
+- `harness/tests/tau_airline_force_initial_lookup.json`
+
+The first validation rejected the bundle because the reservation-code extractor
+was too permissive and misread ordinary workflow words like `REFUND`,
+`MODIFY`, and `FLIGHT` as reservation codes.
+
+After feeding that rejection back through `benchmark_context.patch_feedback`
+and `repair_scope`, the teacher repaired the same bundle. The repaired version
+passed contract validation in a clean staging repo.
+
+Interpretation:
+
+- the teacher can now operate as an architect over a real benchmark digest
+- contract feedback is strong enough to repair a rejected runtime-policy bundle
+- the validation gate caught a bad extraction rule before it could land
+- the next cloud step should decide whether this policy is worth landing in
+  the canonical harness or whether a broader state-representation layer is a
+  better first repair for tau-bench
