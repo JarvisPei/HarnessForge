@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agentdistill.tau_bench import (
+    _append_tau_incoming_message,
+    _first_forced_tau_tool,
     build_tau_failure_digest,
+    build_tau_runtime_policy_payload,
     build_tau_teacher_context,
     message_to_plain_dict,
     parse_tau_tool_calls,
@@ -31,6 +34,11 @@ class FakeMessage:
     turn_idx: int | None = None
     timestamp: str | None = None
     id: str | None = None
+
+
+@dataclass
+class FakeMultiToolMessage:
+    tool_messages: list[FakeMessage]
 
 
 def test_parse_tau_tool_call_accepts_arguments() -> None:
@@ -67,6 +75,55 @@ def test_tau_message_to_chat_message_converts_tool_result_to_user_message() -> N
     assert converted["role"] == "user"
     assert "Tool result" in converted["content"]
     assert "ok" in converted["content"]
+
+
+def test_append_tau_incoming_message_keeps_user_context() -> None:
+    state_messages: list[object] = []
+    user_message = FakeMessage(role="user", content="Cancel reservation EHGLP3.")
+
+    _append_tau_incoming_message(state_messages, user_message)
+    _append_tau_incoming_message(state_messages, None)
+
+    assert state_messages == [user_message]
+
+
+def test_append_tau_incoming_message_expands_tool_messages() -> None:
+    state_messages: list[object] = []
+    tool_message = FakeMessage(role="tool", content='{"ok": true}', id="tool_1")
+
+    _append_tau_incoming_message(state_messages, FakeMultiToolMessage(tool_messages=[tool_message]))
+
+    assert state_messages == [tool_message]
+
+
+def test_build_tau_runtime_policy_payload_includes_conversation_metadata() -> None:
+    payload = build_tau_runtime_policy_payload(
+        initial_answer="How can I help you today?",
+        tau_messages=[
+            FakeMessage(role="user", content="Cancel reservation EHGLP3."),
+            FakeMessage(role="assistant", content="How can I help you today?"),
+            FakeMessage(role="user", content="My user ID is emma_kim_9957."),
+        ],
+        available_tools=["get_user_details", "get_reservation_details"],
+    )
+
+    assert payload["task_instruction"] == "Cancel reservation EHGLP3.\nMy user ID is emma_kim_9957."
+    assert payload["initial_answer"] == "How can I help you today?"
+    assert payload["available_tools"] == ["get_user_details", "get_reservation_details"]
+    assert payload["metadata"]["last_user_message"] == "My user ID is emma_kim_9957."
+    assert "assistant: How can I help you today?" in payload["metadata"]["conversation"]
+
+
+def test_first_forced_tau_tool_ignores_non_official_tools() -> None:
+    forced = _first_forced_tau_tool(
+        [
+            {"requires_tool": True, "tool_name": "helper_tool", "tool_input": {}},
+            {"requires_tool": True, "tool_name": "get_user_details", "tool_input": {"user_id": "u1"}},
+        ],
+        ["get_user_details"],
+    )
+
+    assert forced == {"requires_tool": True, "tool_name": "get_user_details", "tool_input": {"user_id": "u1"}}
 
 
 def test_message_to_plain_dict_keeps_tool_calls() -> None:

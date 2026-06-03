@@ -17,6 +17,7 @@ from rich.console import Console
 
 from agentdistill.harness import load_system_prompt
 from agentdistill.models import ChatClient, load_model_settings
+from agentdistill.tools import RuntimePolicyRegistry
 
 
 app = typer.Typer(add_completion=False)
@@ -31,6 +32,7 @@ class TauHarnessSettings:
     skills_dir: Path | None = None
     guidelines_dir: Path | None = None
     validators_dir: Path | None = None
+    runtime_policies_dir: Path | None = None
     max_tool_specs_chars: int = 12000
 
 
@@ -198,6 +200,16 @@ def _register_harnessforge_agent(tau: dict[str, Any], name: str, settings: TauHa
                 tools=tools,
                 settings=settings,
             )
+            self.policies = RuntimePolicyRegistry(
+                settings.runtime_policies_dir or settings.repo_root / "harness" / "runtime_policies"
+            )
+            self.official_tool_names = sorted(
+                {
+                    name
+                    for tool in tools
+                    if isinstance((name := getattr(tool, "name", tool.__class__.__name__)), str)
+                }
+            )
 
         def get_init_state(self, message_history: list[Any] | None = None) -> HarnessForgeTauState:
             message_history = list(message_history or [])
@@ -205,16 +217,28 @@ def _register_harnessforge_agent(tau: dict[str, Any], name: str, settings: TauHa
             return HarnessForgeTauState(messages=message_history)
 
         def generate_next_message(self, message: Any, state: HarnessForgeTauState) -> tuple[Any, HarnessForgeTauState]:
-            if message is not None:
-                if isinstance(message, tau["MultiToolMessage"]):
-                    state.messages.extend(message.tool_messages)
-            else:
-                state.messages.append(message)
+            _append_tau_incoming_message(state.messages, message)
             weak_messages = build_tau_weak_messages(self.weak_system, state.messages)
             raw = _complete_sync(self.client, weak_messages)
             if not raw.strip():
                 raw = "I need a moment to review the information before continuing."
             tool_payloads = parse_tau_tool_calls(raw)
+            policy_results: list[dict[str, Any]] = []
+            if not tool_payloads and self.policies.names:
+                policy_payload = build_tau_runtime_policy_payload(
+                    initial_answer=raw,
+                    tau_messages=state.messages,
+                    available_tools=self.official_tool_names,
+                )
+                policy_results = self.policies.evaluate(policy_payload)
+                forced_tool = _first_forced_tau_tool(policy_results, self.official_tool_names)
+                if forced_tool is not None:
+                    tool_payloads = [
+                        {
+                            "name": forced_tool["tool_name"],
+                            "arguments": forced_tool.get("tool_input", {}),
+                        }
+                    ]
             if tool_payloads:
                 assistant = AssistantMessage(
                     role="assistant",
@@ -228,10 +252,10 @@ def _register_harnessforge_agent(tau: dict[str, Any], name: str, settings: TauHa
                         )
                         for payload in tool_payloads
                     ],
-                    raw_data={"harnessforge_raw": raw},
+                    raw_data={"harnessforge_raw": raw, "runtime_policy_results": policy_results},
                 )
             else:
-                assistant = AssistantMessage.text(raw, raw_data={"harnessforge_raw": raw})
+                assistant = AssistantMessage.text(raw, raw_data={"harnessforge_raw": raw, "runtime_policy_results": policy_results})
             state.messages.append(assistant)
             return assistant, state
 
@@ -287,6 +311,61 @@ def build_tau_weak_messages(system_prompt: str, tau_messages: list[Any]) -> list
         if converted is not None:
             messages.append(converted)
     return messages
+
+
+def _append_tau_incoming_message(state_messages: list[Any], message: Any) -> None:
+    if message is None:
+        return
+    tool_messages = getattr(message, "tool_messages", None)
+    if tool_messages:
+        state_messages.extend(tool_messages)
+        return
+    state_messages.append(message)
+
+
+def build_tau_runtime_policy_payload(
+    *,
+    initial_answer: str,
+    tau_messages: list[Any],
+    available_tools: list[str],
+) -> dict[str, Any]:
+    transcript = []
+    user_messages = []
+    for message in tau_messages:
+        converted = tau_message_to_chat_message(message)
+        if converted is None:
+            continue
+        role = converted["role"]
+        content = converted["content"]
+        transcript.append(f"{role}: {content}")
+        if role == "user" and not content.startswith("Tool result"):
+            user_messages.append(content)
+    return {
+        "task_instruction": "\n".join(user_messages),
+        "initial_answer": initial_answer,
+        "tool_call": None,
+        "available_tools": available_tools,
+        "expected_answer": None,
+        "rubric": None,
+        "metadata": {
+            "conversation": "\n".join(transcript),
+            "last_user_message": user_messages[-1] if user_messages else "",
+        },
+    }
+
+
+def _first_forced_tau_tool(
+    policy_results: list[dict[str, Any]],
+    official_tool_names: list[str],
+) -> dict[str, Any] | None:
+    official = set(official_tool_names)
+    for result in policy_results:
+        tool_name = result.get("tool_name")
+        tool_input = result.get("tool_input", {})
+        if result.get("requires_tool") is True and isinstance(tool_name, str) and isinstance(tool_input, dict):
+            if tool_name in official:
+                return result
+    return None
 
 
 def tau_message_to_chat_message(message: Any) -> dict[str, str] | None:
