@@ -118,6 +118,8 @@ The public benchmark map is intentionally small and composable. These families a
 
 The planning notes in [docs/benchmark_family_plan.md](docs/benchmark_family_plan.md) track how these families expand over time.
 
+The next real-benchmark validation plan is documented in [docs/real_benchmark_plan.md](docs/real_benchmark_plan.md). It defines how HarnessForge should move from synthetic mechanism probes to tau-bench text-mode evaluation without leaking blind tasks to the teacher.
+
 To summarize completed benchmark runs as an evidence table:
 
 ```bash
