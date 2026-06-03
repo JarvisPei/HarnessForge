@@ -91,6 +91,7 @@ async def run_experiment(
                     task,
                     diagnosis.harness_manifest,
                     teacher_policy_cases=diagnosis.policy_audit_cases if patch_group_is_executable(diagnosis.patch_bundles) else None,
+                    teacher_tool_cases=diagnosis.tool_audit_cases if patch_group_is_executable(diagnosis.patch_bundles) else None,
                 )
                 result.update(patch_result)
                 applied_patch_paths = list(patch_result.get("applied_patch_paths", []))

@@ -19,6 +19,7 @@ class Diagnosis(BaseModel):
     regression_test: str
     confidence: float | None = None
     policy_audit_cases: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    tool_audit_cases: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
     parse_status: str = "parsed"
     patch_bundle: "PatchBundle | None" = None
     patch_bundles: list["PatchBundle"] = Field(default_factory=list)
@@ -105,16 +106,8 @@ def parse_diagnosis(raw: str) -> Diagnosis:
         data["patch_bundle"] = data["patch_bundles"][0]
     _normalize_patch_bundle_content(data)
     _normalize_harness_manifest(data)
-    if "policy_audit_cases" not in data or not isinstance(data.get("policy_audit_cases"), dict):
-        data["policy_audit_cases"] = {}
-    else:
-        normalized_policy_audit_cases: dict[str, list[dict[str, Any]]] = {}
-        for policy_name, cases in data["policy_audit_cases"].items():
-            if isinstance(cases, list):
-                normalized_policy_audit_cases[str(policy_name)] = [case for case in cases if isinstance(case, dict)]
-            elif isinstance(cases, dict):
-                normalized_policy_audit_cases[str(policy_name)] = [cases]
-        data["policy_audit_cases"] = normalized_policy_audit_cases
+    data["policy_audit_cases"] = _normalize_audit_case_map(data.get("policy_audit_cases"))
+    data["tool_audit_cases"] = _normalize_audit_case_map(data.get("tool_audit_cases"))
     data["parse_status"] = parse_status
     return Diagnosis.model_validate(data)
 
@@ -193,6 +186,18 @@ def _normalize_harness_manifest(data: dict[str, Any]) -> None:
             contract[key] = [value]
 
 
+def _normalize_audit_case_map(value: Any) -> dict[str, list[dict[str, Any]]]:
+    if not isinstance(value, dict):
+        return {}
+    normalized: dict[str, list[dict[str, Any]]] = {}
+    for name, cases in value.items():
+        if isinstance(cases, list):
+            normalized[str(name)] = [case for case in cases if isinstance(case, dict)]
+        elif isinstance(cases, dict):
+            normalized[str(name)] = [cases]
+    return normalized
+
+
 def _repair_json_payload(text: str) -> str:
     return _remove_unmatched_closing_square_brackets(_escape_unescaped_control_chars_in_strings(text))
 
@@ -263,6 +268,10 @@ def write_patch_artifact(
         "## Policy Audit Cases",
         "",
         json.dumps(diagnosis.policy_audit_cases, indent=2, ensure_ascii=False),
+        "",
+        "## Tool Audit Cases",
+        "",
+        json.dumps(diagnosis.tool_audit_cases, indent=2, ensure_ascii=False),
         "",
         "## Harness Manifest",
         "",

@@ -8,6 +8,7 @@ from agentdistill.config import TaskConfig
 from agentdistill.contracts import (
     validate_runtime_policy_contract,
     validate_runtime_policy_tests,
+    validate_teacher_tool_cases,
     validate_tool_contract,
 )
 from agentdistill.diagnosis import PatchBundle, _safe_harness_path, apply_patch_bundle
@@ -28,6 +29,7 @@ def apply_patch_bundles_atomically(
     manifest: HarnessManifest | None = None,
     critic_policy_cases: dict[str, list[dict[str, Any]]] | None = None,
     teacher_policy_cases: dict[str, list[dict[str, Any]]] | None = None,
+    teacher_tool_cases: dict[str, list[dict[str, Any]]] | None = None,
     enable_policy_generalization_audit: bool = False,
 ) -> dict[str, Any]:
     applied: list[AppliedPatch] = []
@@ -56,6 +58,7 @@ def apply_patch_bundles_atomically(
             [patch.path for patch in staged_applied],
             critic_policy_cases=critic_policy_cases,
             teacher_policy_cases=teacher_policy_cases,
+            teacher_tool_cases=teacher_tool_cases,
             enable_policy_generalization_audit=enable_policy_generalization_audit,
         )
         failures = [result for result in contract_results if result.get("ok") is not True]
@@ -106,6 +109,7 @@ def _validate_patch_group(
     paths: list[Path],
     critic_policy_cases: dict[str, list[dict[str, Any]]] | None = None,
     teacher_policy_cases: dict[str, list[dict[str, Any]]] | None = None,
+    teacher_tool_cases: dict[str, list[dict[str, Any]]] | None = None,
     enable_policy_generalization_audit: bool = False,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
@@ -114,6 +118,15 @@ def _validate_patch_group(
     for path in paths:
         if path.is_relative_to(tools_root):
             results.append({"path": str(path), **validate_tool_contract(repo_root, path)})
+            tool_cases = (teacher_tool_cases or {}).get(path.stem, [])
+            if tool_cases:
+                results.append(
+                    {
+                        "path": str(path),
+                        "teacher_tool_cases": tool_cases,
+                        **validate_teacher_tool_cases(repo_root, path, tool_cases),
+                    }
+                )
         if path.is_relative_to(policies_root):
             results.append({"path": str(path), **validate_runtime_policy_contract(repo_root, task, path)})
             results.append({"path": str(path), **validate_runtime_policy_tests(repo_root, path)})

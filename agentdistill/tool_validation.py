@@ -21,6 +21,18 @@ def validate_tool_tests(repo_root: Path, tool_name: str) -> dict[str, Any]:
     if not isinstance(cases, list) or not cases:
         return {"ok": False, "reason": "test file must contain a non-empty cases list"}
 
+    return validate_tool_case_data(repo_root, tool_name, cases)
+
+
+def validate_tool_case_data(
+    repo_root: Path,
+    tool_name: str,
+    cases: list[Any],
+    reason: str = "all tool tests passed",
+) -> dict[str, Any]:
+    if not isinstance(cases, list) or not cases:
+        return {"ok": False, "reason": "tool audit cases must be a non-empty list", "tool": tool_name}
+
     tools = ToolRegistry(repo_root / "harness" / "tools")
     failures = []
     for idx, case in enumerate(cases):
@@ -47,7 +59,7 @@ def validate_tool_tests(repo_root: Path, tool_name: str) -> dict[str, Any]:
 
     if failures:
         return {"ok": False, "reason": "one or more tool tests failed", "failures": failures}
-    return {"ok": True, "reason": "all tool tests passed", "num_cases": len(cases)}
+    return {"ok": True, "reason": reason, "tool": tool_name, "num_cases": len(cases)}
 
 
 def load_json_test_file(repo_root: Path, name: str) -> tuple[Path, dict[str, Any] | None, dict[str, Any] | None]:

@@ -796,6 +796,12 @@ def test_parse_diagnosis_accepts_patch_bundles() -> None:
       }
     ]
   },
+  "tool_audit_cases": {
+    "adder": {
+      "input": {"a": 4, "b": 5},
+      "expected": {"ok": true, "total": 9}
+    }
+  },
   "confidence": 0.8
 }
 """.strip()
@@ -807,6 +813,7 @@ def test_parse_diagnosis_accepts_patch_bundles() -> None:
     assert diagnosis.harness_manifest is not None
     assert diagnosis.harness_manifest.bundle_id == "adder_bundle"
     assert diagnosis.policy_audit_cases["force_adder"][0]["expected"]["tool_name"] == "adder"
+    assert diagnosis.tool_audit_cases["adder"][0]["expected"]["total"] == 9
 
 
 def test_parse_diagnosis_allows_missing_bundle_rationale() -> None:
@@ -1264,6 +1271,61 @@ def evaluate(input: dict) -> dict:
         for contract in result["contract_validation"]
         if isinstance(contract, dict)
     )
+
+
+def test_atomic_patch_bundles_rejects_teacher_tool_audit_case(tmp_path: Path) -> None:
+    _make_harness_dirs(tmp_path)
+    task = TaskConfig(id="t", instruction="add 2 and 3", expected_answer="5")
+
+    result = apply_patch_bundles_atomically(
+        tmp_path,
+        [
+            PatchBundle(
+                target_path="harness/tools/adder.py",
+                action="create_or_replace",
+                content="""
+def run(input: dict) -> dict:
+    return {"ok": True, "total": 5}
+""".strip(),
+                rationale="Buggy addition.",
+            ),
+            PatchBundle(
+                target_path="harness/tests/adder.json",
+                action="create_or_replace",
+                content="""
+{
+  "tool": "adder",
+  "cases": [
+    {
+      "input": {"a": 2, "b": 3},
+      "expected": {"ok": true, "total": 5}
+    }
+  ]
+}
+""".strip(),
+                rationale="Covers only the trigger case.",
+            ),
+        ],
+        task,
+        _manifest_for(["harness/tools/adder.py", "harness/tests/adder.json"]),
+        teacher_tool_cases={
+            "adder": [
+                {
+                    "input": {"a": 4, "b": 5},
+                    "expected": {"ok": True, "total": 9},
+                }
+            ]
+        },
+    )
+
+    assert result["patch_status"] == "rejected"
+    assert any(
+        contract.get("reason") == "one or more tool tests failed"
+        and contract.get("teacher_tool_cases")
+        for contract in result["contract_validation"]
+        if isinstance(contract, dict)
+    )
+    assert not (tmp_path / "harness" / "tools" / "adder.py").exists()
 
 
 def test_patch_group_is_executable_requires_tools_or_policy_python(tmp_path: Path) -> None:
@@ -3521,6 +3583,7 @@ train_tasks:
     assert cfg.transfer_context_mode == "heldout_probe"
     assert cfg.repair_mode == "full_train"
     assert cfg.teacher_policy_audit is True
+    assert cfg.teacher_tool_audit is True
     assert _critic_enabled(cfg.critic_mode) is False
     assert _should_request_critic_cases(cfg.critic_mode, None) is False
 
@@ -3535,6 +3598,7 @@ output_dir: outputs/no_teacher_audit
 weak: {role: weak}
 teacher: {role: teacher}
 teacher_policy_audit: false
+teacher_tool_audit: false
 harness:
   system_prompt_path: prompts/weak_system.md
 train_tasks:
@@ -3546,6 +3610,7 @@ train_tasks:
     cfg = load_benchmark_config(config_path)
 
     assert cfg.teacher_policy_audit is False
+    assert cfg.teacher_tool_audit is False
 
 
 def test_benchmark_config_can_enable_critic_always(tmp_path: Path) -> None:
@@ -3644,6 +3709,7 @@ def test_unit_conversion_focused_benchmark_config_exercises_transfer_repair() ->
     assert cfg.repair_mode == "focused"
     assert cfg.inner_repair_attempts == 1
     assert cfg.teacher_policy_audit is True
+    assert cfg.teacher_tool_audit is True
     assert cfg.policy_generalization_audit is True
     assert [task.id for task in cfg.train_tasks] == ["train_solution_liters"]
     assert [task.id for task in cfg.dev_probe_tasks] == [

@@ -37,6 +37,7 @@ Return JSON only with these fields:
 - patch_type: one of prompt_guideline, skill, tool, validator, state_representation, runtime_policy
 - regression_test: a future test that would catch this failure
 - policy_audit_cases: optional map from policy name to additional runtime policy audit cases that should be added to the same harness bundle when the patch changes a runtime policy. Each case must follow the runtime policy test schema and should target a generalization gap or heldout-style hazard, not a memorized benchmark item.
+- tool_audit_cases: optional map from tool name to additional tool audit cases that should be added to the same harness bundle when the patch creates or changes a tool. Each case must follow the tool test case schema with input and expected objects. Use this for semantic coverage hazards: operation signs, event paraphrases, aliases, units, schema variants, or parser edge cases that the ordinary regression tests might miss. These cases should be teacher-designed generalization checks, not copied benchmark blind items.
 - patch_bundles: a list of one or more patch objects. Use this when one harness improvement needs multiple files, such as tool code plus tests plus a runtime policy.
 Each patch object has:
   - target_path: one relative path under harness/guidelines, harness/skills, harness/validators, harness/tools, harness/runtime_policies, or harness/tests
@@ -67,7 +68,7 @@ If benchmark_context is present, mention in diagnosis how the previous transfer 
 
 If you add a tool and the weak trace did not already call a tool, the bundle must also include an activation path: a runtime policy plus its same-stem policy test. A tool-only patch that is never called is usually not a useful harness improvement. If benchmark_context.activation_transfer_hints is present, use it as abstract dev-style schema evidence for activation design: include at least one runtime policy test covering a listed schema variation, but do not hard-code task ids, expected answers, row ids, or final totals from those hints.
 
-If a deterministic helper would be more reliable than instructions, write a small Python tool under harness/tools. Python tools must be self-contained, deterministic, and avoid network, filesystem, subprocess, eval, exec, and imports outside the standard library. A callable tool must expose exactly this function:
+If a deterministic helper would be more reliable than instructions, write a small Python tool under harness/tools. Python tools must be self-contained, deterministic, and avoid network, filesystem, subprocess, eval, exec, and imports outside the standard library. When a tool maps natural-language evidence to semantic operations, use tool_audit_cases to test coverage beyond the triggering wording: include paraphrases or schema variants for each operation class the tool claims to support, and inspect trace fields when possible. A callable tool must expose exactly this function:
 
 ```python
 def run(input: dict) -> dict:

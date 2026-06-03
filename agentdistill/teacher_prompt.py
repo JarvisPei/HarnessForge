@@ -180,6 +180,7 @@ Return JSON only with these fields:
 - patch_type: one of prompt_guideline, skill, tool, validator, state_representation, runtime_policy.
 - regression_test: concise future regression test description.
 - policy_audit_cases: optional map from runtime policy name to extra policy test cases.
+- tool_audit_cases: optional map from tool name to extra tool audit cases. Each case follows the tool test case schema with input and expected objects. Use this for semantic coverage hazards such as event paraphrases, operation signs, aliases, units, schema variants, or parser edge cases that ordinary regression tests may miss.
 - patch_bundles: list of patch objects.
 - harness_manifest: required for any tool, runtime_policy, or test file.
 - patch_bundle: the first patch object, kept for backward compatibility.

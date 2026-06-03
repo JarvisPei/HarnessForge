@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from agentdistill.config import TaskConfig
-from agentdistill.tool_validation import load_json_test_file, validate_tool_tests
+from agentdistill.tool_validation import load_json_test_file, validate_tool_case_data, validate_tool_tests
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
 
 
@@ -242,6 +242,16 @@ def validate_tool_contract(repo_root: Path, tool_path: Path) -> dict[str, Any]:
         "tests_path": str(tests_path),
         "tool_test_result": result,
     }
+
+
+def validate_teacher_tool_cases(repo_root: Path, tool_path: Path, audit_cases: list[dict[str, Any]]) -> dict[str, Any]:
+    tool_name = tool_path.stem
+    return validate_tool_case_data(
+        repo_root,
+        tool_name,
+        list(audit_cases),
+        reason="teacher tool audit cases passed",
+    )
 
 
 def _tool_result_matches_expected(expected_answer: str, tool_result: dict[str, Any]) -> bool:

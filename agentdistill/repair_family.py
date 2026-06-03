@@ -597,6 +597,7 @@ async def _run_case(
                 case.task,
                 diagnosis.harness_manifest,
                 teacher_policy_cases=diagnosis.policy_audit_cases if patch_group_is_executable(diagnosis.patch_bundles) else None,
+                teacher_tool_cases=diagnosis.tool_audit_cases if patch_group_is_executable(diagnosis.patch_bundles) else None,
             )
         else:
             final_patch = {
@@ -766,6 +767,7 @@ async def _run_transfer_feedback_repair(
             case.task,
             diagnosis.harness_manifest,
             teacher_policy_cases=diagnosis.policy_audit_cases if patch_group_is_executable(diagnosis.patch_bundles) else None,
+            teacher_tool_cases=diagnosis.tool_audit_cases if patch_group_is_executable(diagnosis.patch_bundles) else None,
         )
     else:
         repair_patch = {

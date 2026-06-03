@@ -39,6 +39,7 @@ def main(
     inner_repair_attempts: int | None = typer.Option(None, "--inner-repair-attempts", min=0),
     evolve_iterations: int | None = typer.Option(None, "--evolve-iterations", min=1),
     teacher_policy_audit: bool | None = typer.Option(None, "--teacher-policy-audit/--no-teacher-policy-audit"),
+    teacher_tool_audit: bool | None = typer.Option(None, "--teacher-tool-audit/--no-teacher-tool-audit"),
     architect_mode: Literal["one_pass", "staged"] | None = typer.Option(None, "--architect-mode"),
 ) -> None:
     load_dotenv(override=True)
@@ -51,6 +52,8 @@ def main(
         cfg.evolve_iterations = evolve_iterations
     if teacher_policy_audit is not None:
         cfg.teacher_policy_audit = teacher_policy_audit
+    if teacher_tool_audit is not None:
+        cfg.teacher_tool_audit = teacher_tool_audit
     if architect_mode is not None:
         cfg.architect_mode = architect_mode
     asyncio.run(run_benchmark(cfg, profile, run_id))
@@ -652,6 +655,8 @@ async def _apply_diagnosis_with_optional_audit(
     if cfg.teacher_policy_audit and diagnosis.policy_audit_cases and patch_group_is_executable(diagnosis.patch_bundles):
         teacher_audits = {"policy_audit_cases": diagnosis.policy_audit_cases}
         teacher_policy_cases.update(diagnosis.policy_audit_cases)
+    if cfg.teacher_tool_audit and diagnosis.tool_audit_cases and patch_group_is_executable(diagnosis.patch_bundles):
+        teacher_audits["tool_audit_cases"] = diagnosis.tool_audit_cases
     patch_result = apply_patch_bundles_atomically(
         repo_root,
         diagnosis.patch_bundles,
@@ -659,6 +664,7 @@ async def _apply_diagnosis_with_optional_audit(
         diagnosis.harness_manifest,
         critic_policy_cases=critic_policy_cases,
         teacher_policy_cases=teacher_policy_cases,
+        teacher_tool_cases=diagnosis.tool_audit_cases if cfg.teacher_tool_audit and patch_group_is_executable(diagnosis.patch_bundles) else None,
         enable_policy_generalization_audit=cfg.policy_generalization_audit,
     )
     if critic_audits:
