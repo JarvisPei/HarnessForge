@@ -6,6 +6,7 @@ from agentdistill.tau_bench import (
     message_to_plain_dict,
     parse_tau_tool_calls,
     simulation_run_to_trace,
+    task_error_to_trace,
     tau_message_to_chat_message,
 )
 
@@ -42,6 +43,11 @@ def test_parse_tau_tool_call_accepts_input_alias_and_fences() -> None:
     payload = '```json\n{"tool_call": {"name": "lookup", "input": {"x": 1}}}\n```'
 
     assert parse_tau_tool_calls(payload) == [{"name": "lookup", "arguments": {"x": 1}}]
+
+
+def test_parse_tau_tool_call_handles_empty_content() -> None:
+    assert parse_tau_tool_calls(None) == []
+    assert parse_tau_tool_calls("") == []
 
 
 def test_tau_message_to_chat_message_converts_tool_result_to_user_message() -> None:
@@ -106,3 +112,14 @@ def test_simulation_run_to_trace_with_plain_dict() -> None:
             "timestamp": None,
         }
     ]
+
+
+def test_task_error_to_trace_records_adapter_error() -> None:
+    task = type("Task", (), {"id": "task_1"})()
+
+    trace = task_error_to_trace(task, domain="airline", split="train", exc=ValueError("bad response"))
+
+    assert trace["task_id"] == "task_1"
+    assert trace["termination_reason"] == "adapter_error"
+    assert trace["reward_info"] is None
+    assert trace["error"] == {"type": "ValueError", "message": "bad response"}

@@ -117,9 +117,13 @@ def run_tau_bench_smoke(
     traces: list[dict[str, Any]] = []
     for index, task in enumerate(tasks, start=1):
         console.print(f"[cyan]tau task[/cyan] {index}/{len(tasks)} {task.id}")
-        orchestrator = tau["build_text_orchestrator"](config, task, seed=seed + index)
-        simulation_run = tau["run_simulation"](orchestrator)
-        trace = simulation_run_to_trace(simulation_run, domain=domain, split=split)
+        try:
+            orchestrator = tau["build_text_orchestrator"](config, task, seed=seed + index)
+            simulation_run = tau["run_simulation"](orchestrator)
+            trace = simulation_run_to_trace(simulation_run, domain=domain, split=split)
+        except Exception as exc:
+            trace = task_error_to_trace(task, domain=domain, split=split, exc=exc)
+            console.print(f"[red]tau task error[/red] {task.id}: {exc.__class__.__name__}: {exc}")
         traces.append(trace)
         (output_dir / f"{_safe_task_id(task.id)}.json").write_text(
             json.dumps(trace, indent=2, ensure_ascii=False),
@@ -202,10 +206,12 @@ def _register_harnessforge_agent(tau: dict[str, Any], name: str, settings: TauHa
             if message is not None:
                 if isinstance(message, tau["MultiToolMessage"]):
                     state.messages.extend(message.tool_messages)
-                else:
-                    state.messages.append(message)
+            else:
+                state.messages.append(message)
             weak_messages = build_tau_weak_messages(self.weak_system, state.messages)
             raw = _complete_sync(self.client, weak_messages)
+            if not raw.strip():
+                raw = "I need a moment to review the information before continuing."
             tool_payloads = parse_tau_tool_calls(raw)
             if tool_payloads:
                 assistant = AssistantMessage(
@@ -315,7 +321,9 @@ def tau_message_to_chat_message(message: Any) -> dict[str, str] | None:
     return None
 
 
-def parse_tau_tool_calls(content: str) -> list[dict[str, Any]]:
+def parse_tau_tool_calls(content: str | None) -> list[dict[str, Any]]:
+    if not content:
+        return []
     text = _strip_code_fences(content.strip())
     if not text.startswith("{"):
         return []
@@ -357,6 +365,29 @@ def simulation_run_to_trace(simulation_run: Any, *, domain: str, split: str) -> 
         "seed": data.get("seed"),
         "messages": messages,
         "raw": data,
+    }
+
+
+def task_error_to_trace(task: Any, *, domain: str, split: str, exc: Exception) -> dict[str, Any]:
+    return {
+        "schema": "harnessforge.tau_bench_trace.v1",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "domain": domain,
+        "split": split,
+        "task_id": getattr(task, "id", None),
+        "simulation_id": None,
+        "termination_reason": "adapter_error",
+        "reward_info": None,
+        "agent_cost": None,
+        "user_cost": None,
+        "duration": None,
+        "seed": None,
+        "messages": [],
+        "error": {
+            "type": exc.__class__.__name__,
+            "message": str(exc),
+        },
+        "raw": {},
     }
 
 
@@ -408,7 +439,7 @@ def _complete_sync(client: ChatClient, messages: list[dict[str, str]]) -> str:
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(client.complete(messages, temperature=0.1))
+        return str(asyncio.run(client.complete(messages, temperature=0.1)) or "")
     raise RuntimeError("HarnessForge tau-bench adapter cannot run inside an existing asyncio loop yet")
 
 
