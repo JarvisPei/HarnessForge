@@ -186,6 +186,7 @@ that would mostly restrict HarnessForge to prompt injection.
 Smoke command:
 
 ```bash
+TAU2_DATA_DIR=$HOME/projects/tau2-bench/data \
 python -m agentdistill.tau_bench \
   --domain airline \
   --split train \
@@ -195,6 +196,53 @@ python -m agentdistill.tau_bench \
 
 Set `TAU_USER_LLM` or pass `--user-llm` for the tau2 user simulator. The
 HarnessForge agent uses the normal `WEAK_*` environment variables.
+
+Runtime setup note:
+
+- `pip install git+https://github.com/sierra-research/tau2-bench.git` installs
+  the Python package.
+- The wheel does not provide the benchmark data directory in the expected place.
+  Keep a source checkout and set `TAU2_DATA_DIR=$HOME/projects/tau2-bench/data`
+  for smoke/evaluation runs.
+
+## First Cloud Smoke
+
+Date: 2026-06-03
+
+Cloud VM command shape:
+
+```bash
+TAU2_DATA_DIR=$HOME/projects/tau2-bench/data \
+python -m agentdistill.tau_bench \
+  --domain airline \
+  --split train \
+  --num-tasks 1 \
+  --user-llm gpt-5.5 \
+  --output-dir outputs/tau_bench_smoke/airline_train_1 \
+  --max-steps 40 \
+  --max-errors 3 \
+  --timeout 600
+```
+
+Result:
+
+```text
+task_id = 0
+termination_reason = user_stop
+reward = 1.0
+messages = 10
+official tool call observed = get_reservation_details({"reservation_id": "EHGLP3"})
+trace path = outputs/tau_bench_smoke/airline_train_1/0.json
+```
+
+Interpretation:
+
+- the custom `harnessforge_agent` was accepted by tau2's half-duplex
+  orchestrator
+- the weak model produced a parseable JSON tool call
+- tau2 executed the official environment tool and returned the result
+- the adapter exported a HarnessForge trace with messages and reward info
+- no teacher diagnosis or harness evolution was used in this smoke
 
 ## First Supported Harness Artifact Types
 
@@ -254,5 +302,6 @@ the full `retail` test split be used.
 
 Proceed with a custom text-mode `harnessforge_agent` using tau2's programmatic
 runner and official train/test splits. Keep teacher-generated helper tools out
-of the first tau-bench adapter. The next engineering task is to run the weak
-baseline smoke on the cloud VM and inspect the produced traces.
+of the first tau-bench adapter. The next engineering task is to run a slightly
+larger weak baseline slice on official `airline` or `retail` train tasks and
+convert those traces into teacher diagnosis inputs.
