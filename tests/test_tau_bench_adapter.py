@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agentdistill.tau_bench import (
+    build_tau_failure_digest,
+    build_tau_teacher_context,
     message_to_plain_dict,
     parse_tau_tool_calls,
     simulation_run_to_trace,
@@ -123,3 +125,50 @@ def test_task_error_to_trace_records_adapter_error() -> None:
     assert trace["termination_reason"] == "adapter_error"
     assert trace["reward_info"] is None
     assert trace["error"] == {"type": "ValueError", "message": "bad response"}
+
+
+def test_build_tau_failure_digest_identifies_no_tool_loop() -> None:
+    trace = {
+        "domain": "airline",
+        "split": "train",
+        "task_id": "0",
+        "termination_reason": "max_steps",
+        "reward_info": {"reward": 0.0},
+        "messages": [
+            {"role": "assistant", "content": "How can I help you today?", "tool_calls": None},
+            {"role": "user", "content": "Cancel reservation EHGLP3.", "tool_calls": None},
+            {"role": "assistant", "content": "How can I help you today?", "tool_calls": None},
+            {"role": "user", "content": "My user ID is emma_kim_9957.", "tool_calls": None},
+        ],
+    }
+
+    digest = build_tau_failure_digest([trace])
+
+    assert digest["schema"] == "harnessforge.tau_bench_failure_digest.v1"
+    assert digest["reward_mean"] == 0.0
+    assert digest["failure_mode_counts"]["max_steps"] == 1
+    assert digest["failure_mode_counts"]["no_tool_calls"] == 1
+    assert digest["failure_mode_counts"]["repeated_assistant_text"] == 1
+    assert digest["failure_mode_counts"]["user_identifiers_not_activated_into_tools"] == 1
+    failure = digest["traces"][0]
+    assert failure["observed_user_identifiers"] == ["EHGLP3", "emma_kim_9957"]
+    assert failure["repeated_assistant_messages"] == [{"text": "How can I help you today?", "count": 2}]
+
+
+def test_build_tau_teacher_context_marks_split_boundary() -> None:
+    trace = {
+        "domain": "retail",
+        "split": "train",
+        "task_id": "r1",
+        "termination_reason": "max_steps",
+        "reward_info": {"reward": 0.0},
+        "messages": [],
+    }
+
+    context = build_tau_teacher_context([trace])
+
+    assert context["benchmark"] == "tau-bench text-mode"
+    assert context["source_domains"] == ["retail"]
+    assert context["source_splits"] == ["train"]
+    assert context["split_policy"]["teacher_visible"] == "official train traces only"
+    assert "tau_bench_failure_digest" in context

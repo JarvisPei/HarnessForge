@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import uuid
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -389,6 +391,175 @@ def task_error_to_trace(task: Any, *, domain: str, split: str, exc: Exception) -
         },
         "raw": {},
     }
+
+
+def build_tau_failure_digest(traces: list[dict[str, Any]], *, max_traces: int = 5) -> dict[str, Any]:
+    """Compact tau-bench traces into teacher-visible failure evidence."""
+
+    failures = [_summarize_tau_trace(trace) for trace in traces[:max_traces]]
+    mode_counts: Counter[str] = Counter()
+    tool_call_counts: Counter[str] = Counter()
+    rewards: list[float] = []
+    for failure in failures:
+        mode_counts.update(failure["failure_modes"])
+        for tool_name in failure["tool_call_names"]:
+            tool_call_counts[tool_name] += 1
+        reward = failure.get("reward")
+        if isinstance(reward, (int, float)):
+            rewards.append(float(reward))
+    return {
+        "schema": "harnessforge.tau_bench_failure_digest.v1",
+        "num_traces": len(traces),
+        "summarized_traces": len(failures),
+        "reward_mean": sum(rewards) / len(rewards) if rewards else None,
+        "failure_mode_counts": dict(sorted(mode_counts.items())),
+        "tool_call_counts": dict(sorted(tool_call_counts.items())),
+        "traces": failures,
+        "teacher_guidance": {
+            "role": "Use this as evidence about weak-model behavior in the real tau-bench environment.",
+            "do_not": [
+                "Do not hard-code task ids, reservation ids, user ids, or final answers.",
+                "Do not use official tau-bench test split traces for diagnosis or repair.",
+                "Do not invent executable helper tools for tau-bench until the adapter can execute them.",
+            ],
+            "allowed_first_adapter_patches": [
+                "prompt_guideline",
+                "skill",
+                "state_representation",
+                "runtime_policy that triggers official tau-bench tools only",
+                "validator over trajectory or final answer metadata",
+            ],
+        },
+    }
+
+
+def build_tau_teacher_context(traces: list[dict[str, Any]], *, max_traces: int = 5) -> dict[str, Any]:
+    """Create benchmark_context for teacher diagnosis from tau-bench traces."""
+
+    digest = build_tau_failure_digest(traces, max_traces=max_traces)
+    domains = sorted({str(trace.get("domain")) for trace in traces if trace.get("domain") is not None})
+    splits = sorted({str(trace.get("split")) for trace in traces if trace.get("split") is not None})
+    return {
+        "benchmark": "tau-bench text-mode",
+        "source_domains": domains,
+        "source_splits": splits,
+        "split_policy": {
+            "teacher_visible": "official train traces only",
+            "blind_final": "official test split after the harness is frozen",
+        },
+        "tau_bench_failure_digest": digest,
+    }
+
+
+def _summarize_tau_trace(trace: dict[str, Any]) -> dict[str, Any]:
+    messages = trace.get("messages") if isinstance(trace.get("messages"), list) else []
+    assistant_texts = [_message_content(message) for message in messages if _message_role(message) == "assistant"]
+    user_texts = [_message_content(message) for message in messages if _message_role(message) == "user"]
+    tool_call_names = _trace_tool_call_names(messages)
+    repeated = [
+        {"text": text, "count": count}
+        for text, count in Counter(text for text in assistant_texts if text).most_common(5)
+        if count > 1
+    ]
+    user_identifiers = _extract_user_identifiers(" ".join(user_texts))
+    failure_modes = _infer_tau_failure_modes(
+        trace=trace,
+        tool_call_names=tool_call_names,
+        repeated_assistant_texts=repeated,
+        user_identifiers=user_identifiers,
+    )
+    return {
+        "task_id": trace.get("task_id"),
+        "domain": trace.get("domain"),
+        "split": trace.get("split"),
+        "termination_reason": trace.get("termination_reason"),
+        "reward": _trace_reward(trace),
+        "message_count": len(messages),
+        "assistant_message_count": len(assistant_texts),
+        "user_message_count": len(user_texts),
+        "tool_call_count": len(tool_call_names),
+        "tool_call_names": tool_call_names,
+        "failure_modes": failure_modes,
+        "repeated_assistant_messages": repeated,
+        "observed_user_identifiers": user_identifiers[:8],
+        "first_user_message": user_texts[0] if user_texts else None,
+        "last_user_message": user_texts[-1] if user_texts else None,
+        "last_assistant_message": assistant_texts[-1] if assistant_texts else None,
+    }
+
+
+def _infer_tau_failure_modes(
+    *,
+    trace: dict[str, Any],
+    tool_call_names: list[str],
+    repeated_assistant_texts: list[dict[str, Any]],
+    user_identifiers: list[str],
+) -> list[str]:
+    modes: list[str] = []
+    reward = _trace_reward(trace)
+    if reward is not None and reward < 1.0:
+        modes.append("low_reward")
+    if trace.get("termination_reason") == "max_steps":
+        modes.append("max_steps")
+    if not tool_call_names:
+        modes.append("no_tool_calls")
+    if repeated_assistant_texts:
+        modes.append("repeated_assistant_text")
+    if user_identifiers and not tool_call_names:
+        modes.append("user_identifiers_not_activated_into_tools")
+    return modes
+
+
+def _trace_reward(trace: dict[str, Any]) -> float | None:
+    reward_info = trace.get("reward_info")
+    if not isinstance(reward_info, dict):
+        return None
+    reward = reward_info.get("reward")
+    return float(reward) if isinstance(reward, (int, float)) else None
+
+
+def _trace_tool_call_names(messages: list[Any]) -> list[str]:
+    names: list[str] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        tool_calls = message.get("tool_calls")
+        if not isinstance(tool_calls, list):
+            continue
+        for tool_call in tool_calls:
+            name = tool_call.get("name") if isinstance(tool_call, dict) else getattr(tool_call, "name", None)
+            if isinstance(name, str):
+                names.append(name)
+    return names
+
+
+def _message_role(message: Any) -> str | None:
+    if isinstance(message, dict):
+        role = message.get("role")
+    else:
+        role = getattr(message, "role", None)
+    return str(role) if role is not None else None
+
+
+def _message_content(message: Any) -> str:
+    if isinstance(message, dict):
+        content = message.get("content")
+    else:
+        content = getattr(message, "content", None)
+    return str(content or "").replace("\n", " ").strip()
+
+
+def _extract_user_identifiers(text: str) -> list[str]:
+    patterns = [
+        r"\b[A-Z0-9]{5,8}\b",
+        r"\b[A-Za-z][A-Za-z0-9_]{2,}[0-9][A-Za-z0-9_]*\b",
+    ]
+    seen: list[str] = []
+    for pattern in patterns:
+        for match in re.findall(pattern, text):
+            if match not in seen:
+                seen.append(match)
+    return seen
 
 
 def model_to_plain_data(obj: Any) -> dict[str, Any]:

@@ -316,3 +316,50 @@ runner and official train/test splits. Keep teacher-generated helper tools out
 of the first tau-bench adapter. The next engineering task is to run a slightly
 larger weak baseline slice on official `airline` or `retail` train tasks and
 convert those traces into teacher diagnosis inputs.
+
+## First Weak Baseline Slice
+
+Date: 2026-06-03
+
+Cloud VM output:
+
+```text
+outputs/tau_bench_baseline/airline_train_3_step20_v1
+```
+
+Command shape:
+
+```bash
+TAU2_DATA_DIR=$HOME/projects/tau2-bench/data \
+python -m agentdistill.tau_bench \
+  --domain airline \
+  --split train \
+  --num-tasks 3 \
+  --user-llm gpt-5.5 \
+  --output-dir outputs/tau_bench_baseline/airline_train_3_step20_v1 \
+  --max-steps 20 \
+  --max-errors 3 \
+  --timeout 300
+```
+
+Result:
+
+| task_id | termination | reward | tool calls | observed pattern |
+| --- | --- | ---: | ---: | --- |
+| `0` | `max_steps` | `0.0` | `0` | Repeatedly asked how to help after the user provided reservation code `EHGLP3`; later repeated the slot request after user id `emma_kim_9957` was provided. |
+| `1` | `max_steps` | `0.0` | `0` | Repeated generic help prompts after the user provided cancellation/refund intent and user id `raj_sanchez_7340`. |
+| `3` | `max_steps` | `0.0` | `0` | Repeatedly requested user id and intent after the user provided user id `anya_garcia_5901` and modify intent. |
+
+Interpretation:
+
+- the adapter remained stable on multiple official train tasks
+- all observed failures reached the tau2 orchestrator and evaluator cleanly
+- the weak agent did not emit official tau2 tool calls in any failed trace
+- the recurring behavior is a real harness gap around conversation-state
+  tracking and official-tool activation, not a final-answer formatting issue
+
+This is the right failure shape for the next HarnessForge step. The teacher
+should receive compact train-trace evidence and decide whether to improve the
+weak harness through a skill, state representation, validator, or a runtime
+policy that triggers official tau2 tools only. Do not manually write the tau
+harness content from this note, and do not use official test traces for repair.
