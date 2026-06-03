@@ -4269,6 +4269,35 @@ def test_evidence_report_classifies_test_only_acceptance(tmp_path: Path) -> None
     assert report["aggregate"]["test_only_runs"] == 1
 
 
+def test_evidence_report_classifies_runtime_blind_regression(tmp_path: Path) -> None:
+    run_dir = tmp_path / "inventory_tool_audit"
+    run_dir.mkdir()
+    (run_dir / "metrics.json").write_text(
+        json.dumps(
+            {
+                "patches": {
+                    "accepted": 2,
+                    "accepted_runtime_artifact": 1,
+                    "accepted_test_only": 0,
+                    "accepted_but_no_runtime_artifact": 1,
+                },
+                "dev_transfer": {"improved": 1, "regressed": 0},
+                "blind_transfer": {"improved": 0, "regressed": 2},
+                "runtime_effect": {
+                    "dev": {"after_runtime_effect": 2, "improved_with_runtime_effect": 1},
+                    "blind": {"after_runtime_effect": 2, "improved_with_runtime_effect": 0},
+                },
+                "repair_efficiency": {"patch_attempts": 3, "accepted": 2},
+            }
+        )
+    )
+
+    report = build_evidence_report([run_dir])
+
+    assert report["runs"][0]["evidence_status"] == "runtime_effect_with_blind_regression"
+    assert report["aggregate"]["blind_regressed"] == 2
+
+
 def test_repair_efficiency_report_recovers_interrupted_run_from_phase_results(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     phase_dir = run_dir / "evolve_train_iter_02"

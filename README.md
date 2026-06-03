@@ -43,7 +43,7 @@ Latest table-join runtime result:
 - blind improvements with runtime effect: 2
 - accepted harness update: deterministic table calculator + runtime policy + tests
 
-The first compact evidence suite is documented in [docs/experiments/evidence_suite_v1.md](docs/experiments/evidence_suite_v1.md). The first boundary-case expansion is documented in [docs/experiments/evidence_suite_v2_boundary.md](docs/experiments/evidence_suite_v2_boundary.md).
+The first compact evidence suite is documented in [docs/experiments/evidence_suite_v1.md](docs/experiments/evidence_suite_v1.md). The first boundary-case expansion is documented in [docs/experiments/evidence_suite_v2_boundary.md](docs/experiments/evidence_suite_v2_boundary.md). A follow-up tool-audit negative result is documented in [docs/experiments/tool_audit_inventory_boundary_v1.md](docs/experiments/tool_audit_inventory_boundary_v1.md).
 
 ## How It Works
 

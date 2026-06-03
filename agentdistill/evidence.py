@@ -81,6 +81,10 @@ def _evidence_status(
         return "end_to_end_runtime_transfer"
     if _int(blind.get("improved")) > 0:
         return "end_to_end_harness_transfer"
+    if _int(blind.get("regressed")) > 0 and _int(blind_runtime.get("after_runtime_effect")) > 0:
+        return "runtime_effect_with_blind_regression"
+    if _int(blind.get("regressed")) > 0:
+        return "blind_regression"
     if _int(dev_runtime.get("after_runtime_effect")) <= 0 and _int(blind_runtime.get("after_runtime_effect")) <= 0:
         return "harness_artifact_not_triggered"
     if _int(blind_runtime.get("after_runtime_effect")) > 0 and _int(blind.get("improved")) <= 0:
