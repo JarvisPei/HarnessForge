@@ -391,3 +391,37 @@ Interpretation:
 - the next cloud step should decide whether this policy is worth landing in
   the canonical harness or whether a broader state-representation layer is a
   better first repair for tau-bench
+
+## Runtime Hook Impact Probe
+
+Date: 2026-06-03
+
+Before running the teacher-generated runtime policy, the tau adapter was fixed
+to append incoming user and tool messages into the weak agent state. The older
+`0/3` baseline was therefore not a valid behavior baseline: the weak model had
+not been seeing the user messages correctly.
+
+After the adapter fix and with a clean harness, the same `airline train`
+three-task slice produced:
+
+| condition | task 0 | task 1 | task 3 | aggregate |
+| --- | ---: | ---: | ---: | ---: |
+| clean harness | `1.0` | `0.0` | `1.0` | `2/3` |
+| teacher runtime policy installed | `1.0` | `0.0` | `1.0` | `2/3` |
+
+The installed policy passed validation but did not fire in these corrected
+traces. The weak model now calls official tau2 tools by itself. The remaining
+failure on task `1` is higher level: after `get_user_details`, the weak agent
+iterates over multiple reservations and fails to efficiently match the user's
+route description, Philadelphia to LaGuardia, before hitting `max_steps`.
+
+Interpretation:
+
+- adapter state handling was an infrastructure bug and is now fixed
+- the first teacher policy solved the old no-tool-activation failure, but that
+  failure disappeared once user context was wired correctly
+- the next useful teacher target is not initial tool activation; it is a
+  state/selection harness that helps the weak model compare user-described
+  constraints against a set of official reservation records
+- this should be generated from the corrected train failure, not manually
+  encoded from task `1`
