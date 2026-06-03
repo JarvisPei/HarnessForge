@@ -524,3 +524,61 @@ This is a harness permission upgrade rather than a hand-written domain fix:
 the teacher should still generate the tau-specific guard policy from train
 evidence, while the adapter only supplies the generic pre-tool-call hook and
 preserves the official tau2 tool boundary.
+
+## Pre-Tool Guard Runtime Effect Probe
+
+Date: 2026-06-03
+
+After adding the generic pre-tool-call runtime policy hook, the task `1`
+failure trace was passed back to the teacher. The teacher generated and the
+framework accepted:
+
+```text
+harness/runtime_policies/tau_airline_cancel_route_guard.py
+harness/tests/tau_airline_cancel_route_guard.json
+```
+
+The policy acts as a guard over proposed `cancel_reservation` calls. If the
+conversation and prior tool results do not prove that the proposed reservation
+matches the user's requested route, it replaces the destructive cancel call
+with an official `get_reservation_details` call.
+
+Impact on the same three official `airline train` tasks:
+
+| condition | task 0 | task 1 | task 3 | aggregate |
+| --- | ---: | ---: | ---: | ---: |
+| clean harness after adapter fix | `1.0` | `0.0` | `1.0` | `2/3` |
+| pre-tool cancel guard | `1.0` | `0.0` | `1.0` | `2/3` |
+
+The aggregate did not improve, but the mechanism did have runtime effect. In
+task `1`, the guard intercepted repeated proposed
+`cancel_reservation({"reservation_id": "MZDDS4"})` calls and replaced them with
+`get_reservation_details({"reservation_id": "MZDDS4"})`. This prevented the
+wrong destructive action from reaching the tau2 environment, but it did not
+advance candidate search to the next unchecked reservation. The weak model
+therefore looped over the same mismatching reservation until `max_steps`.
+
+Additional adapter observation:
+
+One weak response mixed user-facing text with embedded tool JSON:
+
+```text
+I’m cancelling your reservation now.{"tool_call":{"name":"cancel_reservation",...}}
+```
+
+The current parser treats this as user-facing text because parseable tool calls
+must occupy the full response. That preserves tau2's half-duplex protocol, but
+it means malformed mixed responses bypass proposed-tool-call guard logic unless
+a separate protocol-normalization layer extracts or rejects embedded tool JSON.
+
+Interpretation:
+
+- pre-tool-call guard is a real new teacher permission: it changed the executed
+  tau2 tool sequence without manually coding the domain policy
+- the first guard is too conservative because it rechecks the same bad
+  candidate rather than selecting the next unchecked candidate from user
+  details
+- the next useful harness capability is either a stronger teacher-generated
+  candidate-state policy that tracks checked/rejected reservation ids and
+  advances to the next candidate, or a generic adapter protocol-normalization
+  hook that handles mixed text/tool JSON before policy evaluation

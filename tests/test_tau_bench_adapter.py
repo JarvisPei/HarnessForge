@@ -255,6 +255,7 @@ def test_simulation_run_to_trace_with_plain_dict() -> None:
             "error": None,
             "turn_idx": None,
             "timestamp": None,
+            "raw_data": None,
         }
     ]
 

@@ -684,6 +684,7 @@ def message_to_plain_dict(message: Any) -> dict[str, Any]:
             "error": getattr(message, "error", None),
             "turn_idx": getattr(message, "turn_idx", None),
             "timestamp": getattr(message, "timestamp", None),
+            "raw_data": getattr(message, "raw_data", None),
         }
     return {
         "role": data.get("role"),
@@ -693,6 +694,7 @@ def message_to_plain_dict(message: Any) -> dict[str, Any]:
         "error": data.get("error"),
         "turn_idx": data.get("turn_idx"),
         "timestamp": data.get("timestamp"),
+        "raw_data": data.get("raw_data"),
     }
 
 
