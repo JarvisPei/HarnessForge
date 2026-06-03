@@ -479,3 +479,48 @@ runtime layer that tracks:
 
 This should still only call official tau2 tools, but it should reduce reliance
 on the weak model remembering the candidate checklist in natural language.
+
+## Candidate-State Runtime Policy Probe
+
+Date: 2026-06-03
+
+The next teacher attempt used the same corrected train evidence and generated
+an executable candidate-state runtime policy:
+
+```text
+harness/runtime_policies/tau_airline_candidate_state.py
+harness/tests/tau_airline_candidate_state.json
+```
+
+The bundle passed manifest validation, runtime policy tests with conversation
+metadata, and the teacher policy audit. It was installed into the cloud harness
+and evaluated on the same three official `airline train` tasks.
+
+Impact:
+
+| condition | task 0 | task 1 | task 3 | aggregate |
+| --- | ---: | ---: | ---: | ---: |
+| clean harness after adapter fix | `1.0` | `0.0` | `1.0` | `2/3` |
+| candidate-state runtime policy | `1.0` | `0.0` | `1.0` | `2/3` |
+
+The task `1` failure changed shape. Instead of hitting `max_steps`, the weak
+agent ended with `user_stop` and reward `0.0` after directly calling
+`cancel_reservation` on the wrong candidate reservation (`MZDDS4`). The policy
+did not get a chance to intervene because the current adapter only evaluated
+runtime policies when the weak model produced no parseable tool call.
+
+Interpretation:
+
+- the teacher-generated policy was valid but attached to the wrong runtime
+  interception point
+- no-tool fallback is insufficient for tau-bench failures where the weak model
+  emits a parseable but premature or wrong official tool call
+- the next adapter capability should let runtime policies inspect the weak
+  model's proposed tool call before execution and replace it with another
+  official tau2 tool when conversation/tool-result state shows the call is not
+  justified
+
+This is a harness permission upgrade rather than a hand-written domain fix:
+the teacher should still generate the tau-specific guard policy from train
+evidence, while the adapter only supplies the generic pre-tool-call hook and
+preserves the official tau2 tool boundary.

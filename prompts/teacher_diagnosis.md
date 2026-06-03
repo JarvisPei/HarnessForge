@@ -106,6 +106,8 @@ It receives task_instruction, initial_answer, tool_call, available_tools, and op
 {"requires_tool": True, "tool_name": "structured_helper", "tool_input": {...}, "reason": "..."}
 ```
 
+When the benchmark adapter supplies `tool_call`, it is the weak model's proposed tool call before execution. A runtime policy may act as a pre-tool-call guard by returning a replacement official tool call. Use this sparingly for cases where the proposed call is unsafe, premature, or inconsistent with conversation/tool-result state. If the proposed call is acceptable, return `{"requires_tool": false, "reason": "..."}` or do not trigger. For tau-bench, replacement tool names must be official tau-bench tools listed in `available_tools`; helper tools are not executable by the tau environment.
+
 If a validator spec already describes a mandatory rejection rule, but the weak model still violates it, the next patch should usually be a runtime policy implementing that rejection rule.
 
 If a runtime policy normalizes or rewrites task text before passing it to a tool, the tool_input must include source provenance under schema_mapping or normalization_trace. Do not silently rewrite filter columns, filter values, units, table names, or formulas. Preserve enough source-to-normalized evidence for policy tests and impact reports to show why the tool is solving the intended task. If the policy can pass the original task text through unchanged, prefer doing that and let the tested tool perform parsing.
@@ -120,6 +122,7 @@ Runtime policy tests use this JSON schema:
       "input": {
         "task_instruction": "A task with multiple local operations and a requested final format.",
         "initial_answer": "",
+        "tool_call": {"name": "optional_proposed_tool", "arguments": {"arg": "value"}},
         "available_tools": ["structured_helper"],
         "expected_answer": "The result is 1.",
         "metadata": {"conversation": "optional transcript or tool-result state for stateful policies"}

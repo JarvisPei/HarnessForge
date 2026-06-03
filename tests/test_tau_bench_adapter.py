@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from agentdistill.tau_bench import (
     _append_tau_incoming_message,
     _first_forced_tau_tool,
+    _select_tau_tool_payloads_with_policy,
     build_tau_failure_digest,
     build_tau_runtime_policy_payload,
     build_tau_teacher_context,
@@ -39,6 +40,17 @@ class FakeMessage:
 @dataclass
 class FakeMultiToolMessage:
     tool_messages: list[FakeMessage]
+
+
+class FakePolicies:
+    def __init__(self, results: list[dict] | None = None):
+        self.names = ["guard_policy"]
+        self.results = results or []
+        self.payloads: list[dict] = []
+
+    def evaluate(self, payload: dict) -> list[dict]:
+        self.payloads.append(payload)
+        return self.results
 
 
 def test_parse_tau_tool_call_accepts_arguments() -> None:
@@ -114,6 +126,21 @@ def test_build_tau_runtime_policy_payload_includes_conversation_metadata() -> No
     assert "assistant: How can I help you today?" in payload["metadata"]["conversation"]
 
 
+def test_build_tau_runtime_policy_payload_includes_proposed_tool_call() -> None:
+    proposed = {"name": "cancel_reservation", "arguments": {"reservation_id": "MZDDS4"}}
+
+    payload = build_tau_runtime_policy_payload(
+        initial_answer='{"tool_call": {"name": "cancel_reservation", "arguments": {"reservation_id": "MZDDS4"}}}',
+        tau_messages=[FakeMessage(role="user", content="Cancel my matching reservation.")],
+        available_tools=["cancel_reservation", "get_reservation_details"],
+        proposed_tool_call=proposed,
+        proposed_tool_calls=[proposed],
+    )
+
+    assert payload["tool_call"] == proposed
+    assert payload["tool_calls"] == [proposed]
+
+
 def test_first_forced_tau_tool_ignores_non_official_tools() -> None:
     forced = _first_forced_tau_tool(
         [
@@ -124,6 +151,65 @@ def test_first_forced_tau_tool_ignores_non_official_tools() -> None:
     )
 
     assert forced == {"requires_tool": True, "tool_name": "get_user_details", "tool_input": {"user_id": "u1"}}
+
+
+def test_select_tau_tool_payloads_with_policy_can_replace_proposed_tool_call() -> None:
+    policies = FakePolicies(
+        [
+            {
+                "requires_tool": True,
+                "tool_name": "get_reservation_details",
+                "tool_input": {"reservation_id": "EHGLP3"},
+            }
+        ]
+    )
+
+    tool_payloads, policy_results = _select_tau_tool_payloads_with_policy(
+        raw='{"tool_call": {"name": "cancel_reservation", "arguments": {"reservation_id": "MZDDS4"}}}',
+        tau_messages=[FakeMessage(role="user", content="Cancel the Philadelphia to LaGuardia reservation.")],
+        available_tools=["cancel_reservation", "get_reservation_details"],
+        policies=policies,
+    )
+
+    assert tool_payloads == [{"name": "get_reservation_details", "arguments": {"reservation_id": "EHGLP3"}}]
+    assert policy_results == policies.results
+    assert policies.payloads[0]["tool_call"] == {"name": "cancel_reservation", "arguments": {"reservation_id": "MZDDS4"}}
+
+
+def test_select_tau_tool_payloads_with_policy_ignores_non_official_replacement() -> None:
+    policies = FakePolicies(
+        [
+            {"requires_tool": True, "tool_name": "helper_tool", "tool_input": {"reservation_id": "EHGLP3"}},
+        ]
+    )
+
+    tool_payloads, policy_results = _select_tau_tool_payloads_with_policy(
+        raw='{"tool_call": {"name": "cancel_reservation", "arguments": {"reservation_id": "MZDDS4"}}}',
+        tau_messages=[FakeMessage(role="user", content="Cancel the matching reservation.")],
+        available_tools=["cancel_reservation", "get_reservation_details"],
+        policies=policies,
+    )
+
+    assert tool_payloads == [{"name": "cancel_reservation", "arguments": {"reservation_id": "MZDDS4"}}]
+    assert policy_results == policies.results
+
+
+def test_select_tau_tool_payloads_with_policy_still_supports_no_tool_fallback() -> None:
+    policies = FakePolicies(
+        [
+            {"requires_tool": True, "tool_name": "get_user_details", "tool_input": {"user_id": "u1"}},
+        ]
+    )
+
+    tool_payloads, _ = _select_tau_tool_payloads_with_policy(
+        raw="I can help with that.",
+        tau_messages=[FakeMessage(role="user", content="My user ID is u1.")],
+        available_tools=["get_user_details"],
+        policies=policies,
+    )
+
+    assert tool_payloads == [{"name": "get_user_details", "arguments": {"user_id": "u1"}}]
+    assert policies.payloads[0]["tool_call"] is None
 
 
 def test_message_to_plain_dict_keeps_tool_calls() -> None:

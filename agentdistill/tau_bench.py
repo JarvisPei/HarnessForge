@@ -222,23 +222,12 @@ def _register_harnessforge_agent(tau: dict[str, Any], name: str, settings: TauHa
             raw = _complete_sync(self.client, weak_messages)
             if not raw.strip():
                 raw = "I need a moment to review the information before continuing."
-            tool_payloads = parse_tau_tool_calls(raw)
-            policy_results: list[dict[str, Any]] = []
-            if not tool_payloads and self.policies.names:
-                policy_payload = build_tau_runtime_policy_payload(
-                    initial_answer=raw,
-                    tau_messages=state.messages,
-                    available_tools=self.official_tool_names,
-                )
-                policy_results = self.policies.evaluate(policy_payload)
-                forced_tool = _first_forced_tau_tool(policy_results, self.official_tool_names)
-                if forced_tool is not None:
-                    tool_payloads = [
-                        {
-                            "name": forced_tool["tool_name"],
-                            "arguments": forced_tool.get("tool_input", {}),
-                        }
-                    ]
+            tool_payloads, policy_results = _select_tau_tool_payloads_with_policy(
+                raw=raw,
+                tau_messages=state.messages,
+                available_tools=self.official_tool_names,
+                policies=self.policies,
+            )
             if tool_payloads:
                 assistant = AssistantMessage(
                     role="assistant",
@@ -328,6 +317,8 @@ def build_tau_runtime_policy_payload(
     initial_answer: str,
     tau_messages: list[Any],
     available_tools: list[str],
+    proposed_tool_call: dict[str, Any] | None = None,
+    proposed_tool_calls: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     transcript = []
     user_messages = []
@@ -343,7 +334,8 @@ def build_tau_runtime_policy_payload(
     return {
         "task_instruction": "\n".join(user_messages),
         "initial_answer": initial_answer,
-        "tool_call": None,
+        "tool_call": proposed_tool_call,
+        "tool_calls": list(proposed_tool_calls or ([] if proposed_tool_call is None else [proposed_tool_call])),
         "available_tools": available_tools,
         "expected_answer": None,
         "rubric": None,
@@ -352,6 +344,35 @@ def build_tau_runtime_policy_payload(
             "last_user_message": user_messages[-1] if user_messages else "",
         },
     }
+
+
+def _select_tau_tool_payloads_with_policy(
+    *,
+    raw: str,
+    tau_messages: list[Any],
+    available_tools: list[str],
+    policies: Any,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    tool_payloads = parse_tau_tool_calls(raw)
+    if not getattr(policies, "names", []):
+        return tool_payloads, []
+    policy_payload = build_tau_runtime_policy_payload(
+        initial_answer=raw,
+        tau_messages=tau_messages,
+        available_tools=available_tools,
+        proposed_tool_call=tool_payloads[0] if tool_payloads else None,
+        proposed_tool_calls=tool_payloads,
+    )
+    policy_results = policies.evaluate(policy_payload)
+    forced_tool = _first_forced_tau_tool(policy_results, available_tools)
+    if forced_tool is None:
+        return tool_payloads, policy_results
+    return [
+        {
+            "name": forced_tool["tool_name"],
+            "arguments": forced_tool.get("tool_input", {}),
+        }
+    ], policy_results
 
 
 def _first_forced_tau_tool(
