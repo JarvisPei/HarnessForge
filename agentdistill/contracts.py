@@ -102,6 +102,7 @@ def validate_runtime_policy_case_data(
             "available_tools": payload.get("available_tools", tools.names),
             "expected_answer": payload.get("expected_answer"),
             "rubric": payload.get("rubric"),
+            "metadata": payload.get("metadata"),
         }
         results = [result for result in policies.evaluate(policy_payload) if result.get("policy") == policy_name]
         actual = results[0] if results else {"policy": policy_name, "requires_tool": False}

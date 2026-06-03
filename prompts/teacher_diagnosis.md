@@ -121,7 +121,8 @@ Runtime policy tests use this JSON schema:
         "task_instruction": "A task with multiple local operations and a requested final format.",
         "initial_answer": "",
         "available_tools": ["structured_helper"],
-        "expected_answer": "The result is 1."
+        "expected_answer": "The result is 1.",
+        "metadata": {"conversation": "optional transcript or tool-result state for stateful policies"}
       },
       "expected": {
         "requires_tool": true,

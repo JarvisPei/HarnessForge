@@ -252,6 +252,59 @@ def evaluate(input: dict) -> dict:
     assert result["failures"][0]["reason"] == "value mismatch for key: tool_input"
 
 
+def test_runtime_policy_tests_pass_metadata_to_policy(tmp_path: Path) -> None:
+    harness = tmp_path / "harness"
+    tools_dir = harness / "tools"
+    policies_dir = harness / "runtime_policies"
+    tests_dir = harness / "tests"
+    tools_dir.mkdir(parents=True)
+    policies_dir.mkdir(parents=True)
+    tests_dir.mkdir(parents=True)
+
+    policy_path = policies_dir / "stateful_policy.py"
+    policy_path.write_text(
+        """
+def evaluate(input: dict) -> dict:
+    metadata = input.get("metadata") or {}
+    if "reservation_id='Q69X3R'" in metadata.get("conversation", ""):
+        return {
+            "requires_tool": True,
+            "tool_name": "get_reservation_details",
+            "tool_input": {"reservation_id": "Q69X3R"},
+            "reason": "candidate state was reconstructed from transcript metadata"
+        }
+    return {"requires_tool": False}
+""".strip()
+    )
+    (tests_dir / "stateful_policy.json").write_text(
+        """
+{
+  "policy": "stateful_policy",
+  "cases": [
+    {
+      "input": {
+        "task_instruction": "Find the matching reservation.",
+        "available_tools": ["get_reservation_details"],
+        "metadata": {
+          "conversation": "Tool result: reservation_id='Q69X3R' origin='PHL' destination='LGA'"
+        }
+      },
+      "expected": {
+        "requires_tool": true,
+        "tool_name": "get_reservation_details",
+        "tool_input": {"reservation_id": "Q69X3R"}
+      }
+    }
+  ]
+}
+""".strip()
+    )
+
+    result = validate_runtime_policy_tests(tmp_path, policy_path)
+
+    assert result["ok"] is True
+
+
 def test_runtime_policy_tests_reject_silent_textual_rewrites_without_provenance(tmp_path: Path) -> None:
     harness = tmp_path / "harness"
     tools_dir = harness / "tools"
