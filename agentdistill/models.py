@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 from dataclasses import dataclass
@@ -73,7 +74,7 @@ class ChatClient:
         for attempt in range(attempts):
             try:
                 return await self._post_json_once(url, headers, payload)
-            except (httpx.HTTPStatusError, httpx.TimeoutException, httpx.TransportError) as exc:
+            except (httpx.HTTPStatusError, httpx.TimeoutException, httpx.TransportError, json.JSONDecodeError) as exc:
                 if attempt >= self.settings.max_retries or not _is_retryable_error(exc):
                     print(
                         "[model-retry] exhausted "
@@ -145,6 +146,8 @@ def load_model_settings(role: Role, profile: str | None = None) -> ModelSettings
 def _is_retryable_error(exc: Exception) -> bool:
     if isinstance(exc, (httpx.TimeoutException, httpx.TransportError)):
         return True
+    if isinstance(exc, json.JSONDecodeError):
+        return True
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code in {408, 409, 425, 429, 500, 502, 503, 504}
     return False
@@ -153,6 +156,8 @@ def _is_retryable_error(exc: Exception) -> bool:
 def _error_summary(exc: Exception) -> str:
     if isinstance(exc, httpx.HTTPStatusError):
         return f"http_status_{exc.response.status_code}"
+    if isinstance(exc, json.JSONDecodeError):
+        return "invalid_json_response"
     return exc.__class__.__name__
 
 

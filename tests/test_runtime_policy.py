@@ -1960,6 +1960,37 @@ def test_chat_client_does_not_retry_bad_request(monkeypatch) -> None:
     assert calls["count"] == 1
 
 
+def test_chat_client_retries_invalid_json_response(monkeypatch) -> None:
+    calls = {"count": 0}
+
+    async def fake_post_once(self, url, headers, payload):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise json.JSONDecodeError("Expecting value", "", 0)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    async def no_sleep(seconds):
+        return None
+
+    import agentdistill.models as models_module
+
+    monkeypatch.setattr(ChatClient, "_post_json_once", fake_post_once)
+    monkeypatch.setattr(models_module.asyncio, "sleep", no_sleep)
+    client = ChatClient(
+        ModelSettings(
+            role="teacher",
+            provider="openai",
+            base_url="https://example.com/v1",
+            api_key="k",
+            model="m",
+            max_retries=1,
+        )
+    )
+
+    assert asyncio.run(client.complete([{"role": "user", "content": "hi"}])) == "ok"
+    assert calls["count"] == 2
+
+
 def test_build_transfer_context_uses_heldout_probe_results() -> None:
     tasks = [
         TaskConfig(id="heldout_a", instruction="a", expected_answer="1"),
