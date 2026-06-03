@@ -209,6 +209,16 @@ Runtime setup note:
 
 Date: 2026-06-03
 
+Before the canonical smoke, the cloud checkout was cleaned with:
+
+```bash
+git clean -fd harness
+git clean -fdX harness
+```
+
+This removed old generated harness artifacts so the tau-bench adapter smoke was
+not influenced by prior synthetic-benchmark harness files.
+
 Cloud VM command shape:
 
 ```bash
@@ -218,7 +228,7 @@ python -m agentdistill.tau_bench \
   --split train \
   --num-tasks 1 \
   --user-llm gpt-5.5 \
-  --output-dir outputs/tau_bench_smoke/airline_train_1 \
+  --output-dir outputs/tau_bench_smoke/airline_train_1_clean \
   --max-steps 40 \
   --max-errors 3 \
   --timeout 600
@@ -230,9 +240,10 @@ Result:
 task_id = 0
 termination_reason = user_stop
 reward = 1.0
-messages = 10
+messages = 12
 official tool call observed = get_reservation_details({"reservation_id": "EHGLP3"})
-trace path = outputs/tau_bench_smoke/airline_train_1/0.json
+official tool call observed = transfer_to_human_agents({...})
+trace path = outputs/tau_bench_smoke/airline_train_1_clean/0.json
 ```
 
 Interpretation:
