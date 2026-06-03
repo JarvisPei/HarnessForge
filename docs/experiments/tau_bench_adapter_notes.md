@@ -425,3 +425,57 @@ Interpretation:
   constraints against a set of official reservation records
 - this should be generated from the corrected train failure, not manually
   encoded from task `1`
+
+## Candidate Selection Skill Probe
+
+Date: 2026-06-03
+
+The corrected task `1` failure was passed to the teacher with the full train
+trajectory and the note that the previous activation policy did not fire. The
+teacher generated a prompt-only skill:
+
+```text
+harness/skills/tau_airline_candidate_reservation_selection.md
+```
+
+The skill taught the weak model to maintain a private candidate checklist after
+`get_user_details`, inspect candidate reservations one by one with official
+tools, compare route constraints against official reservation details, and avoid
+showing internal tool-call JSON to the user.
+
+Impact on the same three official train tasks:
+
+| condition | task 0 | task 1 | task 3 | aggregate |
+| --- | ---: | ---: | ---: | ---: |
+| clean harness after adapter fix | `1.0` | `0.0` | `1.0` | `2/3` |
+| activation runtime policy | `1.0` | `0.0` | `1.0` | `2/3` |
+| candidate-selection skill v1 | `1.0` | `1.0` | `0.0` | `2/3` |
+| repaired candidate-selection skill | `1.0` | `0.0` | `1.0` | `2/3` |
+
+Interpretation:
+
+- the teacher found the right high-level axis: candidate reservation selection
+  and private state tracking
+- a text-only skill was enough to flip the original task `1` failure from
+  `0.0` to `1.0`
+- the first skill regressed task `3` by changing an exact baggage workflow into
+  a generic profile/cabin answer without first identifying the reservation
+- teacher feedback repaired task `3`, but task `1` fell back to `max_steps`
+- prompt-only skill is therefore too unstable as the sole mechanism for this
+  benchmark family
+
+Next direction:
+
+The next tau-bench harness should give the teacher a stronger state/selection
+mechanism than free-form text. A useful target is an agent-side candidate-state
+runtime layer that tracks:
+
+- user constraints
+- candidate reservation ids
+- checked and rejected reservation ids
+- mismatch reasons
+- currently selected reservation
+- which final action or exact answer is waiting on the selected reservation
+
+This should still only call official tau2 tools, but it should reduce reliance
+on the weak model remembering the candidate checklist in natural language.
