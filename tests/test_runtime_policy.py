@@ -893,6 +893,37 @@ def test_parse_diagnosis_allows_missing_bundle_rationale() -> None:
     assert diagnosis.patch_bundles[0].rationale == ""
 
 
+def test_parse_diagnosis_prefers_valid_patch_bundles_over_metadata_patch_bundle() -> None:
+    diagnosis = parse_diagnosis(
+        """
+{
+  "diagnosis": "Repair runtime policy contract fields.",
+  "failure_categories": ["runtime_policy"],
+  "harness_patch": "Replace the runtime policy.",
+  "patch_type": "runtime_policy",
+  "regression_test": "Policy should return tool_input.",
+  "patch_bundles": [
+    {
+      "target_path": "harness/runtime_policies/tau_airline_candidate_state.py",
+      "action": "create_or_replace",
+      "content": "def evaluate(input):\\n    return {\\"requires_tool\\": False}"
+    }
+  ],
+  "patch_bundle": {
+    "type": "runtime_policy_repair",
+    "files": ["harness/runtime_policies/tau_airline_candidate_state.py"],
+    "required_output_keys_for_tool_calls": ["requires_tool", "tool_name", "tool_input"]
+  },
+  "confidence": 0.7
+}
+""".strip()
+    )
+
+    assert len(diagnosis.patch_bundles) == 1
+    assert diagnosis.patch_bundle is not None
+    assert diagnosis.patch_bundle.target_path == "harness/runtime_policies/tau_airline_candidate_state.py"
+
+
 def test_parse_diagnosis_allows_lean_patch_payloads() -> None:
     diagnosis = parse_diagnosis(
         """

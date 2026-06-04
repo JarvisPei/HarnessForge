@@ -101,9 +101,12 @@ def parse_diagnosis(raw: str) -> Diagnosis:
     elif not isinstance(data["regression_test"], str):
         data["regression_test"] = json.dumps(data["regression_test"], ensure_ascii=False)
     if "patch_bundles" not in data:
-        data["patch_bundles"] = [data["patch_bundle"]] if data.get("patch_bundle") else []
-    if "patch_bundle" not in data and data["patch_bundles"]:
-        data["patch_bundle"] = data["patch_bundles"][0]
+        data["patch_bundles"] = [data["patch_bundle"]] if _looks_like_patch_bundle(data.get("patch_bundle")) else []
+    if data["patch_bundles"]:
+        if not _looks_like_patch_bundle(data.get("patch_bundle")):
+            data["patch_bundle"] = data["patch_bundles"][0]
+    elif not _looks_like_patch_bundle(data.get("patch_bundle")):
+        data["patch_bundle"] = None
     _normalize_patch_bundle_content(data)
     _normalize_harness_manifest(data)
     data["policy_audit_cases"] = _normalize_audit_case_map(data.get("policy_audit_cases"))
@@ -171,6 +174,10 @@ def _normalize_patch_bundle_content(data: dict[str, Any]) -> None:
         data["patch_bundles"] = [normalize_bundle(bundle) for bundle in data["patch_bundles"]]
     if isinstance(data.get("patch_bundle"), dict):
         data["patch_bundle"] = normalize_bundle(data["patch_bundle"])
+
+
+def _looks_like_patch_bundle(value: Any) -> bool:
+    return isinstance(value, dict) and isinstance(value.get("target_path"), str) and "content" in value
 
 
 def _normalize_harness_manifest(data: dict[str, Any]) -> None:
