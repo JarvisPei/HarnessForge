@@ -46,6 +46,7 @@ def smoke(
     domain: str = typer.Option("airline", "--domain"),
     split: str = typer.Option("train", "--split"),
     num_tasks: int = typer.Option(2, "--num-tasks", min=1),
+    task_ids: list[str] | None = typer.Option(None, "--task-id"),
     task_set_name: str | None = typer.Option(None, "--task-set-name"),
     user_llm: str | None = typer.Option(None, "--user-llm"),
     profile: str | None = typer.Option(None, "--profile", "-p"),
@@ -67,6 +68,7 @@ def smoke(
             domain=domain,
             split=split,
             num_tasks=num_tasks,
+            task_ids=task_ids,
             task_set_name=task_set_name,
             user_llm=user_llm or os.getenv("TAU_USER_LLM", "gpt-4.1"),
             output_dir=output_dir,
@@ -95,11 +97,19 @@ def run_tau_bench_smoke(
     max_errors: int,
     timeout: float | None,
     seed: int,
+    task_ids: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     tau = _load_tau2_runtime()
     agent_name = "harnessforge_agent"
     _register_harnessforge_agent(tau, agent_name, settings)
-    tasks = _load_tau_tasks(tau, domain=domain, split=split, task_set_name=task_set_name, num_tasks=num_tasks)
+    tasks = _load_tau_tasks(
+        tau,
+        domain=domain,
+        split=split,
+        task_set_name=task_set_name,
+        num_tasks=num_tasks,
+        task_ids=task_ids,
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
 
     config = tau["TextRunConfig"](
@@ -139,6 +149,7 @@ def run_tau_bench_smoke(
         "domain": domain,
         "split": split,
         "task_set_name": task_set_name,
+        "task_ids": [str(task.id) for task in tasks],
         "num_tasks": len(tasks),
         "agent": agent_name,
         "user_llm": user_llm,
@@ -698,11 +709,26 @@ def message_to_plain_dict(message: Any) -> dict[str, Any]:
     }
 
 
-def _load_tau_tasks(tau: dict[str, Any], *, domain: str, split: str, task_set_name: str | None, num_tasks: int) -> list[Any]:
+def _load_tau_tasks(
+    tau: dict[str, Any],
+    *,
+    domain: str,
+    split: str,
+    task_set_name: str | None,
+    num_tasks: int,
+    task_ids: list[str] | None = None,
+) -> list[Any]:
     registry = tau["registry"]
     loader_name = task_set_name or domain
     loader = registry.get_tasks_loader(loader_name)
     tasks = list(loader(split))
+    if task_ids:
+        requested = [str(task_id) for task_id in task_ids]
+        tasks_by_id = {str(task.id): task for task in tasks}
+        missing = [task_id for task_id in requested if task_id not in tasks_by_id]
+        if missing:
+            raise RuntimeError(f"Unknown tau-bench task ids for task_set={loader_name} split={split}: {missing}")
+        return [tasks_by_id[task_id] for task_id in requested]
     if not tasks:
         raise RuntimeError(f"No tau-bench tasks loaded for task_set={loader_name} split={split}")
     return tasks[:num_tasks]

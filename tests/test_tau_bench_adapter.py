@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from agentdistill.tau_bench import (
     _append_tau_incoming_message,
     _first_forced_tau_tool,
+    _load_tau_tasks,
     _select_tau_tool_payloads_with_policy,
     build_tau_failure_digest,
     build_tau_runtime_policy_payload,
@@ -40,6 +41,20 @@ class FakeMessage:
 @dataclass
 class FakeMultiToolMessage:
     tool_messages: list[FakeMessage]
+
+
+@dataclass
+class FakeTask:
+    id: str
+
+
+class FakeTauRegistry:
+    def __init__(self, tasks: list[FakeTask]):
+        self.tasks = tasks
+
+    def get_tasks_loader(self, name: str):
+        assert name == "airline"
+        return lambda split: self.tasks
 
 
 class FakePolicies:
@@ -269,6 +284,40 @@ def test_task_error_to_trace_records_adapter_error() -> None:
     assert trace["termination_reason"] == "adapter_error"
     assert trace["reward_info"] is None
     assert trace["error"] == {"type": "ValueError", "message": "bad response"}
+
+
+def test_load_tau_tasks_selects_requested_ids_in_requested_order() -> None:
+    tau = {"registry": FakeTauRegistry([FakeTask("0"), FakeTask("1"), FakeTask("3")])}
+
+    tasks = _load_tau_tasks(
+        tau,
+        domain="airline",
+        split="train",
+        task_set_name=None,
+        num_tasks=2,
+        task_ids=["3", "1"],
+    )
+
+    assert [task.id for task in tasks] == ["3", "1"]
+
+
+def test_load_tau_tasks_rejects_unknown_task_ids() -> None:
+    tau = {"registry": FakeTauRegistry([FakeTask("0")])}
+
+    try:
+        _load_tau_tasks(
+            tau,
+            domain="airline",
+            split="train",
+            task_set_name=None,
+            num_tasks=1,
+            task_ids=["missing"],
+        )
+    except RuntimeError as exc:
+        assert "Unknown tau-bench task ids" in str(exc)
+        assert "missing" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")
 
 
 def test_build_tau_failure_digest_identifies_no_tool_loop() -> None:

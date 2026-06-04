@@ -37,6 +37,39 @@ Do not use official `test` for teacher diagnosis, repair, prompt revision, or
 adapter debugging. For smoke testing, use `small` when available or a small
 subset of official `train`.
 
+## Train-Internal Evaluation Discipline
+
+Small task slices are mechanism probes, not benchmark claims. A three-task
+slice is useful when it reveals whether a new harness permission has any
+runtime effect, such as no-tool fallback, pre-tool-call guarding, or candidate
+state. It is not sufficient evidence that the harness generalizes.
+
+Recommended tau-bench development protocol:
+
+```text
+diagnosis slice       official train tasks visible to teacher
+train-heldout dev     official train tasks not shown to teacher, used for iteration signals
+official test         final blind evaluation only after freezing the harness
+```
+
+Use fixed task ids for each slice instead of always taking the first N tasks.
+This prevents the same examples from silently serving as both teacher-visible
+diagnosis and dev evaluation. If a mechanism cannot produce runtime effect on
+the diagnosis slice, it is usually not worth scaling. If it does produce effect,
+the next question must be train-heldout transfer, not more local tuning on the
+same examples.
+
+For airline cancellation/candidate-selection work, the initial convention is:
+
+```text
+diagnosis examples: task ids seen in teacher traces, currently task 1
+sanity examples: task ids 0 and 3 for regression checks around known workflows
+train-heldout dev: later official train task ids selected by failure family
+```
+
+The teacher must not receive official test traces or train-heldout dev traces
+before a harness is frozen for that evaluation round.
+
 ## Runner Structure
 
 tau2-bench has a layered runner:
