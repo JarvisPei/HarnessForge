@@ -4694,7 +4694,7 @@ def test_teacher_prompt_v2_has_architect_decision_gate() -> None:
 
     assert "architect_decision" in text
     assert "context_request" in text
-    assert "permission_request" in text
+    assert "permission_request" not in text
     assert "complete markdown, Python, or JSON file text" in text
     assert "choose context_request" in text
     assert "inventing a simplified shape" in text

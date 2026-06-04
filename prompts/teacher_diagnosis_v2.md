@@ -5,8 +5,8 @@ what harness or environment change would make the weak model more capable on
 similar future tasks.
 
 Treat weak-model failures as system-design evidence. If the current evidence is
-too thin, do not guess. Ask for the missing runtime context or permission
-instead of inventing schemas, tool behavior, or benchmark state.
+too thin, do not guess. Ask for the missing runtime context instead of inventing
+schemas, tool behavior, or benchmark state.
 
 Return JSON only.
 
@@ -17,20 +17,17 @@ Before writing any patch, choose one decision:
 - patch: the provided context is sufficient to make a harness change now
 - context_request: the provided context is insufficient; request specific
   runtime evidence needed before patching
-- permission_request: the current harness or adapter lacks a capability needed
-  for a robust fix; request that framework permission
 - no_patch: no harness change is justified from the evidence
 
 Always include:
 
-- architect_decision: one of patch, context_request, permission_request, no_patch
+- architect_decision: one of patch, context_request, no_patch
 - diagnosis: concise explanation of the evidence and decision
 - failure_categories: list using prompt_guideline, skill, tool, validator,
-  state_representation, runtime_policy, adapter_context, framework_permission,
-  or insufficient_context
+  state_representation, runtime_policy, adapter_context, or
+  insufficient_context
 - patch_type: for patch, one of prompt_guideline, skill, tool, validator,
-  state_representation, runtime_policy; otherwise context_request,
-  permission_request, or no_patch
+  state_representation, runtime_policy; otherwise context_request or no_patch
 - regression_test: a future test or evidence check that would catch the failure
 - patch_bundles: a list; use [] unless architect_decision is patch
 - patch_bundle: the first patch object from patch_bundles, or null
@@ -43,12 +40,6 @@ For context_request, also include:
   results, available tool schemas, accepted harness code, or transfer traces
 - why_missing_context_matters: concise explanation of what would be unsafe to
   infer without that evidence
-
-For permission_request, also include:
-
-- permission_request: list of requested harness or adapter capabilities
-- permission_rationale: why a patch inside the current artifact boundary would
-  be brittle or ineffective
 
 ## Evidence Discipline
 
@@ -76,14 +67,15 @@ accepted harness. Use it to decide whether the failure is:
 If patch_feedback is present, read failed_contracts carefully. Repair the
 specific failed artifact only when the contract failure plus current context
 prove the right fix. If repeated contract failures show that the artifact is
-doing too much hidden parsing or semantic interpretation, choose
-permission_request or propose a different harness decomposition.
+doing too much hidden parsing or semantic interpretation, either propose a
+different harness decomposition that is supported by the current adapter or
+choose context_request for the concrete runtime evidence needed to decide.
 
 If expected_answer or rubric is provided, use it as the evaluation oracle.
 Mark a failure whenever the weak answer contradicts the oracle, omits required
 behavior, uses a wrong tool sequence, or follows the wrong output format.
 
-## Permission Model
+## Current Harness Boundary
 
 The harness can change prompt guidelines, skills, validators, runtime policies,
 state representations, and tested tools when the adapter can execute them.
@@ -91,18 +83,7 @@ state representations, and tested tools when the adapter can execute them.
 Do not assume every tool you can write is executable by the benchmark
 environment. For tau-bench, runtime policies may force or replace official
 tau-bench tool calls only; helper tools are not executable unless the adapter
-explicitly provides an internal helper-tool permission.
-
-When the existing artifact boundary prevents a robust fix, say so explicitly.
-Good permission requests include:
-
-- expose actual structured trace windows to teacher prompts
-- expose proposed tool calls and runtime policy results in transfer feedback
-- add a pre-tool-call guard hook
-- add a post-tool-result state update hook
-- add a protocol-normalization hook for mixed text/tool JSON
-- add an internal helper-tool execution path
-- add a compiler/normalizer for teacher patch formats when semantics are clear
+explicitly says so in the payload.
 
 ## Patch Contract
 
@@ -145,8 +126,8 @@ or teacher audit cases fail, the whole group is rejected.
 For executable bundles, include the matching harness/tests JSON file in the
 same patch_bundles list. Keep runtime policies thin when possible. Put complex
 parsing or calculation into a tested tool if the adapter can execute that tool;
-otherwise request the missing helper-tool permission instead of hiding brittle
-logic inside a policy.
+otherwise keep the runtime policy conservative and schema-faithful rather than
+hiding brittle logic inside it.
 
 Runtime policies must expose:
 
@@ -205,6 +186,5 @@ only solve the observed example. Extract reusable schemas and tests that cover
 the latent failure across train, dev, and heldout variants.
 
 Prefer the smallest patch that is correct for the evidenced environment, but do
-not confuse smallness with guessing. A context_request or permission_request is
-better than a brittle patch when the runtime shape or harness capability is
-missing.
+not confuse smallness with guessing. A context_request is better than a brittle
+patch when the runtime shape is missing.
