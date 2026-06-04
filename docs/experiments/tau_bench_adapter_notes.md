@@ -745,3 +745,108 @@ Interpretation:
 - a compact focused repair prompt was attempted, but teacher API calls timed
   out repeatedly; future repair runs should use a background job, shorter
   provider timeout, or an even more compressed repair payload
+
+## Candidate-State Repair And Heldout Check
+
+Date: 2026-06-04
+
+The next repair round targeted the structured candidate-state policy's
+stop-condition failure. The teacher was asked to repair the same two artifacts:
+
+```text
+harness/runtime_policies/tau_airline_candidate_state.py
+harness/tests/tau_airline_candidate_state.json
+```
+
+The repair process exposed a useful distinction between harness content and
+outer bundle format:
+
+- v6 produced a better stop-after-match policy idea, but the raw bundle had
+  schema drift in `patch_bundle`, `harness_manifest`, and policy-test shape.
+- v7 repaired the runtime-policy entrypoint so `evaluate(context)` reads
+  `context["metadata"]["messages"]`, but still needed mechanical manifest
+  normalization.
+- v8 repaired user-id provenance and added a `tool_call` fallback test, but
+  returned unified diffs instead of full file contents. The diffs were
+  mechanically materialized against v7 content, and manifest path/type fields
+  were normalized without changing the teacher's policy/test semantics.
+
+After this schema-only and diff-materialization step, the bundle passed the
+framework gate:
+
+```text
+patch_status: accepted
+manifest: passed
+runtime policy contract: passed
+runtime policy tests: 5 passed
+accepted result:
+outputs/tau_bench_teacher_probe/airline_candidate_state_structured_repair_v8_user_id_gpt/
+  patch_result_tolerant_materialized_manifest_completed.json
+```
+
+Bounded diagnosis task `1`:
+
+```text
+output: outputs/tau_bench_policy/airline_train_1_candidate_state_v8_repair/1.json
+reward: 0.0
+termination: max_steps
+messages: 14
+```
+
+Runtime effect:
+
+```text
+forced get_user_details({"user_id": "raj_sanchez_7340"}) five times
+```
+
+Heldout train task `5`:
+
+```text
+output: outputs/tau_bench_policy/airline_train_5_candidate_state_v8_repair/5.json
+reward: 0.0
+termination: too_many_errors
+messages: 8
+```
+
+Runtime effect:
+
+```text
+forced get_user_details({"user_id": "UPSET"}) three times
+```
+
+Interpretation:
+
+- the teacher-generated runtime policy still has real control authority over
+  tau execution; all observed bad calls above were forced by the policy
+- the repaired bundle did not transfer positively beyond the earlier
+  structured candidate-state v1 signal
+- v8 fixed one unit-test bug (`USER` from "user id") but introduced or
+  preserved a broader natural-language provenance bug: any U-prefixed word
+  such as `UPSET` can be treated as a user id
+- on task `1`, the policy did not recognize real tau `get_user_details` tool
+  results as candidate-bearing messages, so it repeated the same user lookup
+  instead of advancing to reservation candidates
+- policy tests must include the actual tau structured-message shape, not only
+  teacher-invented simplified tool-message objects
+
+Next repair direction:
+
+The next teacher prompt should include compact real `metadata.messages` slices
+from task `1` and task `5`, plus the explicit failures above. The correct
+repair axis is not another generic instruction about candidate state; it is a
+trace-shape repair:
+
+```text
+1. parse tau tool-result messages exactly as exported by _policy_message_dict
+2. extract user ids only from explicit phrases or proposed get_user_details
+   tool_input, not arbitrary U-prefixed words
+3. stop repeating get_user_details after a successful user-detail result
+4. advance to unchecked reservations once real tau user-detail output exposes
+   reservations
+5. keep the stop-after-matched-reservation condition from v6/v7
+```
+
+This is a negative transfer result, but it is still useful for the project
+methodology: the accepted harness had measurable runtime effect, and the
+heldout failure identified a missing teacher context/permission boundary
+rather than a pure weak-model limitation.
