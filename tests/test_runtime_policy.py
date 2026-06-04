@@ -4689,6 +4689,17 @@ def test_teacher_prompt_mentions_raw_patch_bundle_content() -> None:
     assert "double-escaped" in text
 
 
+def test_teacher_prompt_v2_has_architect_decision_gate() -> None:
+    text = Path("prompts/teacher_diagnosis_v2.md").read_text()
+
+    assert "architect_decision" in text
+    assert "context_request" in text
+    assert "permission_request" in text
+    assert "complete markdown, Python, or JSON file text" in text
+    assert "choose context_request" in text
+    assert "inventing a simplified shape" in text
+
+
 def test_teacher_payload_preserves_core_fields() -> None:
     payload = build_teacher_payload(
         task_id="task",
