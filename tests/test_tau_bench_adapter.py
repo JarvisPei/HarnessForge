@@ -140,7 +140,8 @@ def test_build_tau_runtime_policy_payload_includes_conversation_metadata() -> No
         initial_answer="How can I help you today?",
         tau_messages=[
             FakeMessage(role="user", content="Cancel reservation EHGLP3."),
-            FakeMessage(role="assistant", content="How can I help you today?"),
+            FakeMessage(role="assistant", tool_calls=[FakeToolCall(name="get_user_details", arguments={"user_id": "u1"})]),
+            FakeMessage(role="tool", content='{"reservations": ["EHGLP3"]}', id="tool_1"),
             FakeMessage(role="user", content="My user ID is emma_kim_9957."),
         ],
         available_tools=["get_user_details", "get_reservation_details"],
@@ -150,7 +151,18 @@ def test_build_tau_runtime_policy_payload_includes_conversation_metadata() -> No
     assert payload["initial_answer"] == "How can I help you today?"
     assert payload["available_tools"] == ["get_user_details", "get_reservation_details"]
     assert payload["metadata"]["last_user_message"] == "My user ID is emma_kim_9957."
-    assert "assistant: How can I help you today?" in payload["metadata"]["conversation"]
+    assert "assistant: Assistant tool call" in payload["metadata"]["conversation"]
+    assert payload["metadata"]["messages"] == [
+        {"role": "user", "content": "Cancel reservation EHGLP3."},
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {"id": "call_1", "name": "get_user_details", "arguments": {"user_id": "u1"}, "requestor": "assistant"}
+            ],
+        },
+        {"role": "tool", "content": '{"reservations": ["EHGLP3"]}'},
+        {"role": "user", "content": "My user ID is emma_kim_9957."},
+    ]
 
 
 def test_build_tau_runtime_policy_payload_includes_proposed_tool_call() -> None:
@@ -249,7 +261,7 @@ def test_message_to_plain_dict_keeps_tool_calls() -> None:
     plain = message_to_plain_dict(message)
 
     assert plain["role"] == "assistant"
-    assert plain["tool_calls"] == message.tool_calls
+    assert plain["tool_calls"] == [{"id": "call_1", "name": "get_user", "arguments": {"user_id": "u1"}, "requestor": "assistant"}]
     assert plain["turn_idx"] == 2
 
 

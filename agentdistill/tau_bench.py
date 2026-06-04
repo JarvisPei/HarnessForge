@@ -333,7 +333,9 @@ def build_tau_runtime_policy_payload(
 ) -> dict[str, Any]:
     transcript = []
     user_messages = []
+    structured_messages = []
     for message in tau_messages:
+        structured_messages.append(_policy_message_dict(message))
         converted = tau_message_to_chat_message(message)
         if converted is None:
             continue
@@ -353,6 +355,7 @@ def build_tau_runtime_policy_payload(
         "metadata": {
             "conversation": "\n".join(transcript),
             "last_user_message": user_messages[-1] if user_messages else "",
+            "messages": structured_messages,
         },
     }
 
@@ -729,13 +732,28 @@ def message_to_plain_dict(message: Any) -> dict[str, Any]:
     return {
         "role": data.get("role"),
         "content": data.get("content"),
-        "tool_calls": data.get("tool_calls"),
+        "tool_calls": _normalize_tool_calls(data.get("tool_calls")),
         "requestor": data.get("requestor"),
         "error": data.get("error"),
         "turn_idx": data.get("turn_idx"),
         "timestamp": data.get("timestamp"),
         "raw_data": data.get("raw_data"),
     }
+
+
+def _policy_message_dict(message: Any) -> dict[str, Any]:
+    plain = message_to_plain_dict(message)
+    return {
+        key: value
+        for key, value in plain.items()
+        if key in {"role", "content", "tool_calls", "requestor", "error", "turn_idx", "timestamp"} and value is not None
+    }
+
+
+def _normalize_tool_calls(tool_calls: Any) -> list[dict[str, Any]] | None:
+    if tool_calls is None or not isinstance(tool_calls, list):
+        return None
+    return [_tool_call_to_dict(call) for call in tool_calls]
 
 
 def _load_tau_tasks(

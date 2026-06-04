@@ -651,3 +651,12 @@ Interpretation:
   search, not only cancellation guarding, is a recurring airline failure family
 - mixed text/tool JSON is a generic adapter-protocol issue and should be
   normalized before proposed-tool-call guard evaluation
+
+Follow-up adapter support:
+
+Runtime policy payloads now include compact structured state under
+`metadata.messages` in addition to the plain `metadata.conversation` transcript.
+This gives teacher-generated policies a stable way to inspect prior tool calls
+and tool results, track checked/rejected candidates, and decide whether a
+proposed destructive action is justified without parsing the entire transcript
+as free text.
