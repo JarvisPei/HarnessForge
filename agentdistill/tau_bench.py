@@ -438,11 +438,40 @@ def parse_tau_tool_calls(content: str | None) -> list[dict[str, Any]]:
     if not content:
         return []
     text = _strip_code_fences(content.strip())
-    if not text.startswith("{"):
+    payloads = _candidate_json_payloads(text)
+    for payload in payloads:
+        parsed = _parse_tau_tool_payload(payload)
+        if parsed:
+            return parsed
+    return []
+
+
+def _candidate_json_payloads(text: str) -> list[Any]:
+    decoder = json.JSONDecoder()
+    payloads: list[Any] = []
+    if text.startswith("{"):
+        try:
+            payload, _ = decoder.raw_decode(text)
+            payloads.append(payload)
+        except json.JSONDecodeError:
+            pass
+    for match in re.finditer(r"\{", text):
+        if match.start() == 0:
+            continue
+        try:
+            payload, _ = decoder.raw_decode(text, match.start())
+        except json.JSONDecodeError:
+            continue
+        payloads.append(payload)
+    return payloads
+
+
+def _parse_tau_tool_payload(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
         return []
     try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
+        json.dumps(payload)
+    except (TypeError, ValueError):
         return []
     candidates: list[Any] = []
     if isinstance(payload.get("tool_call"), dict):

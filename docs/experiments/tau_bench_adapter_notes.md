@@ -615,3 +615,39 @@ Interpretation:
   candidate-state policy that tracks checked/rejected reservation ids and
   advances to the next candidate, or a generic adapter protocol-normalization
   hook that handles mixed text/tool JSON before policy evaluation
+
+## Train-Heldout First Attempt
+
+Date: 2026-06-04
+
+After adding fixed task-id selection, the first train-heldout attempt targeted
+official `airline train` task ids `4`, `5`, and `7`, which were not used as the
+teacher-visible task `1` diagnosis trace. The clean run used an empty runtime
+policy directory so the generated cancel guard could not affect the baseline.
+
+The first task, `4`, already exposed a related but distinct candidate-search
+family: the user supplied a user id but no reservation id and asked about
+compensation for a canceled business flight. The weak model retrieved the user
+details and began scanning reservations, but the task timed out:
+
+```text
+task 4 clean heldout: reward=0.0, termination=timeout, messages=12
+```
+
+The attempted online slice was stopped during task `5` because the run was too
+slow for interactive iteration. Task `5` also produced another mixed
+text-plus-tool response:
+
+```text
+I’m locating your reservation ID now.{"tool_call": {"name": "get_user_details", ...}}
+```
+
+Interpretation:
+
+- train-heldout evaluation is the right next protocol, but a three-task online
+  slice is already slow enough that future heldout sweeps should run in the
+  background or use a smaller per-turn/task budget
+- the heldout task `4` supports the broader diagnosis that candidate-state
+  search, not only cancellation guarding, is a recurring airline failure family
+- mixed text/tool JSON is a generic adapter-protocol issue and should be
+  normalized before proposed-tool-call guard evaluation

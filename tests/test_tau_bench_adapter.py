@@ -82,6 +82,18 @@ def test_parse_tau_tool_call_accepts_input_alias_and_fences() -> None:
     assert parse_tau_tool_calls(payload) == [{"name": "lookup", "arguments": {"x": 1}}]
 
 
+def test_parse_tau_tool_call_extracts_embedded_tool_json() -> None:
+    payload = 'I am checking now.{"tool_call": {"name": "get_user_details", "arguments": {"user_id": "u1"}}}'
+
+    assert parse_tau_tool_calls(payload) == [{"name": "get_user_details", "arguments": {"user_id": "u1"}}]
+
+
+def test_parse_tau_tool_call_ignores_embedded_non_tool_json() -> None:
+    payload = 'The profile is {"user_id": "u1"} and no tool is needed.'
+
+    assert parse_tau_tool_calls(payload) == []
+
+
 def test_parse_tau_tool_call_handles_empty_content() -> None:
     assert parse_tau_tool_calls(None) == []
     assert parse_tau_tool_calls("") == []
