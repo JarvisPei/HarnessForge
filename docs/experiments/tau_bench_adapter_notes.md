@@ -660,3 +660,88 @@ This gives teacher-generated policies a stable way to inspect prior tool calls
 and tool results, track checked/rejected candidates, and decide whether a
 proposed destructive action is justified without parsing the entire transcript
 as free text.
+
+## Structured Candidate-State Policy Probe
+
+Date: 2026-06-04
+
+After adding `metadata.messages`, the teacher was given official-train
+diagnosis evidence from task `1` and task `4`. Task `5` and task `7` were held
+out from the teacher prompt for this round. The teacher generated:
+
+```text
+harness/runtime_policies/tau_airline_candidate_state.py
+harness/tests/tau_airline_candidate_state.json
+```
+
+The bundle passed manifest validation, runtime policy tests, and teacher policy
+audit. It uses structured runtime metadata to force official tau tool calls for
+candidate-state search:
+
+- force `get_user_details` when the user supplies a user id but no candidate
+  list is present
+- force `get_reservation_details` for the next unchecked reservation id from
+  the user record
+- avoid repeating already checked candidates when metadata shows prior
+  reservation-detail results
+
+Bounded task `1` diagnosis replay:
+
+```text
+output: outputs/tau_bench_policy/airline_train_1_candidate_state_structured_v1/1.json
+reward: 0.0
+termination: timeout
+messages: 10
+```
+
+Runtime effect:
+
+```text
+forced get_user_details({"user_id": "raj_sanchez_7340"})
+checked MZDDS4
+forced get_reservation_details({"reservation_id": "60RX9E"})
+```
+
+This is better than the previous cancel guard, which could recheck the same bad
+candidate. The new policy advanced to the next unchecked candidate, but the run
+timed out before completing the full candidate list.
+
+Heldout train task `5`:
+
+```text
+output: outputs/tau_bench_policy/airline_train_5_candidate_state_structured_v1/5.json
+reward: 0.0
+termination: max_steps
+messages: 15
+```
+
+Runtime effect:
+
+```text
+get_user_details(mei_brown_7075)
+get_reservation_details(DB1Y70)
+get_reservation_details(MUGYUB)
+get_reservation_details(3JA7XV)
+get_reservation_details(CYPIDV)
+```
+
+The heldout transfer signal is meaningful: the policy advanced through the
+candidate list on a task the teacher did not see. It found the matching
+reservation `3JA7XV`, whose tool result contained flight `HAT045` from `PHX` to
+`SEA`, matching the user's request. However, the policy still forced the next
+unchecked candidate `CYPIDV` instead of stopping candidate search and allowing
+the weak model to finalize from the matched evidence.
+
+Interpretation:
+
+- structured metadata gave teacher-generated harness code enough state to
+  produce real train-heldout runtime effect
+- the remaining failure is no longer "cannot search candidates"; it is
+  "does not recognize matched-candidate evidence as a stop condition"
+- the next repair should be focused on the same policy/test: when
+  `metadata.messages` shows a checked reservation matching the user's requested
+  flight/route, return `requires_tool: false` instead of forcing the next
+  unchecked candidate
+- a compact focused repair prompt was attempted, but teacher API calls timed
+  out repeatedly; future repair runs should use a background job, shorter
+  provider timeout, or an even more compressed repair payload
