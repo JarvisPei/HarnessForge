@@ -21,6 +21,7 @@ from agentdistill.harness import load_system_prompt
 from agentdistill.manifest import HarnessManifest, ManifestArtifact
 from agentdistill.models import ChatClient, load_model_settings
 from agentdistill.patches import apply_patch_bundles_atomically, patch_group_is_executable
+from agentdistill.prompt_loader import load_teacher_system_prompt
 from agentdistill.repair_fixture import build_repair_fixture_case
 from agentdistill.report import build_impact_report, evaluate_success
 from agentdistill.run import run_task
@@ -90,7 +91,7 @@ async def run_probe_filter(
     repo_root = repo_root or Path(__file__).resolve().parent.parent
     teacher = teacher or ChatClient(load_model_settings("teacher", profile))
     weak = weak or ChatClient(load_model_settings("weak", profile))
-    teacher_system = (repo_root / "prompts/teacher_diagnosis.md").read_text().strip()
+    teacher_system = load_teacher_system_prompt(repo_root)
     cases = build_probe_filter_cases(include_diagnostics=include_diagnostics)
     workspace_parent = Path(tempfile.mkdtemp(prefix="repair_family_probe_filter_"))
     workspace_root = workspace_parent / "workspace"
@@ -146,7 +147,7 @@ async def run_repair_family(
     transfer_cfg = load_benchmark_config(repo_root / "configs/benchmark_repair_mechanism.yaml")
     teacher = teacher or ChatClient(load_model_settings("teacher", profile))
     weak = weak or ChatClient(load_model_settings("weak", profile))
-    teacher_system = (repo_root / "prompts/teacher_diagnosis.md").read_text().strip()
+    teacher_system = load_teacher_system_prompt(repo_root)
     cases = (
         build_probe_filter_cases(include_diagnostics=include_diagnostics)
         if transfer_tight

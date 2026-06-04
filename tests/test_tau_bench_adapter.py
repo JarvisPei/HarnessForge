@@ -9,6 +9,7 @@ from agentdistill.tau_bench import (
     _select_tau_tool_payloads_with_policy,
     build_tau_failure_digest,
     build_tau_runtime_policy_payload,
+    build_tau_runtime_evidence,
     build_tau_teacher_context,
     message_to_plain_dict,
     parse_tau_tool_calls,
@@ -389,3 +390,60 @@ def test_build_tau_teacher_context_marks_split_boundary() -> None:
     assert context["source_splits"] == ["train"]
     assert context["split_policy"]["teacher_visible"] == "official train traces only"
     assert "tau_bench_failure_digest" in context
+    assert "tau_runtime_evidence" in context
+
+
+def test_build_tau_runtime_evidence_includes_real_message_windows() -> None:
+    trace = {
+        "domain": "airline",
+        "split": "train",
+        "task_id": "1",
+        "termination_reason": "max_steps",
+        "reward_info": {"reward": 0.0},
+        "messages": [
+            {"role": "user", "content": "My user ID is raj_sanchez_7340.", "turn_idx": 3},
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "name": "get_user_details",
+                        "arguments": {"user_id": "raj_sanchez_7340"},
+                        "requestor": "assistant",
+                    }
+                ],
+                "turn_idx": 4,
+                "raw_data": {
+                    "harnessforge_raw": '{"tool_call":{"name":"get_user_details"}}',
+                    "runtime_policy_results": [
+                        {
+                            "policy": "tau_airline_candidate_state",
+                            "requires_tool": True,
+                            "tool_name": "get_user_details",
+                            "tool_input": {"user_id": "raj_sanchez_7340"},
+                        }
+                    ],
+                },
+            },
+            {
+                "role": "tool",
+                "content": '{"user_id": "raj_sanchez_7340", "reservations": ["MZDDS4", "60RX9E"]}',
+                "requestor": "assistant",
+                "error": False,
+                "turn_idx": 5,
+            },
+        ],
+    }
+
+    evidence = build_tau_runtime_evidence([trace])
+
+    assert evidence["schema"] == "harnessforge.tau_runtime_evidence.v1"
+    assert evidence["message_shape_notes"]
+    window = evidence["trace_windows"][0]
+    assert window["window_reason"] == "runtime_policy_forced_tool"
+    assert window["task_id"] == "1"
+    assert window["messages"][1]["raw_data"]["runtime_policy_results"][0]["tool_input"] == {
+        "user_id": "raj_sanchez_7340"
+    }
+    assert window["messages"][2]["role"] == "tool"
+    assert "reservations" in window["messages"][2]["content"]

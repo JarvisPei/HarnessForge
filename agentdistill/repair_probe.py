@@ -16,6 +16,7 @@ from agentdistill.diagnosis import parse_diagnosis
 from agentdistill.feedback import build_patch_feedback, merge_benchmark_context
 from agentdistill.models import ChatClient, load_model_settings
 from agentdistill.patches import apply_patch_bundles_atomically, patch_group_is_executable
+from agentdistill.prompt_loader import load_teacher_system_prompt
 from agentdistill.repair_fixture import build_repair_fixture_case
 
 
@@ -48,7 +49,7 @@ async def run_repair_probe(
     repo_root = repo_root or Path(__file__).resolve().parent.parent
     case = build_repair_fixture_case()
     teacher = teacher or ChatClient(load_model_settings("teacher", profile))
-    teacher_system = (repo_root / "prompts/teacher_diagnosis.md").read_text().strip()
+    teacher_system = load_teacher_system_prompt(repo_root)
     weak_system = (repo_root / "prompts/weak_system.md").read_text().strip()
 
     seed_result = apply_patch_bundles_atomically(repo_root, case.bad_policy_bundles, case.task, case.manifest)

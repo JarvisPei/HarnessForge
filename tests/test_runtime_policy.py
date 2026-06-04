@@ -41,6 +41,7 @@ from agentdistill.repair_probe import run_repair_probe
 from agentdistill.repair_family import _weak_system, build_probe_filter_cases, build_repair_family_cases, run_probe_filter, run_repair_family
 from agentdistill.patches import apply_patch_bundles_atomically
 from agentdistill.patches import patch_group_is_executable
+from agentdistill.prompt_loader import load_teacher_system_prompt
 from agentdistill.repair_efficiency import build_repair_efficiency_report
 from agentdistill.repair_fixture import run_repair_fixture
 from agentdistill.models import ChatClient, ModelSettings, load_model_settings
@@ -4698,6 +4699,18 @@ def test_teacher_prompt_v2_has_architect_decision_gate() -> None:
     assert "complete markdown, Python, or JSON file text" in text
     assert "choose context_request" in text
     assert "inventing a simplified shape" in text
+
+
+def test_load_teacher_system_prompt_uses_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    prompts = tmp_path / "prompts"
+    prompts.mkdir()
+    (prompts / "teacher_diagnosis.md").write_text("v1", encoding="utf-8")
+    (prompts / "teacher_diagnosis_v2.md").write_text("v2", encoding="utf-8")
+
+    assert load_teacher_system_prompt(tmp_path) == "v1"
+
+    monkeypatch.setenv("TEACHER_PROMPT_PATH", "prompts/teacher_diagnosis_v2.md")
+    assert load_teacher_system_prompt(tmp_path) == "v2"
 
 
 def test_teacher_payload_preserves_core_fields() -> None:

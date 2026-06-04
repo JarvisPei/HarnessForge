@@ -591,11 +591,118 @@ def build_tau_teacher_context(traces: list[dict[str, Any]], *, max_traces: int =
             "blind_final": "official test split after the harness is frozen",
         },
         "tau_bench_failure_digest": digest,
+        "tau_runtime_evidence": build_tau_runtime_evidence(traces, max_traces=max_traces),
     }
 
 
+def build_tau_runtime_evidence(
+    traces: list[dict[str, Any]],
+    *,
+    max_traces: int = 5,
+    max_windows_per_trace: int = 4,
+    window_radius: int = 2,
+) -> dict[str, Any]:
+    """Expose compact real tau message windows for teacher architecture decisions."""
+
+    windows: list[dict[str, Any]] = []
+    for trace in traces[:max_traces]:
+        messages = _trace_messages(trace)
+        centers = _tau_evidence_centers(messages)
+        if not centers and messages:
+            centers = [{"index": len(messages) - 1, "reason": "trace_tail"}]
+        for center in centers[:max_windows_per_trace]:
+            idx = center["index"]
+            start = max(0, idx - window_radius)
+            end = min(len(messages), idx + window_radius + 1)
+            windows.append(
+                {
+                    "task_id": trace.get("task_id"),
+                    "domain": trace.get("domain"),
+                    "split": trace.get("split"),
+                    "termination_reason": trace.get("termination_reason"),
+                    "reward": _trace_reward(trace),
+                    "center_index": idx,
+                    "window_reason": center["reason"],
+                    "messages": [_compact_tau_message(message) for message in messages[start:end]],
+                }
+            )
+    return {
+        "schema": "harnessforge.tau_runtime_evidence.v1",
+        "trace_windows": windows,
+        "message_shape_notes": [
+            "Runtime policies receive these entries under context.metadata.messages.",
+            "Tau tool-result messages have role=tool and JSON content, but usually do not carry the tool name.",
+            "Associate a tool result with the preceding assistant tool_calls entry when tool identity is needed.",
+            "Runtime policy decisions appear under assistant raw_data.runtime_policy_results.",
+        ],
+    }
+
+
+def _trace_messages(trace: dict[str, Any]) -> list[dict[str, Any]]:
+    messages = trace.get("messages")
+    if not isinstance(messages, list):
+        raw = trace.get("raw")
+        messages = raw.get("messages") if isinstance(raw, dict) else []
+    return [message for message in messages if isinstance(message, dict)]
+
+
+def _tau_evidence_centers(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    centers: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for idx, message in enumerate(messages):
+        reason = _tau_evidence_reason(message)
+        if reason and idx not in seen:
+            centers.append({"index": idx, "reason": reason})
+            seen.add(idx)
+    return centers
+
+
+def _tau_evidence_reason(message: dict[str, Any]) -> str | None:
+    raw_data = message.get("raw_data")
+    runtime_results = raw_data.get("runtime_policy_results") if isinstance(raw_data, dict) else None
+    if isinstance(runtime_results, list):
+        if any(isinstance(result, dict) and result.get("requires_tool") is True for result in runtime_results):
+            return "runtime_policy_forced_tool"
+        if runtime_results:
+            return "runtime_policy_evaluated"
+    if message.get("tool_calls"):
+        return "assistant_tool_call"
+    if message.get("role") == "tool" and message.get("error") is True:
+        return "tool_error"
+    if message.get("role") == "tool":
+        return "tool_result"
+    return None
+
+
+def _compact_tau_message(message: dict[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    for key in ["role", "turn_idx", "requestor", "error"]:
+        if message.get(key) is not None:
+            compact[key] = message[key]
+    if message.get("content") is not None:
+        compact["content"] = _truncate_text(str(message["content"]), 2000)
+    if message.get("tool_calls") is not None:
+        compact["tool_calls"] = message["tool_calls"]
+    raw_data = message.get("raw_data")
+    if isinstance(raw_data, dict):
+        raw_compact: dict[str, Any] = {}
+        if raw_data.get("runtime_policy_results") is not None:
+            raw_compact["runtime_policy_results"] = raw_data["runtime_policy_results"]
+        if raw_data.get("harnessforge_raw") is not None:
+            raw_compact["harnessforge_raw"] = _truncate_text(str(raw_data["harnessforge_raw"]), 1000)
+        if raw_compact:
+            compact["raw_data"] = raw_compact
+    return compact
+
+
+def _truncate_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
+
+
 def _summarize_tau_trace(trace: dict[str, Any]) -> dict[str, Any]:
-    messages = trace.get("messages") if isinstance(trace.get("messages"), list) else []
+    messages = _trace_messages(trace)
     assistant_texts = [_message_content(message) for message in messages if _message_role(message) == "assistant"]
     user_texts = [_message_content(message) for message in messages if _message_role(message) == "user"]
     tool_call_names = _trace_tool_call_names(messages)

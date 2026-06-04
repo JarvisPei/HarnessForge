@@ -20,6 +20,7 @@ from agentdistill.harness_snapshot import list_harness_files, snapshot_harness
 from agentdistill.metrics import build_benchmark_metrics
 from agentdistill.models import ChatClient, load_model_settings
 from agentdistill.patches import apply_patch_bundles_atomically, patch_group_is_executable
+from agentdistill.prompt_loader import load_teacher_system_prompt
 from agentdistill.report import build_impact_report, evaluate_success
 from agentdistill.teacher_prompt import build_architect_sketch_messages, build_staged_bundle_messages, build_teacher_messages, enrich_benchmark_context
 from agentdistill.run import run_task
@@ -68,7 +69,7 @@ async def run_benchmark(cfg: BenchmarkConfig, profile: str | None, run_id: str |
     weak = ChatClient(load_model_settings("weak", profile))
     teacher = ChatClient(load_model_settings("teacher", profile))
     critic = ChatClient(load_model_settings("critic", profile)) if _critic_enabled(cfg.critic_mode) else None
-    teacher_system = (repo_root / "prompts/teacher_diagnosis.md").read_text().strip()
+    teacher_system = load_teacher_system_prompt(repo_root)
     critic_system = (repo_root / "prompts/critic_policy_audit.md").read_text().strip()
 
     console.print(f"[bold]Benchmark:[/bold] {cfg.name}")

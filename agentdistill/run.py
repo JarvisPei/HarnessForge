@@ -14,6 +14,7 @@ from agentdistill.diagnosis import parse_diagnosis, write_patch_artifact
 from agentdistill.harness import load_system_prompt
 from agentdistill.models import ChatClient, load_model_settings
 from agentdistill.patches import apply_patch_bundles_atomically, patch_group_is_executable
+from agentdistill.prompt_loader import load_teacher_system_prompt
 from agentdistill.teacher_prompt import build_teacher_messages
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
 
@@ -51,7 +52,7 @@ async def run_experiment(
     weak = ChatClient(load_model_settings("weak", profile))
     teacher = ChatClient(load_model_settings("teacher", profile))
     repo_root = Path(__file__).resolve().parent.parent
-    teacher_system = (repo_root / "prompts/teacher_diagnosis.md").read_text().strip()
+    teacher_system = load_teacher_system_prompt(repo_root)
 
     console.print(f"[bold]Experiment:[/bold] {cfg.name}")
     if profile:
