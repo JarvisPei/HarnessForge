@@ -108,6 +108,8 @@ python -m agentdistill.run --config configs/tool_stress.yaml --apply-patches --i
 
 If a teacher-generated runtime policy exists, the runner evaluates it after the weak model's initial answer. A policy may force a tool call before the final answer is produced.
 
+For tau-bench runs, add `--user-llm-shim` when an OpenAI-compatible relay accepts HarnessForge's raw chat-completions requests but blocks LiteLLM requests from tau2's user simulator. The shim routes text-only user-simulator calls through the same `ChatClient` path used by HarnessForge.
+
 ## Benchmark Families
 
 The public benchmark map is intentionally small and composable. These families are the current public test surface for harness distillation; detailed run logs live under `docs/experiments/`.

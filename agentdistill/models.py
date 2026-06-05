@@ -157,7 +157,7 @@ def _is_retryable_error(exc: Exception) -> bool:
     if isinstance(exc, json.JSONDecodeError):
         return True
     if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code in {408, 409, 425, 429, 500, 502, 503, 504}
+        return exc.response.status_code in {408, 409, 425, 429, 500, 502, 503, 504, 524}
     return False
 
 

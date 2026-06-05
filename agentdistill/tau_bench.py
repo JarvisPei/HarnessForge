@@ -9,6 +9,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import typer
@@ -16,7 +17,7 @@ from dotenv import load_dotenv
 from rich.console import Console
 
 from agentdistill.harness import load_system_prompt
-from agentdistill.models import ChatClient, load_model_settings
+from agentdistill.models import ChatClient, ModelSettings, load_model_settings
 from agentdistill.tools import RuntimePolicyRegistry
 
 
@@ -55,6 +56,11 @@ def smoke(
     max_errors: int = typer.Option(5, "--max-errors", min=1),
     timeout: float | None = typer.Option(600.0, "--timeout"),
     seed: int = typer.Option(300, "--seed"),
+    user_llm_shim: bool = typer.Option(
+        False,
+        "--user-llm-shim/--no-user-llm-shim",
+        help="Route tau user-simulator text LLM calls through HarnessForge ChatClient instead of LiteLLM.",
+    ),
 ) -> None:
     """Run a tiny tau2-bench text smoke with HarnessForge as the weak agent."""
 
@@ -76,6 +82,7 @@ def smoke(
             max_errors=max_errors,
             timeout=timeout,
             seed=seed,
+            user_llm_shim=user_llm_shim,
         )
     except RuntimeError as exc:
         console.print(f"[bold red]Error:[/bold red] {exc}")
@@ -98,8 +105,11 @@ def run_tau_bench_smoke(
     timeout: float | None,
     seed: int,
     task_ids: list[str] | None = None,
+    user_llm_shim: bool = False,
 ) -> list[dict[str, Any]]:
     tau = _load_tau2_runtime()
+    if user_llm_shim:
+        _install_tau_user_llm_shim()
     agent_name = "harnessforge_agent"
     _register_harnessforge_agent(tau, agent_name, settings)
     tasks = _load_tau_tasks(
@@ -190,6 +200,96 @@ def _load_tau2_runtime() -> dict[str, Any]:
         "run_simulation": run_simulation,
         "is_valid_agent_history_message": is_valid_agent_history_message,
     }
+
+
+def _install_tau_user_llm_shim() -> None:
+    """Patch tau2 text-only LiteLLM calls to use the HarnessForge ChatClient.
+
+    Some OpenAI-compatible relays reject LiteLLM's request shape while accepting
+    the raw chat-completions request used by ChatClient. The shim is opt-in and
+    only handles text-only user-simulator calls; tool-enabled calls fall back to
+    tau2's original LiteLLM completion function.
+    """
+
+    import tau2.utils.llm_utils as llm_utils
+
+    if getattr(llm_utils, "_harnessforge_chat_client_shim", False):
+        return
+
+    original_completion = llm_utils.completion
+    llm_utils.completion = _make_tau_user_llm_completion_shim(original_completion)
+    llm_utils._harnessforge_chat_client_shim = True
+
+
+def _make_tau_user_llm_completion_shim(original_completion: Any) -> Any:
+    def completion_shim(
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        tools: list[Any] | None = None,
+        tool_choice: str | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        if tools or tool_choice:
+            return original_completion(model=model, messages=messages, tools=tools, tool_choice=tool_choice, **kwargs)
+        settings = _tau_user_model_settings(str(model))
+        temperature = float(kwargs.get("temperature", 0.1))
+        text = _complete_sync(ChatClient(settings), messages, temperature=temperature)
+        return _LiteLLMShimResponse(model=settings.model, content=text)
+
+    return completion_shim
+
+
+class _LiteLLMShimResponse(dict):
+    def __init__(self, *, model: str, content: str):
+        super().__init__({"model": model, "usage": None})
+        self.model = model
+        self.choices = [
+            SimpleNamespace(
+                finish_reason="stop",
+                message=SimpleNamespace(role="assistant", content=content, tool_calls=None),
+            )
+        ]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "model": self.model,
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {
+                        "role": "assistant",
+                        "content": self.choices[0].message.content,
+                        "tool_calls": None,
+                    },
+                }
+            ],
+            "usage": None,
+        }
+
+
+def _tau_user_model_settings(model: str) -> ModelSettings:
+    base_url = (
+        os.getenv("TAU_USER_BASE_URL")
+        or os.getenv("OPENAI_API_BASE")
+        or os.getenv("OPENAI_BASE_URL")
+        or os.getenv("TEACHER_BASE_URL")
+    )
+    api_key = os.getenv("TAU_USER_API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("TEACHER_API_KEY")
+    if not base_url or not api_key:
+        raise RuntimeError("TAU user LLM shim requires TAU_USER_* or OPENAI_* or TEACHER_* API env vars")
+    return ModelSettings(
+        role="teacher",
+        provider="openai",
+        base_url=base_url,
+        api_key=api_key,
+        model=model.removeprefix("openai/"),
+        timeout_seconds=float(os.getenv("TAU_USER_TIMEOUT_SECONDS", os.getenv("REQUEST_TIMEOUT_SECONDS", "600"))),
+        max_retries=int(os.getenv("TAU_USER_MAX_RETRIES", os.getenv("REQUEST_MAX_RETRIES", "2"))),
+        retry_backoff_seconds=float(
+            os.getenv("TAU_USER_RETRY_BACKOFF_SECONDS", os.getenv("REQUEST_RETRY_BACKOFF_SECONDS", "2"))
+        ),
+    )
 
 
 def _register_harnessforge_agent(tau: dict[str, Any], name: str, settings: TauHarnessSettings) -> None:
@@ -888,11 +988,11 @@ def _load_tau_tasks(
     return tasks[:num_tasks]
 
 
-def _complete_sync(client: ChatClient, messages: list[dict[str, str]]) -> str:
+def _complete_sync(client: ChatClient, messages: list[dict[str, str]], *, temperature: float = 0.1) -> str:
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return str(asyncio.run(client.complete(messages, temperature=0.1)) or "")
+        return str(asyncio.run(client.complete(messages, temperature=temperature)) or "")
     raise RuntimeError("HarnessForge tau-bench adapter cannot run inside an existing asyncio loop yet")
 
 

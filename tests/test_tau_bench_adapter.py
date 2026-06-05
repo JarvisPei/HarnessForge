@@ -6,6 +6,7 @@ from agentdistill.tau_bench import (
     _append_tau_incoming_message,
     _first_forced_tau_tool,
     _load_tau_tasks,
+    _make_tau_user_llm_completion_shim,
     _select_tau_tool_payloads_with_policy,
     build_tau_failure_digest,
     build_tau_runtime_policy_payload,
@@ -115,6 +116,48 @@ def test_tau_message_to_chat_message_converts_tool_result_to_user_message() -> N
     assert converted["role"] == "user"
     assert "Tool result" in converted["content"]
     assert "ok" in converted["content"]
+
+
+def test_tau_user_llm_completion_shim_uses_chat_client(monkeypatch) -> None:
+    captured = {}
+
+    async def fake_complete(self, messages, temperature=0.2):
+        captured["settings"] = self.settings
+        captured["messages"] = messages
+        captured["temperature"] = temperature
+        return "hello from shim"
+
+    def original_completion(**kwargs):
+        raise AssertionError("original LiteLLM completion should not be used for text-only shim calls")
+
+    monkeypatch.setenv("TAU_USER_BASE_URL", "https://example.com/v1")
+    monkeypatch.setenv("TAU_USER_API_KEY", "k")
+    monkeypatch.setattr("agentdistill.tau_bench.ChatClient.complete", fake_complete)
+
+    shim = _make_tau_user_llm_completion_shim(original_completion)
+    response = shim(model="openai/gpt-5.5", messages=[{"role": "user", "content": "hi"}], temperature=0.3)
+
+    assert response.choices[0].message.role == "assistant"
+    assert response.choices[0].message.content == "hello from shim"
+    assert response.to_dict()["choices"][0]["message"]["content"] == "hello from shim"
+    assert captured["settings"].model == "gpt-5.5"
+    assert captured["settings"].base_url == "https://example.com/v1"
+    assert captured["messages"] == [{"role": "user", "content": "hi"}]
+    assert captured["temperature"] == 0.3
+
+
+def test_tau_user_llm_completion_shim_falls_back_for_tool_calls() -> None:
+    calls = {}
+
+    def original_completion(**kwargs):
+        calls["kwargs"] = kwargs
+        return {"ok": True}
+
+    shim = _make_tau_user_llm_completion_shim(original_completion)
+    response = shim(model="gpt-5.5", messages=[{"role": "user", "content": "hi"}], tools=[{"type": "function"}])
+
+    assert response == {"ok": True}
+    assert calls["kwargs"]["tools"] == [{"type": "function"}]
 
 
 def test_append_tau_incoming_message_keeps_user_context() -> None:

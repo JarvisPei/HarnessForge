@@ -2038,6 +2038,41 @@ def test_chat_client_retries_retryable_status(monkeypatch) -> None:
     assert calls["count"] == 2
 
 
+def test_chat_client_retries_cloudflare_timeout_status(monkeypatch) -> None:
+    calls = {"count": 0}
+
+    async def fake_post_once(self, url, headers, payload):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            request = httpx.Request("POST", url)
+            response = httpx.Response(524, request=request)
+            raise httpx.HTTPStatusError("cloudflare timeout", request=request, response=response)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    async def no_sleep(seconds):
+        return None
+
+    import httpx
+    import agentdistill.models as models_module
+
+    monkeypatch.setattr(ChatClient, "_post_json_once", fake_post_once)
+    monkeypatch.setattr(models_module.asyncio, "sleep", no_sleep)
+
+    client = ChatClient(
+        ModelSettings(
+            role="weak",
+            provider="openai",
+            base_url="https://example.com/v1",
+            api_key="k",
+            model="m",
+            max_retries=1,
+        )
+    )
+
+    assert asyncio.run(client.complete([{"role": "user", "content": "hi"}])) == "ok"
+    assert calls["count"] == 2
+
+
 def test_chat_client_includes_reasoning_effort_when_set(monkeypatch) -> None:
     captured = {}
 
