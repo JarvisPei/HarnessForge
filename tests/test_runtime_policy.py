@@ -1978,6 +1978,31 @@ def test_load_model_settings_reads_retry_controls(monkeypatch) -> None:
     assert settings.retry_backoff_seconds == 0.5
 
 
+def test_load_model_settings_reads_reasoning_effort(monkeypatch) -> None:
+    monkeypatch.setenv("TEACHER_PROVIDER", "openai")
+    monkeypatch.setenv("TEACHER_BASE_URL", "https://example.com")
+    monkeypatch.setenv("TEACHER_API_KEY", "k")
+    monkeypatch.setenv("TEACHER_MODEL", "m")
+    monkeypatch.setenv("TEACHER_REASONING_EFFORT", "high")
+
+    settings = load_model_settings("teacher")
+
+    assert settings.reasoning_effort == "high"
+
+
+def test_load_model_settings_critic_reasoning_effort_falls_back_to_teacher(monkeypatch) -> None:
+    monkeypatch.delenv("CRITIC_REASONING_EFFORT", raising=False)
+    monkeypatch.setenv("TEACHER_PROVIDER", "openai")
+    monkeypatch.setenv("TEACHER_BASE_URL", "https://example.com")
+    monkeypatch.setenv("TEACHER_API_KEY", "k")
+    monkeypatch.setenv("TEACHER_MODEL", "m")
+    monkeypatch.setenv("TEACHER_REASONING_EFFORT", "high")
+
+    settings = load_model_settings("critic")
+
+    assert settings.reasoning_effort == "high"
+
+
 def test_chat_client_retries_retryable_status(monkeypatch) -> None:
     calls = {"count": 0}
 
@@ -2011,6 +2036,52 @@ def test_chat_client_retries_retryable_status(monkeypatch) -> None:
 
     assert asyncio.run(client.complete([{"role": "user", "content": "hi"}])) == "ok"
     assert calls["count"] == 2
+
+
+def test_chat_client_includes_reasoning_effort_when_set(monkeypatch) -> None:
+    captured = {}
+
+    async def fake_post_once(self, url, headers, payload):
+        captured["url"] = url
+        captured["payload"] = payload
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    monkeypatch.setattr(ChatClient, "_post_json_once", fake_post_once)
+    client = ChatClient(
+        ModelSettings(
+            role="teacher",
+            provider="openai",
+            base_url="https://example.com/v1",
+            api_key="k",
+            model="m",
+            reasoning_effort="high",
+        )
+    )
+
+    assert asyncio.run(client.complete([{"role": "user", "content": "hi"}])) == "ok"
+    assert captured["payload"]["reasoning_effort"] == "high"
+
+
+def test_chat_client_omits_reasoning_effort_when_unset(monkeypatch) -> None:
+    captured = {}
+
+    async def fake_post_once(self, url, headers, payload):
+        captured["payload"] = payload
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    monkeypatch.setattr(ChatClient, "_post_json_once", fake_post_once)
+    client = ChatClient(
+        ModelSettings(
+            role="teacher",
+            provider="openai",
+            base_url="https://example.com/v1",
+            api_key="k",
+            model="m",
+        )
+    )
+
+    assert asyncio.run(client.complete([{"role": "user", "content": "hi"}])) == "ok"
+    assert "reasoning_effort" not in captured["payload"]
 
 
 def test_chat_client_does_not_retry_bad_request(monkeypatch) -> None:

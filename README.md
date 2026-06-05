@@ -68,6 +68,8 @@ Fill `.env` with your relay base URLs, keys, and model names. The current client
 
 For most demos, start with the default OpenAI GPT profile (`gpt-5.4-mini` weak / `gpt-5.5` teacher).
 
+For OpenAI-compatible reasoning models, set `TEACHER_REASONING_EFFORT=high` so the teacher/architect runs with an explicit reasoning budget. The client only sends `reasoning_effort` when the env var is present; leave weak-model reasoning unset by default if you want clean harness-distillation ablations.
+
 ## Run a Smoke Experiment
 
 ```bash

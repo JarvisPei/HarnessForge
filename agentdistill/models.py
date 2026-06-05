@@ -21,6 +21,7 @@ class ModelSettings:
     base_url: str
     api_key: str
     model: str
+    reasoning_effort: str | None = None
     timeout_seconds: float = 120.0
     max_retries: int = 2
     retry_backoff_seconds: float = 2.0
@@ -42,6 +43,8 @@ class ChatClient:
             "messages": messages,
             "temperature": temperature,
         }
+        if self.settings.reasoning_effort:
+            payload["reasoning_effort"] = self.settings.reasoning_effort
         headers = {
             "Authorization": f"Bearer {self.settings.api_key}",
             "Content-Type": "application/json",
@@ -128,6 +131,10 @@ def load_model_settings(role: Role, profile: str | None = None) -> ModelSettings
             os.getenv(f"{fallback_prefix}_RETRY_BACKOFF_SECONDS{suffix}", str(default_backoff)),
         )
     )
+    reasoning_effort = _optional_env_with_fallback(
+        f"{prefix}_REASONING_EFFORT{suffix}",
+        f"{fallback_prefix}_REASONING_EFFORT{suffix}",
+    )
     provider = os.getenv(f"{prefix}_PROVIDER{suffix}", os.getenv(f"{fallback_prefix}_PROVIDER{suffix}", "openai")).lower()
     if provider not in {"openai", "anthropic"}:
         raise RuntimeError(f"{prefix}_PROVIDER{suffix} must be openai or anthropic, got: {provider}")
@@ -137,6 +144,7 @@ def load_model_settings(role: Role, profile: str | None = None) -> ModelSettings
         base_url=_env_with_fallback(f"{prefix}_BASE_URL{suffix}", f"{fallback_prefix}_BASE_URL{suffix}"),
         api_key=_env_with_fallback(f"{prefix}_API_KEY{suffix}", f"{fallback_prefix}_API_KEY{suffix}"),
         model=_env_with_fallback(f"{prefix}_MODEL{suffix}", f"{fallback_prefix}_MODEL{suffix}"),
+        reasoning_effort=reasoning_effort,
         timeout_seconds=timeout,
         max_retries=max_retries,
         retry_backoff_seconds=retry_backoff,
@@ -166,6 +174,14 @@ def _env_with_fallback(name: str, fallback_name: str) -> str:
     if not value:
         raise RuntimeError(f"Missing required environment variable: {name}")
     return value
+
+
+def _optional_env_with_fallback(name: str, fallback_name: str) -> str | None:
+    value = os.getenv(name) or os.getenv(fallback_name)
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
 
 
 def _required_env(name: str) -> str:
