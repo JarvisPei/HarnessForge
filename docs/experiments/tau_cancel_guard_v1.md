@@ -110,11 +110,50 @@ denial: present
 So the new framework permission plus teacher-generated harness would suppress
 the destructive tool call on the observed failure trajectory.
 
+## Small Cancellation Slice
+
+After the guard was active, a small train cancellation slice was run:
+
+```bash
+TAU2_DATA_DIR=$HOME/projects/tau2-bench/data \
+.venv/bin/python -m agentdistill.tau_bench \
+  --domain airline --split train \
+  --task-id 0 --task-id 1 --task-id 28 --num-tasks 3 \
+  --user-llm gpt-5.5 --user-llm-shim \
+  --output-dir outputs/tau_bench_policy/airline_cancel_slice_0_1_28_v1 \
+  --max-steps 30 --max-errors 3 --timeout 600
+```
+
+Result:
+
+```text
+task 0: reward=1.0, termination=user_stop, cancel_calls=0, guard_denials=0
+task 1: reward=1.0, termination=user_stop, cancel_calls=0, guard_denials=0
+task 28: reward=1.0, termination=user_stop, cancel_calls=0, guard_denials=0
+```
+
+Interpretation detail: this is a useful non-regression and transfer-adjacent
+signal, but not direct live evidence for the denial guard. In all three tasks,
+the weak model avoided `cancel_reservation` by itself after the harness helped
+it retrieve the relevant state. The guard was evaluated multiple times, but it
+did not need to deny a proposed cancellation.
+
+Slice artifact:
+
+```text
+outputs/tau_bench_policy/airline_cancel_slice_0_1_28_v1/harnessforge_slice_analysis.json
+```
+
 ## Takeaway
 
 This is a useful method signal: the teacher did not merely tune a prompt. It
 identified a missing control surface, the framework exposed that control surface,
 and the teacher then generated a tested harness artifact that changes the
-adapter's action boundary. The next step should evaluate this on more tau
-airline cancellation tasks or a small train/dev slice to distinguish robust
-transfer from single-trace repair.
+adapter's action boundary.
+
+The live train slice suggests the active harness is not regressing nearby
+cancellation tasks, but the strongest causal evidence for the new guard remains
+the replay of the previous failed pre-tool state. The next step should either
+search for cancellation tasks or seeds where weak proposes `cancel_reservation`,
+or run an explicit ablation/replay suite comparing route-only versus route plus
+deny-guard behavior.
