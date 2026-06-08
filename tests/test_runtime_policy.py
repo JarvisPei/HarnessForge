@@ -306,6 +306,61 @@ def evaluate(input: dict) -> dict:
     assert result["ok"] is True
 
 
+def test_runtime_policy_tests_accept_tool_denial_policy(tmp_path: Path) -> None:
+    harness = tmp_path / "harness"
+    policies_dir = harness / "runtime_policies"
+    tests_dir = harness / "tests"
+    policies_dir.mkdir(parents=True)
+    tests_dir.mkdir(parents=True)
+
+    policy_path = policies_dir / "deny_unsafe_cancel.py"
+    policy_path.write_text(
+        """
+def evaluate(input: dict) -> dict:
+    tool_call = input.get("tool_call") or {}
+    if tool_call.get("name") == "cancel_reservation":
+        return {
+            "deny_tool": True,
+            "tool_name": "cancel_reservation",
+            "tool_input": tool_call.get("arguments", {}),
+            "assistant_response": "I cannot cancel this reservation because it is not refundable under policy.",
+            "reason": "cancellation eligibility not met"
+        }
+    return {"requires_tool": False}
+""".strip()
+    )
+    (tests_dir / "deny_unsafe_cancel.json").write_text(
+        """
+{
+  "policy": "deny_unsafe_cancel",
+  "cases": [
+    {
+      "input": {
+        "task_instruction": "Cancel my reservation only if I receive a refund.",
+        "initial_answer": "weak proposed cancel_reservation",
+        "tool_call": {"name": "cancel_reservation", "arguments": {"reservation_id": "R1"}},
+        "tool_calls": [{"name": "cancel_reservation", "arguments": {"reservation_id": "R1"}}],
+        "available_tools": ["cancel_reservation"],
+        "runtime_policy_phase": "post_weak",
+        "metadata": {"messages": []}
+      },
+      "expected": {
+        "deny_tool": true,
+        "tool_name": "cancel_reservation",
+        "tool_input": {"reservation_id": "R1"},
+        "assistant_response": "I cannot cancel this reservation because it is not refundable under policy."
+      }
+    }
+  ]
+}
+""".strip()
+    )
+
+    result = validate_runtime_policy_tests(tmp_path, policy_path)
+
+    assert result["ok"] is True
+
+
 def test_runtime_policy_tests_reject_silent_textual_rewrites_without_provenance(tmp_path: Path) -> None:
     harness = tmp_path / "harness"
     tools_dir = harness / "tools"

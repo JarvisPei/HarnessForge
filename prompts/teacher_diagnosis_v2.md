@@ -144,8 +144,20 @@ use:
 {"requires_tool": true, "tool_name": "official_or_available_tool", "tool_input": {...}, "reason": "..."}
 ```
 
-Use tool_input, never tool_args. If a proposed tool call is acceptable, return
-{"requires_tool": false, "reason": "..."} or do not trigger.
+Use tool_input, never tool_args. When the adapter supplies `tool_call`, it is
+the weak model's proposed tool call before execution. For post-weak/pre-tool
+guards, a runtime policy may deny an unsafe proposed tool call without executing
+it:
+
+```json
+{"deny_tool": true, "tool_name": "proposed_tool", "tool_input": {...}, "assistant_response": "user-visible response", "reason": "..."}
+```
+
+Use this only when executing the proposed tool would violate the benchmark
+policy or mutate state unsafely. The assistant_response must be a concise
+policy-faithful message the adapter can show to the user. If a proposed tool
+call is acceptable, return {"requires_tool": false, "reason": "..."} or do not
+trigger.
 
 Runtime policy tests must use:
 
@@ -173,6 +185,12 @@ Runtime policy tests must use:
     }
   ]
 }
+```
+
+For a deny guard, use expected values such as:
+
+```json
+{"deny_tool": true, "tool_name": "cancel_reservation", "tool_input": {"reservation_id": "..."}, "assistant_response": "..."}
 ```
 
 Policy tests must be schema-faithful to the benchmark adapter. If the real

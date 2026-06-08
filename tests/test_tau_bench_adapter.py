@@ -8,6 +8,7 @@ from agentdistill.tau_bench import (
     TauHarnessSettings,
     _append_tau_incoming_message,
     _first_forced_tau_tool,
+    _first_tau_tool_denial,
     _load_tau_tasks,
     _make_tau_user_llm_completion_shim,
     _register_harnessforge_agent,
@@ -307,6 +308,56 @@ def test_first_forced_tau_tool_ignores_non_official_tools() -> None:
     assert forced == {"requires_tool": True, "tool_name": "get_user_details", "tool_input": {"user_id": "u1"}}
 
 
+def test_first_tau_tool_denial_requires_matching_proposed_tool_and_response() -> None:
+    denial = _first_tau_tool_denial(
+        [
+            {"deny_tool": True, "tool_name": "get_user_details", "assistant_response": "wrong tool"},
+            {"deny_tool": True, "tool_name": "cancel_reservation", "assistant_response": "I cannot cancel this reservation."},
+        ],
+        [{"name": "cancel_reservation", "arguments": {"reservation_id": "MZDDS4"}}],
+    )
+
+    assert denial == {
+        "deny_tool": True,
+        "tool_name": "cancel_reservation",
+        "tool_input": {"reservation_id": "MZDDS4"},
+        "assistant_response": "I cannot cancel this reservation.",
+        "reason": "runtime policy denied proposed tool call",
+    }
+
+
+def test_select_tau_tool_payloads_with_policy_can_deny_proposed_tool_call() -> None:
+    policies = FakePolicies(
+        [
+            {
+                "deny_tool": True,
+                "tool_name": "cancel_reservation",
+                "assistant_response": "I cannot cancel this reservation because it is not refundable under policy.",
+                "reason": "cancellation eligibility not met",
+            }
+        ]
+    )
+
+    tool_payloads, policy_results, denial = _select_tau_tool_payloads_with_policy(
+        raw='{"tool_call": {"name": "cancel_reservation", "arguments": {"reservation_id": "MZDDS4"}}}',
+        tau_messages=[FakeMessage(role="user", content="Cancel the Philadelphia to LaGuardia reservation.")],
+        available_tools=["cancel_reservation", "get_reservation_details"],
+        policies=policies,
+    )
+
+    assert tool_payloads == []
+    assert policy_results == policies.results
+    assert denial == {
+        "deny_tool": True,
+        "tool_name": "cancel_reservation",
+        "tool_input": {"reservation_id": "MZDDS4"},
+        "assistant_response": "I cannot cancel this reservation because it is not refundable under policy.",
+        "reason": "cancellation eligibility not met",
+    }
+    assert policies.payloads[0]["runtime_policy_phase"] == "post_weak"
+    assert policies.payloads[0]["tool_call"] == {"name": "cancel_reservation", "arguments": {"reservation_id": "MZDDS4"}}
+
+
 def test_select_tau_tool_payloads_with_policy_can_replace_proposed_tool_call() -> None:
     policies = FakePolicies(
         [
@@ -318,7 +369,7 @@ def test_select_tau_tool_payloads_with_policy_can_replace_proposed_tool_call() -
         ]
     )
 
-    tool_payloads, policy_results = _select_tau_tool_payloads_with_policy(
+    tool_payloads, policy_results, denial = _select_tau_tool_payloads_with_policy(
         raw='{"tool_call": {"name": "cancel_reservation", "arguments": {"reservation_id": "MZDDS4"}}}',
         tau_messages=[FakeMessage(role="user", content="Cancel the Philadelphia to LaGuardia reservation.")],
         available_tools=["cancel_reservation", "get_reservation_details"],
@@ -327,6 +378,7 @@ def test_select_tau_tool_payloads_with_policy_can_replace_proposed_tool_call() -
 
     assert tool_payloads == [{"name": "get_reservation_details", "arguments": {"reservation_id": "EHGLP3"}}]
     assert policy_results == policies.results
+    assert denial is None
     assert policies.payloads[0]["tool_call"] == {"name": "cancel_reservation", "arguments": {"reservation_id": "MZDDS4"}}
 
 
@@ -337,7 +389,7 @@ def test_select_tau_tool_payloads_with_policy_ignores_non_official_replacement()
         ]
     )
 
-    tool_payloads, policy_results = _select_tau_tool_payloads_with_policy(
+    tool_payloads, policy_results, denial = _select_tau_tool_payloads_with_policy(
         raw='{"tool_call": {"name": "cancel_reservation", "arguments": {"reservation_id": "MZDDS4"}}}',
         tau_messages=[FakeMessage(role="user", content="Cancel the matching reservation.")],
         available_tools=["cancel_reservation", "get_reservation_details"],
@@ -346,6 +398,7 @@ def test_select_tau_tool_payloads_with_policy_ignores_non_official_replacement()
 
     assert tool_payloads == [{"name": "cancel_reservation", "arguments": {"reservation_id": "MZDDS4"}}]
     assert policy_results == policies.results
+    assert denial is None
 
 
 def test_select_tau_tool_payloads_with_policy_still_supports_no_tool_fallback() -> None:
@@ -355,7 +408,7 @@ def test_select_tau_tool_payloads_with_policy_still_supports_no_tool_fallback() 
         ]
     )
 
-    tool_payloads, _ = _select_tau_tool_payloads_with_policy(
+    tool_payloads, _, denial = _select_tau_tool_payloads_with_policy(
         raw="I can help with that.",
         tau_messages=[FakeMessage(role="user", content="My user ID is u1.")],
         available_tools=["get_user_details"],
@@ -363,6 +416,7 @@ def test_select_tau_tool_payloads_with_policy_still_supports_no_tool_fallback() 
     )
 
     assert tool_payloads == [{"name": "get_user_details", "arguments": {"user_id": "u1"}}]
+    assert denial is None
     assert policies.payloads[0]["tool_call"] is None
 
 
@@ -429,6 +483,36 @@ def test_tau_agent_pre_weak_policy_falls_back_to_weak_call(tmp_path: Path, monke
     assert len(policies.payloads) == 2
     assert policies.payloads[0]["runtime_policy_phase"] == "pre_weak"
     assert policies.payloads[1]["initial_answer"] == "I can help with that."
+
+
+def test_tau_agent_post_weak_policy_denies_proposed_tool_call(tmp_path: Path, monkeypatch) -> None:
+    policies = FakePolicies(
+        [
+            {
+                "deny_tool": True,
+                "tool_name": "cancel_reservation",
+                "assistant_response": "I cannot cancel this reservation because it is not refundable under policy.",
+                "reason": "cancellation eligibility not met",
+            }
+        ]
+    )
+    agent = _make_tau_agent(tmp_path, monkeypatch, policies)
+
+    def fake_complete_sync(client, messages, temperature=0.2):
+        return '{"tool_call": {"name": "cancel_reservation", "arguments": {"reservation_id": "MZDDS4"}}}'
+
+    monkeypatch.setattr("agentdistill.tau_bench._complete_sync", fake_complete_sync)
+    state = agent.get_init_state()
+
+    assistant, _ = agent.generate_next_message(FakeMessage(role="user", content="Please cancel my reservation."), state)
+
+    assert assistant.content == "I cannot cancel this reservation because it is not refundable under policy."
+    assert assistant.tool_calls is None
+    assert assistant.raw_data["runtime_policy_phase"] == "post_weak"
+    assert assistant.raw_data["runtime_policy_denial"]["tool_name"] == "cancel_reservation"
+    assert assistant.raw_data["runtime_policy_denial"]["tool_input"] == {"reservation_id": "MZDDS4"}
+    assert len(policies.payloads) == 2
+    assert policies.payloads[1]["tool_call"] == {"name": "cancel_reservation", "arguments": {"reservation_id": "MZDDS4"}}
 
 
 def test_message_to_plain_dict_keeps_tool_calls() -> None:

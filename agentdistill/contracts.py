@@ -99,10 +99,12 @@ def validate_runtime_policy_case_data(
             "task_instruction": payload.get("task_instruction", ""),
             "initial_answer": payload.get("initial_answer", ""),
             "tool_call": payload.get("tool_call"),
+            "tool_calls": payload.get("tool_calls", ([] if payload.get("tool_call") is None else [payload.get("tool_call")])),
             "available_tools": payload.get("available_tools", tools.names),
             "expected_answer": payload.get("expected_answer"),
             "rubric": payload.get("rubric"),
             "metadata": payload.get("metadata"),
+            "runtime_policy_phase": payload.get("runtime_policy_phase"),
         }
         results = [result for result in policies.evaluate(policy_payload) if result.get("policy") == policy_name]
         actual = results[0] if results else {"policy": policy_name, "requires_tool": False}

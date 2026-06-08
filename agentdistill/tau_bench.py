@@ -359,13 +359,23 @@ def _register_harnessforge_agent(tau: dict[str, Any], name: str, settings: TauHa
             raw = _complete_sync(self.client, weak_messages)
             if not raw.strip():
                 raw = "I need a moment to review the information before continuing."
-            tool_payloads, policy_results = _select_tau_tool_payloads_with_policy(
+            tool_payloads, policy_results, policy_denial = _select_tau_tool_payloads_with_policy(
                 raw=raw,
                 tau_messages=state.messages,
                 available_tools=self.official_tool_names,
                 policies=self.policies,
             )
-            if tool_payloads:
+            if policy_denial is not None:
+                assistant = AssistantMessage.text(
+                    policy_denial["assistant_response"],
+                    raw_data={
+                        "harnessforge_raw": raw,
+                        "runtime_policy_phase": "post_weak",
+                        "runtime_policy_results": policy_results,
+                        "runtime_policy_denial": policy_denial,
+                    },
+                )
+            elif tool_payloads:
                 assistant = AssistantMessage(
                     role="assistant",
                     content=None,
@@ -378,10 +388,21 @@ def _register_harnessforge_agent(tau: dict[str, Any], name: str, settings: TauHa
                         )
                         for payload in tool_payloads
                     ],
-                    raw_data={"harnessforge_raw": raw, "runtime_policy_results": policy_results},
+                    raw_data={
+                        "harnessforge_raw": raw,
+                        "runtime_policy_phase": "post_weak",
+                        "runtime_policy_results": policy_results,
+                    },
                 )
             else:
-                assistant = AssistantMessage.text(raw, raw_data={"harnessforge_raw": raw, "runtime_policy_results": policy_results})
+                assistant = AssistantMessage.text(
+                    raw,
+                    raw_data={
+                        "harnessforge_raw": raw,
+                        "runtime_policy_phase": "post_weak",
+                        "runtime_policy_results": policy_results,
+                    },
+                )
             state.messages.append(assistant)
             return assistant, state
 
@@ -518,10 +539,10 @@ def _select_tau_tool_payloads_with_policy(
     tau_messages: list[Any],
     available_tools: list[str],
     policies: Any,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]:
     tool_payloads = parse_tau_tool_calls(raw)
     if not getattr(policies, "names", []):
-        return tool_payloads, []
+        return tool_payloads, [], None
     policy_payload = build_tau_runtime_policy_payload(
         initial_answer=raw,
         tau_messages=tau_messages,
@@ -529,16 +550,56 @@ def _select_tau_tool_payloads_with_policy(
         proposed_tool_call=tool_payloads[0] if tool_payloads else None,
         proposed_tool_calls=tool_payloads,
     )
+    policy_payload["runtime_policy_phase"] = "post_weak"
     policy_results = policies.evaluate(policy_payload)
+    denial = _first_tau_tool_denial(policy_results, tool_payloads)
+    if denial is not None:
+        return [], policy_results, denial
     forced_tool = _first_forced_tau_tool(policy_results, available_tools)
     if forced_tool is None:
-        return tool_payloads, policy_results
+        return tool_payloads, policy_results, None
     return [
         {
             "name": forced_tool["tool_name"],
             "arguments": forced_tool.get("tool_input", {}),
         }
-    ], policy_results
+    ], policy_results, None
+
+
+def _first_tau_tool_denial(
+    policy_results: list[dict[str, Any]],
+    proposed_tool_payloads: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not proposed_tool_payloads:
+        return None
+    proposed_names = {payload["name"] for payload in proposed_tool_payloads if isinstance(payload.get("name"), str)}
+    if not proposed_names:
+        return None
+    first_proposed = proposed_tool_payloads[0]
+    for result in policy_results:
+        action = result.get("action")
+        wants_denial = result.get("deny_tool") is True or action in {"deny_tool", "block_tool", "veto_tool"}
+        if not wants_denial:
+            continue
+        assistant_response = result.get("assistant_response")
+        if not isinstance(assistant_response, str) or not assistant_response.strip():
+            continue
+        tool_name = result.get("tool_name")
+        if tool_name is not None and tool_name not in proposed_names:
+            continue
+        tool_input = result.get("tool_input")
+        if not isinstance(tool_input, dict):
+            tool_input = first_proposed.get("arguments", {})
+        if not isinstance(tool_input, dict):
+            tool_input = {}
+        return {
+            "deny_tool": True,
+            "tool_name": tool_name if isinstance(tool_name, str) else first_proposed.get("name"),
+            "tool_input": tool_input,
+            "assistant_response": assistant_response.strip(),
+            "reason": str(result.get("reason", "runtime policy denied proposed tool call")),
+        }
+    return None
 
 
 def _first_forced_tau_tool(

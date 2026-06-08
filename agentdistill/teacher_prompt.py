@@ -240,12 +240,15 @@ Runtime policy test schema:
   "policy": "<name>",
   "cases": [
     {
-      "input": {"task_instruction": "...", "initial_answer": "", "available_tools": ["<tool>"], "expected_answer": "..."},
+      "input": {"task_instruction": "...", "initial_answer": "", "tool_call": {"name": "optional_proposed_tool", "arguments": {}}, "available_tools": ["<tool>"], "expected_answer": "..."},
       "expected": {"requires_tool": true, "tool_name": "<tool>", "tool_input": {...}},
       "expected_tool_result": {"ok": true}
     }
   ]
 }
+
+For post-weak/pre-tool denial guards, use expected values such as
+{"deny_tool": true, "tool_name": "<proposed_tool>", "tool_input": {...}, "assistant_response": "..."}.
 
 Generalization discipline:
 - Do not hard-code final answers, task IDs, or one-off strings that only solve the observed example.
