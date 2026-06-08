@@ -144,6 +144,30 @@ Slice artifact:
 outputs/tau_bench_policy/airline_cancel_slice_0_1_28_v1/harnessforge_slice_analysis.json
 ```
 
+## Replay Ablation
+
+A controlled replay ablation compared the previous failed pre-tool state under
+four policy sets:
+
+```text
+none:                 would_execute_cancel=true,  would_suppress_tool=false
+candidate_only:       would_execute_cancel=true,  would_suppress_tool=false
+guard_only:           would_execute_cancel=false, would_suppress_tool=true
+candidate_plus_guard: would_execute_cancel=false, would_suppress_tool=true
+```
+
+This isolates the guard's marginal effect. The candidate-state policy gets the
+agent to the right reservation, but once the weak model proposes
+`cancel_reservation`, candidate-state alone does not block it. The
+teacher-generated cancel guard is the artifact that changes the post-weak
+tool boundary.
+
+Ablation artifact:
+
+```text
+outputs/tau_bench_teacher_probe/airline_task1_cancel_guard_ablation_v1/ablation_summary.json
+```
+
 ## Takeaway
 
 This is a useful method signal: the teacher did not merely tune a prompt. It
@@ -152,8 +176,9 @@ and the teacher then generated a tested harness artifact that changes the
 adapter's action boundary.
 
 The live train slice suggests the active harness is not regressing nearby
-cancellation tasks, but the strongest causal evidence for the new guard remains
-the replay of the previous failed pre-tool state. The next step should either
-search for cancellation tasks or seeds where weak proposes `cancel_reservation`,
-or run an explicit ablation/replay suite comparing route-only versus route plus
-deny-guard behavior.
+cancellation tasks. The strongest causal evidence for the new guard is the
+replay ablation: route/candidate-state alone still executes the destructive
+tool, while guard-only and guard-plus-candidate suppress it. The next step
+should search for cancellation tasks or seeds where weak proposes
+`cancel_reservation` in live runs, so the denial path is exercised inside a full
+tau trajectory rather than only replay.
