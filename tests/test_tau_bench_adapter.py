@@ -692,6 +692,35 @@ def test_build_tau_failure_digest_exposes_timeout_mutation_and_policy_counts() -
     assert "progress controller" in digest["teacher_guidance"]["progress_controller_note"]
 
 
+def test_build_tau_failure_digest_does_not_mark_successful_handoff_as_failure() -> None:
+    trace = {
+        "domain": "airline",
+        "split": "train",
+        "task_id": "49",
+        "termination_reason": "user_stop",
+        "reward_info": {"reward": 1.0},
+        "messages": [
+            {"role": "user", "content": "Please review this with a person."},
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "name": "transfer_to_human_agents",
+                        "arguments": {"summary": "User asks for human review."},
+                    }
+                ],
+            },
+        ],
+    }
+
+    digest = build_tau_failure_digest([trace])
+
+    failure = digest["traces"][0]
+    assert failure["mutating_tool_call_names"] == ["transfer_to_human_agents"]
+    assert "mutating_tool_call" not in failure["failure_modes"]
+    assert "mutating_tool_call" not in digest["failure_mode_counts"]
+
+
 def test_build_tau_teacher_context_marks_split_boundary() -> None:
     trace = {
         "domain": "retail",

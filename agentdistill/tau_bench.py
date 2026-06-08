@@ -1036,7 +1036,8 @@ def _infer_tau_failure_modes(
         modes.append("adapter_error")
     if not tool_call_names:
         modes.append("no_tool_calls")
-    if any(_looks_like_mutating_tau_tool(name) for name in tool_call_names):
+    failed_trace = (reward is not None and reward < 1.0) or termination in {"timeout", "max_steps", "adapter_error"}
+    if failed_trace and any(_looks_like_mutating_tau_tool(name) for name in tool_call_names):
         modes.append("mutating_tool_call")
     if repeated_assistant_texts:
         modes.append("repeated_assistant_text")
