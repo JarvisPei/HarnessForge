@@ -650,6 +650,48 @@ def test_build_tau_failure_digest_identifies_no_tool_loop() -> None:
     assert failure["repeated_assistant_messages"] == [{"text": "How can I help you today?", "count": 2}]
 
 
+def test_build_tau_failure_digest_exposes_timeout_mutation_and_policy_counts() -> None:
+    trace = {
+        "domain": "airline",
+        "split": "train",
+        "task_id": "39",
+        "termination_reason": "timeout",
+        "reward_info": {"reward": 0.0},
+        "messages": [
+            {"role": "user", "content": "Cancel every upcoming flight for user amelia_davis_8890."},
+            {
+                "role": "assistant",
+                "tool_calls": [{"name": "get_user_details", "arguments": {"user_id": "amelia_davis_8890"}}],
+                "raw_data": {
+                    "runtime_policy_results": [
+                        {
+                            "policy": "candidate_state",
+                            "requires_tool": True,
+                            "tool_name": "get_user_details",
+                            "tool_input": {"user_id": "amelia_davis_8890"},
+                        }
+                    ]
+                },
+            },
+            {"role": "tool", "content": '{"reservations": ["8C8K4E"]}'},
+            {
+                "role": "assistant",
+                "tool_calls": [{"name": "cancel_reservation", "arguments": {"reservation_id": "8C8K4E"}}],
+            },
+        ],
+    }
+
+    digest = build_tau_failure_digest([trace])
+
+    assert digest["failure_mode_counts"]["timeout"] == 1
+    assert digest["failure_mode_counts"]["mutating_tool_call"] == 1
+    assert digest["runtime_policy_counts"] == {"candidate_state": 1}
+    failure = digest["traces"][0]
+    assert failure["mutating_tool_call_names"] == ["cancel_reservation"]
+    assert failure["runtime_policy_counts"] == {"candidate_state": 1}
+    assert "progress controller" in digest["teacher_guidance"]["progress_controller_note"]
+
+
 def test_build_tau_teacher_context_marks_split_boundary() -> None:
     trace = {
         "domain": "retail",
@@ -668,6 +710,51 @@ def test_build_tau_teacher_context_marks_split_boundary() -> None:
     assert context["split_policy"]["teacher_visible"] == "official train traces only"
     assert "tau_bench_failure_digest" in context
     assert "tau_runtime_evidence" in context
+
+
+def test_build_tau_runtime_evidence_keeps_failed_tail_and_policy_phase() -> None:
+    trace = {
+        "domain": "airline",
+        "split": "train",
+        "task_id": "39",
+        "termination_reason": "timeout",
+        "reward_info": {"reward": 0.0},
+        "messages": [
+            {"role": "user", "content": "Cancel every upcoming flight.", "turn_idx": 1},
+            {
+                "role": "assistant",
+                "content": "I will check your remaining reservations.",
+                "turn_idx": 2,
+                "raw_data": {
+                    "runtime_policy_phase": "post_weak",
+                    "runtime_policy_results": [{"policy": "candidate_state", "requires_tool": False}],
+                    "runtime_policy_denial": {
+                        "deny_tool": True,
+                        "tool_name": "cancel_reservation",
+                        "assistant_response": "I cannot cancel this.",
+                    },
+                },
+            },
+            {"role": "user", "content": "Please continue.", "turn_idx": 3},
+            {
+                "role": "assistant",
+                "content": "I will check your remaining reservations.",
+                "turn_idx": 4,
+                "raw_data": {
+                    "runtime_policy_phase": "post_weak",
+                    "runtime_policy_results": [{"policy": "candidate_state", "requires_tool": False}],
+                },
+            },
+        ],
+    }
+
+    evidence = build_tau_runtime_evidence([trace], max_windows_per_trace=1)
+
+    assert evidence["trace_windows"][0]["window_reason"] == "failed_trace_tail"
+    tail_messages = evidence["trace_windows"][0]["messages"]
+    raw = tail_messages[-1]["raw_data"]
+    assert raw["runtime_policy_phase"] == "post_weak"
+    assert raw["runtime_policy_results"] == [{"policy": "candidate_state", "requires_tool": False}]
 
 
 def test_build_tau_runtime_evidence_includes_real_message_windows() -> None:

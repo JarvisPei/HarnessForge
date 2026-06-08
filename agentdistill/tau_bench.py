@@ -770,11 +770,13 @@ def build_tau_failure_digest(traces: list[dict[str, Any]], *, max_traces: int = 
     failures = [_summarize_tau_trace(trace) for trace in traces[:max_traces]]
     mode_counts: Counter[str] = Counter()
     tool_call_counts: Counter[str] = Counter()
+    runtime_policy_counts: Counter[str] = Counter()
     rewards: list[float] = []
     for failure in failures:
         mode_counts.update(failure["failure_modes"])
         for tool_name in failure["tool_call_names"]:
             tool_call_counts[tool_name] += 1
+        runtime_policy_counts.update(failure["runtime_policy_counts"])
         reward = failure.get("reward")
         if isinstance(reward, (int, float)):
             rewards.append(float(reward))
@@ -785,6 +787,7 @@ def build_tau_failure_digest(traces: list[dict[str, Any]], *, max_traces: int = 
         "reward_mean": sum(rewards) / len(rewards) if rewards else None,
         "failure_mode_counts": dict(sorted(mode_counts.items())),
         "tool_call_counts": dict(sorted(tool_call_counts.items())),
+        "runtime_policy_counts": dict(sorted(runtime_policy_counts.items())),
         "traces": failures,
         "teacher_guidance": {
             "role": "Use this as evidence about weak-model behavior in the real tau-bench environment.",
@@ -798,8 +801,14 @@ def build_tau_failure_digest(traces: list[dict[str, Any]], *, max_traces: int = 
                 "skill",
                 "state_representation",
                 "runtime_policy that triggers official tau-bench tools only",
+                "runtime_policy progress controller that reconstructs episode state from metadata.messages",
                 "validator over trajectory or final answer metadata",
             ],
+            "progress_controller_note": (
+                "For long-horizon traces, prefer a progress controller harness that tracks unresolved user goals, "
+                "checked entities, pending official tool calls, and completion conditions instead of only guarding "
+                "one tool call."
+            ),
         },
     }
 
@@ -836,9 +845,12 @@ def build_tau_runtime_evidence(
     for trace in traces[:max_traces]:
         messages = _trace_messages(trace)
         centers = _tau_evidence_centers(messages)
+        if _tau_trace_needs_tail_evidence(trace) and messages:
+            centers.append({"index": len(messages) - 1, "reason": "failed_trace_tail"})
         if not centers and messages:
             centers = [{"index": len(messages) - 1, "reason": "trace_tail"}]
-        for center in centers[:max_windows_per_trace]:
+        selected_centers = _dedupe_tau_evidence_centers(centers, max_windows=max_windows_per_trace)
+        for center in selected_centers:
             idx = center["index"]
             start = max(0, idx - window_radius)
             end = min(len(messages), idx + window_radius + 1)
@@ -864,6 +876,34 @@ def build_tau_runtime_evidence(
             "Runtime policy decisions appear under assistant raw_data.runtime_policy_results.",
         ],
     }
+
+
+def _tau_trace_needs_tail_evidence(trace: dict[str, Any]) -> bool:
+    termination = trace.get("termination_reason")
+    reward = _trace_reward(trace)
+    return termination in {"timeout", "max_steps", "adapter_error"} or (reward is not None and reward < 1.0)
+
+
+def _dedupe_tau_evidence_centers(centers: list[dict[str, Any]], *, max_windows: int) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    seen: set[tuple[int, str]] = set()
+    tail: dict[str, Any] | None = None
+    for center in centers:
+        if center.get("reason") == "failed_trace_tail":
+            tail = center
+            continue
+        key = (int(center["index"]), str(center["reason"]))
+        if key in seen:
+            continue
+        if len(selected) < max_windows:
+            selected.append(center)
+            seen.add(key)
+    if tail is not None and tail not in selected:
+        if len(selected) >= max_windows:
+            selected[-1] = tail
+        else:
+            selected.append(tail)
+    return selected
 
 
 def _trace_messages(trace: dict[str, Any]) -> list[dict[str, Any]]:
@@ -914,8 +954,12 @@ def _compact_tau_message(message: dict[str, Any]) -> dict[str, Any]:
     raw_data = message.get("raw_data")
     if isinstance(raw_data, dict):
         raw_compact: dict[str, Any] = {}
+        if raw_data.get("runtime_policy_phase") is not None:
+            raw_compact["runtime_policy_phase"] = raw_data["runtime_policy_phase"]
         if raw_data.get("runtime_policy_results") is not None:
             raw_compact["runtime_policy_results"] = raw_data["runtime_policy_results"]
+        if raw_data.get("runtime_policy_denial") is not None:
+            raw_compact["runtime_policy_denial"] = raw_data["runtime_policy_denial"]
         if raw_data.get("harnessforge_raw") is not None:
             raw_compact["harnessforge_raw"] = _truncate_text(str(raw_data["harnessforge_raw"]), 1000)
         if raw_compact:
@@ -934,6 +978,8 @@ def _summarize_tau_trace(trace: dict[str, Any]) -> dict[str, Any]:
     assistant_texts = [_message_content(message) for message in messages if _message_role(message) == "assistant"]
     user_texts = [_message_content(message) for message in messages if _message_role(message) == "user"]
     tool_call_names = _trace_tool_call_names(messages)
+    runtime_policy_counts = _trace_runtime_policy_counts(messages)
+    runtime_policy_denials = _trace_runtime_policy_denials(messages)
     repeated = [
         {"text": text, "count": count}
         for text, count in Counter(text for text in assistant_texts if text).most_common(5)
@@ -957,6 +1003,10 @@ def _summarize_tau_trace(trace: dict[str, Any]) -> dict[str, Any]:
         "user_message_count": len(user_texts),
         "tool_call_count": len(tool_call_names),
         "tool_call_names": tool_call_names,
+        "mutating_tool_call_names": [name for name in tool_call_names if _looks_like_mutating_tau_tool(name)],
+        "runtime_policy_counts": dict(sorted(runtime_policy_counts.items())),
+        "runtime_policy_denial_count": len(runtime_policy_denials),
+        "runtime_policy_denials": runtime_policy_denials[:5],
         "failure_modes": failure_modes,
         "repeated_assistant_messages": repeated,
         "observed_user_identifiers": user_identifiers[:8],
@@ -977,10 +1027,17 @@ def _infer_tau_failure_modes(
     reward = _trace_reward(trace)
     if reward is not None and reward < 1.0:
         modes.append("low_reward")
-    if trace.get("termination_reason") == "max_steps":
+    termination = trace.get("termination_reason")
+    if termination == "max_steps":
         modes.append("max_steps")
+    if termination == "timeout":
+        modes.append("timeout")
+    if termination == "adapter_error":
+        modes.append("adapter_error")
     if not tool_call_names:
         modes.append("no_tool_calls")
+    if any(_looks_like_mutating_tau_tool(name) for name in tool_call_names):
+        modes.append("mutating_tool_call")
     if repeated_assistant_texts:
         modes.append("repeated_assistant_text")
     if user_identifiers and not tool_call_names:
@@ -1009,6 +1066,41 @@ def _trace_tool_call_names(messages: list[Any]) -> list[str]:
             if isinstance(name, str):
                 names.append(name)
     return names
+
+
+def _trace_runtime_policy_counts(messages: list[dict[str, Any]]) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    for message in messages:
+        raw_data = message.get("raw_data") if isinstance(message, dict) else None
+        runtime_results = raw_data.get("runtime_policy_results") if isinstance(raw_data, dict) else None
+        if not isinstance(runtime_results, list):
+            continue
+        for result in runtime_results:
+            if isinstance(result, dict) and isinstance(result.get("policy"), str):
+                counts[result["policy"]] += 1
+    return counts
+
+
+def _trace_runtime_policy_denials(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    denials: list[dict[str, Any]] = []
+    for idx, message in enumerate(messages):
+        raw_data = message.get("raw_data") if isinstance(message, dict) else None
+        if not isinstance(raw_data, dict):
+            continue
+        denial = raw_data.get("runtime_policy_denial")
+        if isinstance(denial, dict):
+            denials.append({"message_index": idx, **denial})
+        runtime_results = raw_data.get("runtime_policy_results")
+        if not isinstance(runtime_results, list):
+            continue
+        for result in runtime_results:
+            if isinstance(result, dict) and result.get("deny_tool") is True:
+                denials.append({"message_index": idx, **result})
+    return denials
+
+
+def _looks_like_mutating_tau_tool(name: str) -> bool:
+    return bool(re.match(r"^(cancel|update|modify|book|reserve|refund|send|transfer|create|delete)_", name))
 
 
 def _message_role(message: Any) -> str | None:

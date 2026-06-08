@@ -159,6 +159,33 @@ policy-faithful message the adapter can show to the user. If a proposed tool
 call is acceptable, return {"requires_tool": false, "reason": "..."} or do not
 trigger.
 
+### Progress-Controller Runtime Policies
+
+For long-horizon agent benchmarks, a runtime_policy may be a progress
+controller, not only a one-shot guard. Use this when the trace shows timeout,
+max_steps, repeated status text, partial entity scans, or a weak model that
+knows the user's goal but fails to keep moving through required official tools.
+
+A progress controller should reconstruct episode state from
+`metadata.messages`, including user goals, known entity ids, previous assistant
+tool_calls, associated tool-result JSON, rejected/accepted candidates, and
+whether a completion condition is already satisfied. It may force the next
+official tool call during `runtime_policy_phase == "pre_weak"` when the weak
+model would otherwise narrate, wait, repeat, or stop before required state is
+collected.
+
+Keep these policies auditable:
+
+- return `requires_tool: false` once the task is complete or the next action is
+  genuinely ambiguous
+- expose concise fields such as `state_summary`, `checked_entities`,
+  `pending_entities`, `next_missing_action`, or `completion_blocker` when useful
+  for tests and trace review
+- do not hard-code task ids, user ids, reservation ids, final answers, or one
+  benchmark utterance
+- do not deny or force destructive tools unless the reconstructed state proves
+  the action is policy-faithful
+
 Runtime policy tests must use:
 
 ```json
