@@ -12,6 +12,7 @@ from agentdistill.tau_bench import (
     _load_tau_tasks,
     _make_tau_user_llm_completion_shim,
     _register_harnessforge_agent,
+    _resolve_optional_repo_path,
     _select_pre_weak_tau_tool_payloads,
     _select_tau_tool_payloads_with_policy,
     build_tau_failure_digest,
@@ -140,6 +141,19 @@ def _make_tau_agent(tmp_path: Path, monkeypatch, policies: FakePolicies):
     _register_harnessforge_agent(tau, "fake_agent", TauHarnessSettings(repo_root=tmp_path))
     factory = registry.factories["fake_agent"]
     return factory(tools=[FakeOfficialTool("get_user_details")], domain_policy="Domain policy.")
+
+
+def test_resolve_optional_repo_path_keeps_none() -> None:
+    assert _resolve_optional_repo_path(Path("/repo"), None) is None
+
+
+def test_resolve_optional_repo_path_resolves_relative_to_repo(tmp_path: Path) -> None:
+    assert _resolve_optional_repo_path(tmp_path, Path("outputs/policies")) == (tmp_path / "outputs/policies").resolve()
+
+
+def test_resolve_optional_repo_path_preserves_absolute(tmp_path: Path) -> None:
+    absolute = (tmp_path / "policies").resolve()
+    assert _resolve_optional_repo_path(Path("/repo"), absolute) == absolute
 
 
 def test_parse_tau_tool_call_accepts_arguments() -> None:

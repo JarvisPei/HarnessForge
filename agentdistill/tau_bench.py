@@ -52,6 +52,11 @@ def smoke(
     user_llm: str | None = typer.Option(None, "--user-llm"),
     profile: str | None = typer.Option(None, "--profile", "-p"),
     output_dir: Path = typer.Option(Path("outputs/tau_bench_smoke"), "--output-dir"),
+    runtime_policies_dir: Path | None = typer.Option(
+        None,
+        "--runtime-policies-dir",
+        help="Override harness runtime policy directory for isolated tau policy ablations.",
+    ),
     max_steps: int = typer.Option(80, "--max-steps", min=1),
     max_errors: int = typer.Option(5, "--max-errors", min=1),
     timeout: float | None = typer.Option(600.0, "--timeout"),
@@ -67,7 +72,11 @@ def smoke(
     load_dotenv(override=True)
     repo_root = Path(__file__).resolve().parent.parent
     output_dir = (repo_root / output_dir).resolve() if not output_dir.is_absolute() else output_dir
-    settings = TauHarnessSettings(repo_root=repo_root, profile=profile)
+    settings = TauHarnessSettings(
+        repo_root=repo_root,
+        profile=profile,
+        runtime_policies_dir=_resolve_optional_repo_path(repo_root, runtime_policies_dir),
+    )
     try:
         traces = run_tau_bench_smoke(
             settings=settings,
@@ -89,6 +98,12 @@ def smoke(
         raise typer.Exit(code=1) from exc
     console.print(f"[bold]tau-bench smoke traces:[/bold] {output_dir}")
     console.print(f"[bold]tasks:[/bold] {len(traces)}")
+
+
+def _resolve_optional_repo_path(repo_root: Path, path: Path | None) -> Path | None:
+    if path is None:
+        return None
+    return path.resolve() if path.is_absolute() else (repo_root / path).resolve()
 
 
 def run_tau_bench_smoke(
