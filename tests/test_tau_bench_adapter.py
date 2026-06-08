@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
+from agentdistill.models import ModelSettings
 from agentdistill.tau_bench import (
+    TauHarnessSettings,
     _append_tau_incoming_message,
     _first_forced_tau_tool,
     _load_tau_tasks,
     _make_tau_user_llm_completion_shim,
+    _register_harnessforge_agent,
+    _select_pre_weak_tau_tool_payloads,
     _select_tau_tool_payloads_with_policy,
     build_tau_failure_digest,
     build_tau_runtime_policy_payload,
@@ -68,6 +73,72 @@ class FakePolicies:
     def evaluate(self, payload: dict) -> list[dict]:
         self.payloads.append(payload)
         return self.results
+
+
+class FakeAgentRegistry:
+    def __init__(self):
+        self.factories: dict[str, object] = {}
+
+    def get_agent_factory(self, name: str):
+        return self.factories.get(name)
+
+    def register_agent_factory(self, factory, name: str) -> None:
+        self.factories[name] = factory
+
+
+class FakeHalfDuplexAgent:
+    def __init__(self, tools, domain_policy):
+        self.tools = tools
+        self.domain_policy = domain_policy
+
+
+class FakeAssistantMessage:
+    def __init__(self, role="assistant", content=None, tool_calls=None, raw_data=None):
+        self.role = role
+        self.content = content
+        self.tool_calls = tool_calls
+        self.raw_data = raw_data
+
+    @classmethod
+    def text(cls, content: str, raw_data=None):
+        return cls(role="assistant", content=content, tool_calls=None, raw_data=raw_data)
+
+
+@dataclass
+class FakeOfficialTool:
+    name: str
+    openai_schema: dict | None = None
+
+
+def _make_tau_agent(tmp_path: Path, monkeypatch, policies: FakePolicies):
+    (tmp_path / "prompts").mkdir()
+    (tmp_path / "prompts" / "weak_system.md").write_text("Weak system.", encoding="utf-8")
+    for subdir in ["skills", "guidelines", "validators", "runtime_policies"]:
+        (tmp_path / "harness" / subdir).mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(
+        "agentdistill.tau_bench.load_model_settings",
+        lambda role, profile=None: ModelSettings(
+            role="weak",
+            provider="openai",
+            base_url="https://example.com/v1",
+            api_key="k",
+            model="weak",
+        ),
+    )
+    monkeypatch.setattr("agentdistill.tau_bench.RuntimePolicyRegistry", lambda path: policies)
+
+    registry = FakeAgentRegistry()
+    tau = {
+        "registry": registry,
+        "HalfDuplexAgent": FakeHalfDuplexAgent,
+        "AssistantMessage": FakeAssistantMessage,
+        "ToolCall": FakeToolCall,
+        "is_valid_agent_history_message": lambda message: True,
+    }
+    _register_harnessforge_agent(tau, "fake_agent", TauHarnessSettings(repo_root=tmp_path))
+    factory = registry.factories["fake_agent"]
+    return factory(tools=[FakeOfficialTool("get_user_details")], domain_policy="Domain policy.")
 
 
 def test_parse_tau_tool_call_accepts_arguments() -> None:
@@ -293,6 +364,71 @@ def test_select_tau_tool_payloads_with_policy_still_supports_no_tool_fallback() 
 
     assert tool_payloads == [{"name": "get_user_details", "arguments": {"user_id": "u1"}}]
     assert policies.payloads[0]["tool_call"] is None
+
+
+def test_select_pre_weak_tau_tool_payloads_can_force_without_weak_raw() -> None:
+    policies = FakePolicies(
+        [
+            {"requires_tool": True, "tool_name": "get_user_details", "tool_input": {"user_id": "u1"}},
+        ]
+    )
+
+    tool_payloads, policy_results = _select_pre_weak_tau_tool_payloads(
+        tau_messages=[FakeMessage(role="user", content="My user ID is u1.")],
+        available_tools=["get_user_details"],
+        policies=policies,
+    )
+
+    assert tool_payloads == [{"name": "get_user_details", "arguments": {"user_id": "u1"}}]
+    assert policy_results == policies.results
+    assert policies.payloads[0]["initial_answer"] == ""
+    assert policies.payloads[0]["tool_call"] is None
+    assert policies.payloads[0]["runtime_policy_phase"] == "pre_weak"
+
+
+def test_tau_agent_pre_weak_policy_skips_weak_call(tmp_path: Path, monkeypatch) -> None:
+    policies = FakePolicies(
+        [
+            {"requires_tool": True, "tool_name": "get_user_details", "tool_input": {"user_id": "u1"}},
+        ]
+    )
+    agent = _make_tau_agent(tmp_path, monkeypatch, policies)
+
+    def fail_complete_sync(*args, **kwargs):
+        raise AssertionError("weak model should not be called when pre-weak policy forces a tool")
+
+    monkeypatch.setattr("agentdistill.tau_bench._complete_sync", fail_complete_sync)
+    state = agent.get_init_state()
+
+    assistant, state = agent.generate_next_message(FakeMessage(role="user", content="My user ID is u1."), state)
+
+    assert assistant.content is None
+    assert assistant.tool_calls == [FakeToolCall(id=assistant.tool_calls[0].id, name="get_user_details", arguments={"user_id": "u1"})]
+    assert assistant.raw_data["runtime_policy_phase"] == "pre_weak"
+    assert assistant.raw_data["runtime_policy_results"] == policies.results
+    assert state.messages[-1] is assistant
+
+
+def test_tau_agent_pre_weak_policy_falls_back_to_weak_call(tmp_path: Path, monkeypatch) -> None:
+    policies = FakePolicies([{"requires_tool": False, "reason": "no deterministic tool"}])
+    agent = _make_tau_agent(tmp_path, monkeypatch, policies)
+    calls = []
+
+    def fake_complete_sync(client, messages, temperature=0.2):
+        calls.append(messages)
+        return "I can help with that."
+
+    monkeypatch.setattr("agentdistill.tau_bench._complete_sync", fake_complete_sync)
+    state = agent.get_init_state()
+
+    assistant, _ = agent.generate_next_message(FakeMessage(role="user", content="Hello."), state)
+
+    assert assistant.content == "I can help with that."
+    assert assistant.tool_calls is None
+    assert len(calls) == 1
+    assert len(policies.payloads) == 2
+    assert policies.payloads[0]["runtime_policy_phase"] == "pre_weak"
+    assert policies.payloads[1]["initial_answer"] == "I can help with that."
 
 
 def test_message_to_plain_dict_keeps_tool_calls() -> None:

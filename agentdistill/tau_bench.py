@@ -329,6 +329,32 @@ def _register_harnessforge_agent(tau: dict[str, Any], name: str, settings: TauHa
 
         def generate_next_message(self, message: Any, state: HarnessForgeTauState) -> tuple[Any, HarnessForgeTauState]:
             _append_tau_incoming_message(state.messages, message)
+            pre_tool_payloads, pre_policy_results = _select_pre_weak_tau_tool_payloads(
+                tau_messages=state.messages,
+                available_tools=self.official_tool_names,
+                policies=self.policies,
+            )
+            if pre_tool_payloads:
+                assistant = AssistantMessage(
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id=str(uuid.uuid4()),
+                            name=payload["name"],
+                            arguments=payload["arguments"],
+                            requestor="assistant",
+                        )
+                        for payload in pre_tool_payloads
+                    ],
+                    raw_data={
+                        "harnessforge_raw": "",
+                        "runtime_policy_phase": "pre_weak",
+                        "runtime_policy_results": pre_policy_results,
+                    },
+                )
+                state.messages.append(assistant)
+                return assistant, state
             weak_messages = build_tau_weak_messages(self.weak_system, state.messages)
             raw = _complete_sync(self.client, weak_messages)
             if not raw.strip():
@@ -458,6 +484,32 @@ def build_tau_runtime_policy_payload(
             "messages": structured_messages,
         },
     }
+
+
+def _select_pre_weak_tau_tool_payloads(
+    *,
+    tau_messages: list[Any],
+    available_tools: list[str],
+    policies: Any,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not getattr(policies, "names", []):
+        return [], []
+    policy_payload = build_tau_runtime_policy_payload(
+        initial_answer="",
+        tau_messages=tau_messages,
+        available_tools=available_tools,
+    )
+    policy_payload["runtime_policy_phase"] = "pre_weak"
+    policy_results = policies.evaluate(policy_payload)
+    forced_tool = _first_forced_tau_tool(policy_results, available_tools)
+    if forced_tool is None:
+        return [], policy_results
+    return [
+        {
+            "name": forced_tool["tool_name"],
+            "arguments": forced_tool.get("tool_input", {}),
+        }
+    ], policy_results
 
 
 def _select_tau_tool_payloads_with_policy(
