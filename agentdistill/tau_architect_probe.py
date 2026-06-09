@@ -45,7 +45,7 @@ def main(
     """Ask the teacher to architect a tau-bench harness patch from saved traces."""
 
     repo_root = Path(__file__).resolve().parent.parent
-    load_dotenv(dotenv_path=repo_root / ".env", override=True)
+    load_dotenv(dotenv_path=repo_root / ".env", override=False)
     output_dir = output_dir if output_dir.is_absolute() else repo_root / output_dir
     trace_dir = trace_dir if trace_dir.is_absolute() else repo_root / trace_dir
     try:
