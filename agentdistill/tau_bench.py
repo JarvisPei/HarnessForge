@@ -837,7 +837,7 @@ def build_tau_domain_policy_evidence(
     traces: list[dict[str, Any]],
     *,
     max_traces: int = 5,
-    max_chars_per_trace: int = 6000,
+    max_chars_per_trace: int = 3000,
 ) -> dict[str, Any]:
     """Expose task policy excerpts needed to interpret tau-bench trace failures."""
 

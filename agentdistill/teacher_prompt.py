@@ -34,7 +34,7 @@ def build_teacher_messages(
     )
     return [
         {"role": "system", "content": teacher_system},
-        {"role": "user", "content": json.dumps(payload, ensure_ascii=False, indent=2)},
+        {"role": "user", "content": _compact_json(payload)},
     ]
 
 
@@ -68,7 +68,7 @@ def build_architect_sketch_messages(
     )
     return [
         {"role": "system", "content": ARCHITECT_SKETCH_SYSTEM_PROMPT},
-        {"role": "user", "content": json.dumps(payload, ensure_ascii=False, indent=2)},
+        {"role": "user", "content": _compact_json(payload)},
     ]
 
 
@@ -104,8 +104,12 @@ def build_staged_bundle_messages(
     payload["architect_sketch"] = sketch
     return [
         {"role": "system", "content": STAGED_BUNDLE_SYSTEM_PROMPT},
-        {"role": "user", "content": json.dumps(payload, ensure_ascii=False, indent=2)},
+        {"role": "user", "content": _compact_json(payload)},
     ]
+
+
+def _compact_json(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
 def build_teacher_payload(

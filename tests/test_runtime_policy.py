@@ -2877,7 +2877,8 @@ def test_run_focused_repair_task_calls_teacher_without_weak_model() -> None:
     assert result["focused_repair"] is True
     assert result["weak_answer"] == ""
     assert teacher.messages is not None
-    assert '"repair_mode": "focused"' in teacher.messages[1]["content"]
+    teacher_payload = json.loads(teacher.messages[1]["content"])
+    assert teacher_payload["benchmark_context"]["repair_mode"] == "focused"
 
 
 def test_run_focused_repair_task_includes_repair_plan_and_boundaries() -> None:
