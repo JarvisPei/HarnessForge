@@ -132,6 +132,14 @@ def test_build_tau_architect_context_includes_policy_and_failed_actions() -> Non
     assert decision_trace["failed_actions"][0]["related_tool_results"][0]["tool_name"] == "get_user_details"
 
 
+def test_build_tau_architect_context_decision_mode_drops_runtime_windows() -> None:
+    context = build_tau_architect_context([_trace()], context_mode="decision")
+
+    assert context["tau_runtime_evidence"]["trace_windows"] == []
+    assert context["tau_action_decision_evidence"]["traces"][0]["failed_actions"]
+    assert context["tau_domain_policy_evidence"]["traces"][0]["current_time"] == "2024-05-15 15:00:00 EST"
+
+
 def test_model_settings_overrides_can_disable_reasoning() -> None:
     settings = ModelSettings(
         role="teacher",

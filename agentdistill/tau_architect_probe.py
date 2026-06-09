@@ -19,7 +19,7 @@ from agentdistill.tau_bench import build_tau_teacher_context
 from agentdistill.teacher_prompt import build_teacher_messages
 
 
-ContextMode = Literal["full", "slim", "minimal"]
+ContextMode = Literal["full", "slim", "minimal", "decision"]
 
 app = typer.Typer(add_completion=False)
 console = Console()
@@ -178,7 +178,11 @@ def load_tau_trace_files(trace_dir: Path, *, task_ids: list[str] | None = None) 
 
 def build_tau_architect_context(traces: list[dict[str, Any]], *, context_mode: ContextMode) -> dict[str, Any]:
     context = build_tau_teacher_context(traces, max_traces=len(traces))
-    if context_mode != "full":
+    if context_mode == "decision":
+        evidence = context.get("tau_runtime_evidence")
+        if isinstance(evidence, dict):
+            evidence["trace_windows"] = []
+    elif context_mode != "full":
         evidence = context.get("tau_runtime_evidence")
         if isinstance(evidence, dict):
             evidence["trace_windows"] = _select_tau_architect_windows(
