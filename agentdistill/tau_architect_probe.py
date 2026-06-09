@@ -19,7 +19,7 @@ from agentdistill.tau_bench import build_tau_teacher_context
 from agentdistill.teacher_prompt import build_teacher_messages
 
 
-ContextMode = Literal["full", "slim", "minimal", "decision"]
+ContextMode = Literal["full", "slim", "minimal", "decision", "tail"]
 
 app = typer.Typer(add_completion=False)
 console = Console()
@@ -183,6 +183,10 @@ def build_tau_architect_context(traces: list[dict[str, Any]], *, context_mode: C
         evidence = context.get("tau_runtime_evidence")
         if isinstance(evidence, dict):
             evidence["trace_windows"] = []
+    elif context_mode == "tail":
+        evidence = context.get("tau_runtime_evidence")
+        if isinstance(evidence, dict):
+            evidence["trace_windows"] = _build_tau_tail_windows(traces)
     elif context_mode != "full":
         evidence = context.get("tau_runtime_evidence")
         if isinstance(evidence, dict):
@@ -210,6 +214,75 @@ def build_tau_architect_context(traces: list[dict[str, Any]], *, context_mode: C
         ],
     }
     return context
+
+
+def _build_tau_tail_windows(
+    traces: list[dict[str, Any]],
+    *,
+    max_messages_per_trace: int = 14,
+) -> list[dict[str, Any]]:
+    windows: list[dict[str, Any]] = []
+    for trace in traces:
+        messages = _trace_messages_for_probe(trace)
+        if not messages:
+            continue
+        start = max(0, len(messages) - max_messages_per_trace)
+        windows.append(
+            {
+                "task_id": trace.get("task_id"),
+                "domain": trace.get("domain"),
+                "split": trace.get("split"),
+                "termination_reason": trace.get("termination_reason"),
+                "reward": _trace_reward_for_probe(trace),
+                "center_index": len(messages) - 1,
+                "window_reason": "failed_trace_tail",
+                "messages": [_compact_probe_message(message) for message in messages[start:]],
+            }
+        )
+    return windows
+
+
+def _trace_messages_for_probe(trace: dict[str, Any]) -> list[dict[str, Any]]:
+    messages = trace.get("messages")
+    if not isinstance(messages, list):
+        raw = trace.get("raw")
+        messages = raw.get("messages") if isinstance(raw, dict) else []
+    return [message for message in messages if isinstance(message, dict)]
+
+
+def _trace_reward_for_probe(trace: dict[str, Any]) -> float | None:
+    reward_info = trace.get("reward_info")
+    if not isinstance(reward_info, dict):
+        return None
+    reward = reward_info.get("reward")
+    return float(reward) if isinstance(reward, (int, float)) else None
+
+
+def _compact_probe_message(message: dict[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    for key in ["role", "turn_idx", "requestor", "error"]:
+        if message.get(key) is not None:
+            compact[key] = message[key]
+    if message.get("content") is not None:
+        compact["content"] = _truncate_text(str(message["content"]), 1500)
+    if message.get("tool_calls") is not None:
+        compact["tool_calls"] = message["tool_calls"]
+    raw_data = message.get("raw_data")
+    if isinstance(raw_data, dict):
+        raw_compact: dict[str, Any] = {}
+        for key in [
+            "runtime_policy_phase",
+            "runtime_policy_results",
+            "runtime_policy_denial",
+            "runtime_policy_override",
+        ]:
+            if raw_data.get(key) is not None:
+                raw_compact[key] = raw_data[key]
+        if raw_data.get("harnessforge_raw") is not None:
+            raw_compact["harnessforge_raw"] = _truncate_text(str(raw_data["harnessforge_raw"]), 800)
+        if raw_compact:
+            compact["raw_data"] = raw_compact
+    return compact
 
 
 def attach_active_harness_evidence(

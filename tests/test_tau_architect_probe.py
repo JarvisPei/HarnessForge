@@ -175,6 +175,22 @@ def test_build_tau_architect_context_decision_mode_drops_runtime_windows() -> No
     assert context["tau_domain_policy_evidence"]["traces"][0]["current_time"] == "2024-05-15 15:00:00 EST"
 
 
+def test_build_tau_architect_context_tail_mode_keeps_contiguous_tail() -> None:
+    trace = _trace()
+    trace["messages"] = [
+        {"role": "user", "content": f"message {idx}", "turn_idx": idx}
+        for idx in range(20)
+    ]
+
+    context = build_tau_architect_context([trace], context_mode="tail")
+
+    windows = context["tau_runtime_evidence"]["trace_windows"]
+    assert len(windows) == 1
+    assert windows[0]["window_reason"] == "failed_trace_tail"
+    assert windows[0]["messages"][0]["content"] == "message 6"
+    assert windows[0]["messages"][-1]["content"] == "message 19"
+
+
 def test_attach_active_harness_evidence_reads_referenced_runtime_policy(tmp_path: Path) -> None:
     repo = tmp_path
     policy_dir = repo / "harness" / "runtime_policies"
