@@ -314,7 +314,7 @@ def attach_active_harness_evidence(
     context: dict[str, Any],
     *,
     repo_root: Path,
-    max_files: int = 5,
+    max_files: int = 2,
     max_chars_per_file: int = 7000,
     max_total_chars: int = 24000,
 ) -> None:
