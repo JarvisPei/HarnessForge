@@ -159,6 +159,19 @@ policy-faithful message the adapter can show to the user. If a proposed tool
 call is acceptable, return {"requires_tool": false, "reason": "..."} or do not
 trigger.
 
+For weak final answers that are premature or contradict unresolved state, a
+runtime policy may override the text response without forcing a tool:
+
+```json
+{"override_response": true, "assistant_response": "user-visible next step", "reason": "..."}
+```
+
+Use this for finalization guards: when the weak model tries to finish but the
+reconstructed state still has unresolved obligations such as missing reason,
+missing confirmation, unchecked entities, or a contradiction between the final
+answer and tool results. Do not use override_response to smuggle in a final
+answer; it should keep the task moving or ask for the missing information.
+
 ### Progress-Controller Runtime Policies
 
 For long-horizon agent benchmarks, a runtime_policy may be a progress
@@ -218,6 +231,12 @@ For a deny guard, use expected values such as:
 
 ```json
 {"deny_tool": true, "tool_name": "cancel_reservation", "tool_input": {"reservation_id": "..."}, "assistant_response": "..."}
+```
+
+For a finalization guard, use expected values such as:
+
+```json
+{"override_response": true, "assistant_response": "Please confirm the cancellation reason before I proceed."}
 ```
 
 Policy tests must be schema-faithful to the benchmark adapter. If the real

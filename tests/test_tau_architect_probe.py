@@ -113,6 +113,7 @@ def test_build_tau_architect_context_minimal_keeps_forced_tool_and_tail() -> Non
         ("39", "failed_trace_tail"),
     ]
     assert context["repair_intent"]["preferred_capability"].startswith("stateful runtime policy")
+    assert any("override_response" in action for action in context["repair_intent"]["available_policy_actions"])
 
 
 def test_build_tau_architect_context_includes_policy_and_failed_actions() -> None:

@@ -191,10 +191,19 @@ def build_tau_architect_context(traces: list[dict[str, Any]], *, context_mode: C
                 context_mode=context_mode,
             )
     context["repair_intent"] = {
-        "goal": "Architect a general harness change for weak-model long-horizon tau-bench progress failures.",
-        "preferred_capability": (
-            "stateful runtime policy progress controller over official tau-bench tools when justified by trace evidence"
+        "goal": (
+            "Architect a general harness change for weak-model long-horizon tau-bench progress or "
+            "premature-finalization failures."
         ),
+        "preferred_capability": (
+            "stateful runtime policy progress/finalization controller over official tau-bench traces when justified "
+            "by trace evidence"
+        ),
+        "available_policy_actions": [
+            "force the next official tau-bench tool call with requires_tool when preconditions are proven",
+            "deny an unsafe proposed tool call with deny_tool",
+            "override a premature weak final text response with override_response to keep the workflow open or ask for missing information",
+        ],
         "do_not": [
             "do not hard-code task ids, user ids, reservation ids, or final answers",
             "do not write a one-task guard unless the evidence only supports that",
@@ -344,8 +353,9 @@ def build_tau_architect_messages(
         ),
         expected_answer=None,
         rubric=(
-            "Prefer context_request if insufficient. If patching, use a runtime_policy progress controller that "
-            "reconstructs state from metadata.messages and only forces official tau-bench tools."
+            "Prefer context_request if insufficient. If patching, use a runtime_policy progress or finalization "
+            "controller that reconstructs state from metadata.messages. It may force official tau-bench tools, "
+            "deny unsafe proposed tool calls, or override premature final text when the task obligations are not closed."
         ),
         weak_system_prompt=(repo_root / "prompts" / "weak_system.md").read_text(encoding="utf-8"),
         weak_answer="See benchmark_context.",
