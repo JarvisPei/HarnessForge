@@ -18,6 +18,7 @@ from rich.console import Console
 
 from agentdistill.harness import load_system_prompt
 from agentdistill.models import ChatClient, ModelSettings, load_model_settings
+from agentdistill.report import build_tau_run_report
 from agentdistill.tools import RuntimePolicyRegistry
 
 
@@ -189,6 +190,7 @@ def run_tau_bench_smoke(
         ],
     }
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    build_tau_run_report(output_dir, output_path=output_dir / "tau_report.json")
     return traces
 
 
