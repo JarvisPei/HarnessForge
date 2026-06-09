@@ -131,7 +131,40 @@ def test_build_tau_architect_context_includes_policy_and_failed_actions() -> Non
     decision_trace = context["tau_action_decision_evidence"]["traces"][0]
     assert decision_trace["observed_tool_argument_shapes"]["cancel_reservation"] == [{"reservation_id": "str"}]
     assert decision_trace["failed_actions"][0]["failed_action"]["name"] == "cancel_reservation"
+    assert "expected this action" in decision_trace["failed_actions"][0]["interpretation"]
     assert decision_trace["failed_actions"][0]["related_tool_results"][0]["tool_name"] == "get_user_details"
+
+
+def test_build_tau_architect_context_prioritizes_failed_action_policy_sections() -> None:
+    trace = _trace()
+    trace["raw"]["policy"] = """
+# Airline Agent Policy
+
+The current time is 2024-05-15 15:00:00 EST.
+
+## Domain Basic
+Generic reservation and insurance definitions.
+
+## Book flight
+Booking instructions with many payment details.
+
+## Modify flight
+Modification instructions.
+
+## Cancel flight
+Cancellation instructions for cancel_reservation.
+
+## Refunds and Compensation
+Refund instructions for cancellation outcomes.
+""".strip()
+
+    context = build_tau_architect_context([trace], context_mode="minimal")
+
+    excerpt = context["tau_domain_policy_evidence"]["traces"][0]["policy_excerpt"]
+    assert "## Cancel flight" in excerpt
+    assert "## Refunds and Compensation" in excerpt
+    if "## Book flight" in excerpt:
+        assert excerpt.index("## Cancel flight") < excerpt.index("## Book flight")
 
 
 def test_build_tau_architect_context_decision_mode_drops_runtime_windows() -> None:

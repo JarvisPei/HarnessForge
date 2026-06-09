@@ -895,6 +895,10 @@ def build_tau_action_decision_evidence(
             action_items.append(
                 {
                     "failed_action": action,
+                    "interpretation": (
+                        "official evaluator expected this action, but no observed action matched it; "
+                        "do not treat it as an actually executed bad tool call unless it also appears in observed messages"
+                    ),
                     "related_tool_results": related[:3],
                 }
             )
@@ -904,6 +908,7 @@ def build_tau_action_decision_evidence(
                 "domain": trace.get("domain"),
                 "split": trace.get("split"),
                 "observed_tool_argument_shapes": _trace_observed_tool_argument_shapes(trace),
+                "expected_unmatched_actions": action_items,
                 "failed_actions": action_items,
             }
         )
@@ -911,7 +916,8 @@ def build_tau_action_decision_evidence(
         "schema": "harnessforge.tau_action_decision_evidence.v1",
         "traces": trace_evidence,
         "notes": [
-            "Failed actions come from official train reward action_checks.",
+            "action_match=false entries are expected actions that were not matched in the observed trace.",
+            "They identify missing required behavior; they are not necessarily actually executed bad tool calls.",
             "Related tool results are matched from the same trace by shared action arguments such as reservation_id.",
             "Use this to design general state/action policies, not to hard-code ids.",
         ],
@@ -922,7 +928,7 @@ def build_tau_domain_policy_evidence(
     traces: list[dict[str, Any]],
     *,
     max_traces: int = 5,
-    max_chars_per_trace: int = 3000,
+    max_chars_per_trace: int = 9000,
 ) -> dict[str, Any]:
     """Expose task policy excerpts needed to interpret tau-bench trace failures."""
 
@@ -1106,17 +1112,22 @@ def _extract_tau_policy_excerpt(policy: str, *, trace: dict[str, Any], max_chars
     current_time = _extract_tau_current_time(policy)
     keywords = _tau_policy_keywords(trace)
     sections = _split_tau_policy_sections(policy)
-    selected_sections: list[dict[str, str]] = []
-    for section in sections:
+    scored_sections: list[tuple[int, int, dict[str, str]]] = []
+    for index, section in enumerate(sections):
         heading = section["heading"].lower()
         text = section["text"].lower()
         if section["heading"] == "preamble":
             continue
-        if any(keyword in heading for keyword in keywords):
-            selected_sections.append(section)
+        score = _tau_policy_section_score(heading, text, keywords=keywords, trace=trace)
+        if score <= 0:
             continue
+        if any(keyword in heading for keyword in keywords):
+            score += 20
         if any(keyword in text for keyword in keywords if keyword not in {"flight", "reservation", "user"}):
-            selected_sections.append(section)
+            score += 5
+        scored_sections.append((score, index, section))
+    scored_sections.sort(key=lambda item: (-item[0], item[1]))
+    selected_sections = [section for _, _, section in scored_sections]
     if not selected_sections and sections:
         selected_sections = sections[:1]
 
@@ -1126,14 +1137,43 @@ def _extract_tau_policy_excerpt(policy: str, *, trace: dict[str, Any], max_chars
     preamble = next((section["text"] for section in sections if section["heading"] == "preamble"), "")
     if preamble:
         excerpt_parts.append(_truncate_text(preamble.strip(), 800))
-    for section in selected_sections[:4]:
-        excerpt_parts.append(_truncate_text(section["text"].strip(), 1800))
+    for section in selected_sections[:6]:
+        excerpt_parts.append(_truncate_text(section["text"].strip(), 2600))
     excerpt = _truncate_text("\n\n".join(part for part in excerpt_parts if part), max_chars)
     return {
         "current_time": current_time,
         "selected_keywords": keywords,
         "policy_excerpt": excerpt,
     }
+
+
+def _tau_policy_section_score(
+    heading: str,
+    text: str,
+    *,
+    keywords: list[str],
+    trace: dict[str, Any],
+) -> int:
+    score = 0
+    failed_action_names = {
+        str(action.get("name"))
+        for action in (_check.get("action") for _check in _trace_action_checks(trace))
+        if isinstance(action, dict) and isinstance(action.get("name"), str)
+    }
+    cancellation_relevant = "cancel" in keywords or "cancel_reservation" in failed_action_names
+    if cancellation_relevant:
+        if "cancel" in heading:
+            score += 120
+        if "refund" in heading or "compensation" in heading:
+            score += 90
+        if "insurance" in heading or "insurance" in text:
+            score += 30
+    for keyword in keywords:
+        if keyword in heading:
+            score += 30
+        elif keyword not in {"flight", "reservation", "user"} and keyword in text:
+            score += 10
+    return score
 
 
 def _extract_tau_current_time(policy: str) -> str | None:
