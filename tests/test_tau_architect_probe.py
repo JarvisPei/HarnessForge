@@ -149,12 +149,14 @@ def test_attach_active_harness_evidence_reads_referenced_runtime_policy(tmp_path
     guideline_dir = repo / "harness" / "guidelines"
     guideline_dir.mkdir(parents=True)
     (policy_dir / "candidate_state.py").write_text("def evaluate(input):\n    return {}\n", encoding="utf-8")
+    (policy_dir / "cancel_guard.py").write_text("def evaluate(input):\n    return {'requires_tool': False}\n", encoding="utf-8")
     (guideline_dir / "base.md").write_text("base", encoding="utf-8")
     (guideline_dir / "tau_cancel.md").write_text("# tau cancel guideline", encoding="utf-8")
     context = {
         "tau_bench_failure_digest": {
             "runtime_policy_counts": {
                 "candidate_state": 3,
+                "cancel_guard": 2,
             }
         }
     }
@@ -162,10 +164,11 @@ def test_attach_active_harness_evidence_reads_referenced_runtime_policy(tmp_path
     attach_active_harness_evidence(context, repo_root=repo)
 
     files = context["active_harness_evidence"]["files"]
-    assert files[0]["path"] == "harness/runtime_policies/candidate_state.py"
-    assert "def evaluate" in files[0]["content"]
-    assert files[1]["path"] == "harness/guidelines/tau_cancel.md"
-    assert files[1]["type"] == "prompt_guideline"
+    paths = [file["path"] for file in files]
+    assert "harness/runtime_policies/cancel_guard.py" in paths
+    assert "harness/runtime_policies/candidate_state.py" in paths
+    assert paths[-1] == "harness/guidelines/tau_cancel.md"
+    assert files[-1]["type"] == "prompt_guideline"
 
 
 def test_model_settings_overrides_can_disable_reasoning() -> None:
