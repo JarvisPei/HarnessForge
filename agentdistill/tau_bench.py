@@ -380,6 +380,7 @@ def _register_harnessforge_agent(tau: dict[str, Any], name: str, settings: TauHa
                 available_tools=self.official_tool_names,
                 policies=self.policies,
             )
+            policy_override = _first_tau_response_override(policy_results, tool_payloads)
             if policy_denial is not None:
                 assistant = AssistantMessage.text(
                     policy_denial["assistant_response"],
@@ -388,6 +389,16 @@ def _register_harnessforge_agent(tau: dict[str, Any], name: str, settings: TauHa
                         "runtime_policy_phase": "post_weak",
                         "runtime_policy_results": policy_results,
                         "runtime_policy_denial": policy_denial,
+                    },
+                )
+            elif policy_override is not None:
+                assistant = AssistantMessage.text(
+                    policy_override["assistant_response"],
+                    raw_data={
+                        "harnessforge_raw": raw,
+                        "runtime_policy_phase": "post_weak",
+                        "runtime_policy_results": policy_results,
+                        "runtime_policy_override": policy_override,
                     },
                 )
             elif tool_payloads:
@@ -613,6 +624,33 @@ def _first_tau_tool_denial(
             "tool_input": tool_input,
             "assistant_response": assistant_response.strip(),
             "reason": str(result.get("reason", "runtime policy denied proposed tool call")),
+        }
+    return None
+
+
+def _first_tau_response_override(
+    policy_results: list[dict[str, Any]],
+    proposed_tool_payloads: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if proposed_tool_payloads:
+        return None
+    for result in policy_results:
+        action = result.get("action")
+        wants_override = result.get("override_response") is True or action in {
+            "override_response",
+            "continue_dialogue",
+            "block_final_answer",
+            "finalization_guard",
+        }
+        if not wants_override:
+            continue
+        assistant_response = result.get("assistant_response")
+        if not isinstance(assistant_response, str) or not assistant_response.strip():
+            continue
+        return {
+            "override_response": True,
+            "assistant_response": assistant_response.strip(),
+            "reason": str(result.get("reason", "runtime policy overrode premature final answer")),
         }
     return None
 
@@ -1038,6 +1076,8 @@ def _compact_tau_message(message: dict[str, Any]) -> dict[str, Any]:
             raw_compact["runtime_policy_results"] = raw_data["runtime_policy_results"]
         if raw_data.get("runtime_policy_denial") is not None:
             raw_compact["runtime_policy_denial"] = raw_data["runtime_policy_denial"]
+        if raw_data.get("runtime_policy_override") is not None:
+            raw_compact["runtime_policy_override"] = raw_data["runtime_policy_override"]
         if raw_data.get("harnessforge_raw") is not None:
             raw_compact["harnessforge_raw"] = _truncate_text(str(raw_data["harnessforge_raw"]), 1000)
         if raw_compact:

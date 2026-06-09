@@ -254,6 +254,9 @@ Runtime policy test schema:
 For post-weak/pre-tool denial guards, use expected values such as
 {"deny_tool": true, "tool_name": "<proposed_tool>", "tool_input": {...}, "assistant_response": "..."}.
 
+For finalization guards over weak text answers that should not end the task yet, use expected values such as
+{"override_response": true, "assistant_response": "Ask for the missing reason/confirmation or continue the unresolved workflow."}.
+
 Generalization discipline:
 - Do not hard-code final answers, task IDs, or one-off strings that only solve the observed example.
 - Preserve the frozen operation semantics. Do not alter per-row vs group-level scope, sign polarity, unit direction, join keys, or output format just to make a test pass.

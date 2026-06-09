@@ -9,6 +9,7 @@ from agentdistill.tau_bench import (
     _append_tau_incoming_message,
     _first_forced_tau_tool,
     _first_tau_tool_denial,
+    _first_tau_response_override,
     _load_tau_tasks,
     _make_tau_user_llm_completion_shim,
     _register_harnessforge_agent,
@@ -434,6 +435,29 @@ def test_select_tau_tool_payloads_with_policy_still_supports_no_tool_fallback() 
     assert policies.payloads[0]["tool_call"] is None
 
 
+def test_first_tau_response_override_only_applies_to_final_text() -> None:
+    override = _first_tau_response_override(
+        [
+            {
+                "override_response": True,
+                "assistant_response": "I still need the cancellation reason before I can finish.",
+                "reason": "unresolved cancellation reason",
+            }
+        ],
+        [],
+    )
+
+    assert override == {
+        "override_response": True,
+        "assistant_response": "I still need the cancellation reason before I can finish.",
+        "reason": "unresolved cancellation reason",
+    }
+    assert _first_tau_response_override(
+        [{"override_response": True, "assistant_response": "ask"}],
+        [{"name": "get_user_details", "arguments": {"user_id": "u1"}}],
+    ) is None
+
+
 def test_select_pre_weak_tau_tool_payloads_can_force_without_weak_raw() -> None:
     policies = FakePolicies(
         [
@@ -527,6 +551,36 @@ def test_tau_agent_post_weak_policy_denies_proposed_tool_call(tmp_path: Path, mo
     assert assistant.raw_data["runtime_policy_denial"]["tool_input"] == {"reservation_id": "MZDDS4"}
     assert len(policies.payloads) == 2
     assert policies.payloads[1]["tool_call"] == {"name": "cancel_reservation", "arguments": {"reservation_id": "MZDDS4"}}
+
+
+def test_tau_agent_post_weak_policy_overrides_premature_final_answer(tmp_path: Path, monkeypatch) -> None:
+    policies = FakePolicies(
+        [
+            {
+                "override_response": True,
+                "assistant_response": "I still need the cancellation reason before I can finish.",
+                "reason": "unresolved cancellation reason",
+            }
+        ]
+    )
+    agent = _make_tau_agent(tmp_path, monkeypatch, policies)
+
+    def fake_complete_sync(client, messages, temperature=0.2):
+        return "There is nothing else to do."
+
+    monkeypatch.setattr("agentdistill.tau_bench._complete_sync", fake_complete_sync)
+    state = agent.get_init_state()
+
+    assistant, _ = agent.generate_next_message(FakeMessage(role="user", content="Cancel all upcoming flights."), state)
+
+    assert assistant.content == "I still need the cancellation reason before I can finish."
+    assert assistant.tool_calls is None
+    assert assistant.raw_data["harnessforge_raw"] == "There is nothing else to do."
+    assert assistant.raw_data["runtime_policy_override"] == {
+        "override_response": True,
+        "assistant_response": "I still need the cancellation reason before I can finish.",
+        "reason": "unresolved cancellation reason",
+    }
 
 
 def test_message_to_plain_dict_keeps_tool_calls() -> None:
