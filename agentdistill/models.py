@@ -163,10 +163,22 @@ def _is_retryable_error(exc: Exception) -> bool:
 
 def _error_summary(exc: Exception) -> str:
     if isinstance(exc, httpx.HTTPStatusError):
-        return f"http_status_{exc.response.status_code}"
+        snippet = _response_text_snippet(exc.response)
+        suffix = f": {snippet}" if snippet else ""
+        return f"http_status_{exc.response.status_code}{suffix}"
     if isinstance(exc, json.JSONDecodeError):
         return "invalid_json_response"
     return exc.__class__.__name__
+
+
+def _response_text_snippet(response: httpx.Response, *, limit: int = 300) -> str:
+    text = response.text.strip()
+    if not text:
+        return ""
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
 
 
 def _env_with_fallback(name: str, fallback_name: str) -> str:
