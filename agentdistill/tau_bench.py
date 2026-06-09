@@ -718,13 +718,13 @@ def parse_tau_tool_calls(content: str | None) -> list[dict[str, Any]]:
 def _candidate_json_payloads(text: str) -> list[Any]:
     decoder = json.JSONDecoder()
     payloads: list[Any] = []
-    if text.startswith("{"):
+    if text.startswith("{") or text.startswith("["):
         try:
             payload, _ = decoder.raw_decode(text)
             payloads.append(payload)
         except json.JSONDecodeError:
             pass
-    for match in re.finditer(r"\{", text):
+    for match in re.finditer(r"[\{\[]", text):
         if match.start() == 0:
             continue
         try:
@@ -736,17 +736,20 @@ def _candidate_json_payloads(text: str) -> list[Any]:
 
 
 def _parse_tau_tool_payload(payload: Any) -> list[dict[str, Any]]:
-    if not isinstance(payload, dict):
-        return []
-    try:
-        json.dumps(payload)
-    except (TypeError, ValueError):
-        return []
     candidates: list[Any] = []
-    if isinstance(payload.get("tool_call"), dict):
-        candidates = [payload["tool_call"]]
-    elif isinstance(payload.get("tool_calls"), list):
-        candidates = payload["tool_calls"]
+    if isinstance(payload, list):
+        candidates = payload
+    elif isinstance(payload, dict):
+        try:
+            json.dumps(payload)
+        except (TypeError, ValueError):
+            return []
+        if isinstance(payload.get("tool_call"), dict):
+            candidates = [payload["tool_call"]]
+        elif isinstance(payload.get("tool_calls"), list):
+            candidates = payload["tool_calls"]
+    else:
+        return []
     parsed = []
     for candidate in candidates:
         if not isinstance(candidate, dict):

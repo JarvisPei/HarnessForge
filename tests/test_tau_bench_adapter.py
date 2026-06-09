@@ -177,6 +177,22 @@ def test_parse_tau_tool_call_extracts_embedded_tool_json() -> None:
     assert parse_tau_tool_calls(payload) == [{"name": "get_user_details", "arguments": {"user_id": "u1"}}]
 
 
+def test_parse_tau_tool_call_extracts_copied_tool_call_array() -> None:
+    payload = """Assistant tool call:
+[
+  {
+    "id": "call_1",
+    "name": "cancel_reservation",
+    "arguments": {
+      "reservation_id": "R1"
+    },
+    "requestor": "assistant"
+  }
+]"""
+
+    assert parse_tau_tool_calls(payload) == [{"name": "cancel_reservation", "arguments": {"reservation_id": "R1"}}]
+
+
 def test_parse_tau_tool_call_ignores_embedded_non_tool_json() -> None:
     payload = 'The profile is {"user_id": "u1"} and no tool is needed.'
 
