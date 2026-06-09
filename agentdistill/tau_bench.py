@@ -828,7 +828,41 @@ def build_tau_teacher_context(traces: list[dict[str, Any]], *, max_traces: int =
             "blind_final": "official test split after the harness is frozen",
         },
         "tau_bench_failure_digest": digest,
+        "tau_domain_policy_evidence": build_tau_domain_policy_evidence(traces, max_traces=max_traces),
         "tau_runtime_evidence": build_tau_runtime_evidence(traces, max_traces=max_traces),
+    }
+
+
+def build_tau_domain_policy_evidence(
+    traces: list[dict[str, Any]],
+    *,
+    max_traces: int = 5,
+    max_chars_per_trace: int = 6000,
+) -> dict[str, Any]:
+    """Expose task policy excerpts needed to interpret tau-bench trace failures."""
+
+    trace_evidence: list[dict[str, Any]] = []
+    for trace in traces[:max_traces]:
+        policy = _trace_domain_policy(trace)
+        if not policy:
+            continue
+        excerpt = _extract_tau_policy_excerpt(policy, trace=trace, max_chars=max_chars_per_trace)
+        if excerpt:
+            trace_evidence.append(
+                {
+                    "task_id": trace.get("task_id"),
+                    "domain": trace.get("domain"),
+                    "split": trace.get("split"),
+                    **excerpt,
+                }
+            )
+    return {
+        "schema": "harnessforge.tau_domain_policy_evidence.v1",
+        "traces": trace_evidence,
+        "notes": [
+            "These excerpts come from the official tau-bench domain policy attached to the train trace.",
+            "Use current_time and selected policy sections to interpret tool results; do not use wall-clock time.",
+        ],
     }
 
 
@@ -973,6 +1007,108 @@ def _truncate_text(text: str, limit: int) -> str:
     return text[: limit - 3] + "..."
 
 
+def _trace_domain_policy(trace: dict[str, Any]) -> str:
+    raw = trace.get("raw")
+    if isinstance(raw, dict) and isinstance(raw.get("policy"), str):
+        return raw["policy"]
+    policy = trace.get("policy")
+    return policy if isinstance(policy, str) else ""
+
+
+def _extract_tau_policy_excerpt(policy: str, *, trace: dict[str, Any], max_chars: int) -> dict[str, Any]:
+    current_time = _extract_tau_current_time(policy)
+    keywords = _tau_policy_keywords(trace)
+    sections = _split_tau_policy_sections(policy)
+    selected_sections: list[dict[str, str]] = []
+    for section in sections:
+        heading = section["heading"].lower()
+        text = section["text"].lower()
+        if section["heading"] == "preamble":
+            continue
+        if any(keyword in heading for keyword in keywords):
+            selected_sections.append(section)
+            continue
+        if any(keyword in text for keyword in keywords if keyword not in {"flight", "reservation", "user"}):
+            selected_sections.append(section)
+    if not selected_sections and sections:
+        selected_sections = sections[:1]
+
+    excerpt_parts: list[str] = []
+    if current_time:
+        excerpt_parts.append(f"Current time: {current_time}")
+    preamble = next((section["text"] for section in sections if section["heading"] == "preamble"), "")
+    if preamble:
+        excerpt_parts.append(_truncate_text(preamble.strip(), 1200))
+    for section in selected_sections[:4]:
+        excerpt_parts.append(_truncate_text(section["text"].strip(), 1800))
+    excerpt = _truncate_text("\n\n".join(part for part in excerpt_parts if part), max_chars)
+    return {
+        "current_time": current_time,
+        "selected_keywords": keywords,
+        "policy_excerpt": excerpt,
+    }
+
+
+def _extract_tau_current_time(policy: str) -> str | None:
+    match = re.search(r"The current time is\s+([^\n.]+(?:\s+[A-Z]{2,4})?)", policy)
+    if match:
+        return match.group(1).strip()
+    return None
+
+
+def _tau_policy_keywords(trace: dict[str, Any]) -> list[str]:
+    text_parts: list[str] = []
+    for message in _trace_messages(trace):
+        content = _message_content(message)
+        if content:
+            text_parts.append(content)
+        tool_calls = message.get("tool_calls")
+        if isinstance(tool_calls, list):
+            for tool_call in tool_calls:
+                if isinstance(tool_call, dict) and isinstance(tool_call.get("name"), str):
+                    text_parts.append(tool_call["name"].replace("_", " "))
+    for check in _trace_action_checks(trace):
+        action = check.get("action")
+        if isinstance(action, dict) and isinstance(action.get("name"), str):
+            text_parts.append(action["name"].replace("_", " "))
+    text = " ".join(text_parts).lower()
+    ordered = [
+        "cancel",
+        "book",
+        "modify",
+        "refund",
+        "compensation",
+        "baggage",
+        "insurance",
+        "passenger",
+        "cabin",
+        "payment",
+        "reservation",
+        "flight",
+        "user",
+    ]
+    keywords = [keyword for keyword in ordered if keyword in text]
+    action_keywords = [keyword for keyword in keywords if keyword not in {"reservation", "flight", "user", "payment"}]
+    return action_keywords or keywords[:4] or ["policy"]
+
+
+def _split_tau_policy_sections(policy: str) -> list[dict[str, str]]:
+    sections: list[dict[str, str]] = []
+    current_heading = "preamble"
+    current_lines: list[str] = []
+    for line in policy.splitlines():
+        if line.startswith("## "):
+            if current_lines:
+                sections.append({"heading": current_heading, "text": "\n".join(current_lines).strip()})
+            current_heading = line[3:].strip()
+            current_lines = [line]
+        else:
+            current_lines.append(line)
+    if current_lines:
+        sections.append({"heading": current_heading, "text": "\n".join(current_lines).strip()})
+    return sections
+
+
 def _summarize_tau_trace(trace: dict[str, Any]) -> dict[str, Any]:
     messages = _trace_messages(trace)
     assistant_texts = [_message_content(message) for message in messages if _message_role(message) == "assistant"]
@@ -1008,6 +1144,7 @@ def _summarize_tau_trace(trace: dict[str, Any]) -> dict[str, Any]:
         "runtime_policy_denial_count": len(runtime_policy_denials),
         "runtime_policy_denials": runtime_policy_denials[:5],
         "failure_modes": failure_modes,
+        "action_check_summary": _trace_action_check_summary(trace),
         "repeated_assistant_messages": repeated,
         "observed_user_identifiers": user_identifiers[:8],
         "first_user_message": user_texts[0] if user_texts else None,
@@ -1067,6 +1204,46 @@ def _trace_tool_call_names(messages: list[Any]) -> list[str]:
             if isinstance(name, str):
                 names.append(name)
     return names
+
+
+def _trace_action_checks(trace: dict[str, Any]) -> list[dict[str, Any]]:
+    reward_info = trace.get("reward_info")
+    if not isinstance(reward_info, dict):
+        return []
+    action_checks = reward_info.get("action_checks")
+    return [check for check in action_checks if isinstance(check, dict)] if isinstance(action_checks, list) else []
+
+
+def _trace_action_check_summary(trace: dict[str, Any]) -> dict[str, Any]:
+    checks = _trace_action_checks(trace)
+    failed: list[dict[str, Any]] = []
+    matched_counts: Counter[str] = Counter()
+    failed_counts: Counter[str] = Counter()
+    for check in checks:
+        action = check.get("action")
+        if not isinstance(action, dict):
+            continue
+        name = action.get("name")
+        if not isinstance(name, str):
+            continue
+        if check.get("action_match") is True:
+            matched_counts[name] += 1
+            continue
+        failed_counts[name] += 1
+        failed.append(
+            {
+                "name": name,
+                "arguments": action.get("arguments"),
+                "tool_type": check.get("tool_type"),
+                "action_match": check.get("action_match"),
+                "action_reward": check.get("action_reward"),
+            }
+        )
+    return {
+        "matched_action_counts": dict(sorted(matched_counts.items())),
+        "failed_action_counts": dict(sorted(failed_counts.items())),
+        "failed_actions": failed[:12],
+    }
 
 
 def _trace_runtime_policy_counts(messages: list[dict[str, Any]]) -> Counter[str]:

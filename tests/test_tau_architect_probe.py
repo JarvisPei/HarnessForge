@@ -23,7 +23,44 @@ def _trace(task_id: str = "39") -> dict:
         "split": "train",
         "task_id": task_id,
         "termination_reason": "timeout",
-        "reward_info": {"reward": 0.0},
+        "reward_info": {
+            "reward": 0.0,
+            "action_checks": [
+                {
+                    "action": {
+                        "action_id": f"{task_id}_0",
+                        "name": "get_user_details",
+                        "arguments": {"user_id": "u1"},
+                    },
+                    "action_match": True,
+                    "action_reward": 1.0,
+                    "tool_type": "read",
+                },
+                {
+                    "action": {
+                        "action_id": f"{task_id}_1",
+                        "name": "cancel_reservation",
+                        "arguments": {"reservation_id": "R1"},
+                    },
+                    "action_match": False,
+                    "action_reward": 0.0,
+                    "tool_type": "write",
+                },
+            ],
+        },
+        "raw": {
+            "policy": (
+                "# Airline Agent Policy\n\n"
+                "The current time is 2024-05-15 15:00:00 EST.\n\n"
+                "Before taking database actions, obtain explicit confirmation.\n\n"
+                "## Cancel flight\n\n"
+                "First, obtain the user id and reservation id. If the user does not know reservation ids, "
+                "help locate them using available tools. If any portion has already been flown, transfer is needed. "
+                "Otherwise, a flight can be cancelled when policy conditions are met.\n\n"
+                "## Book flight\n\n"
+                "Booking instructions omitted."
+            )
+        },
         "messages": [
             {"role": "user", "content": "Cancel every upcoming flight.", "turn_idx": 1},
             {
@@ -75,6 +112,19 @@ def test_build_tau_architect_context_minimal_keeps_forced_tool_and_tail() -> Non
         ("39", "failed_trace_tail"),
     ]
     assert context["repair_intent"]["preferred_capability"].startswith("stateful runtime policy")
+
+
+def test_build_tau_architect_context_includes_policy_and_failed_actions() -> None:
+    context = build_tau_architect_context([_trace()], context_mode="minimal")
+
+    policy_trace = context["tau_domain_policy_evidence"]["traces"][0]
+    assert policy_trace["current_time"] == "2024-05-15 15:00:00 EST"
+    assert "## Cancel flight" in policy_trace["policy_excerpt"]
+
+    action_summary = context["tau_bench_failure_digest"]["traces"][0]["action_check_summary"]
+    assert action_summary["matched_action_counts"] == {"get_user_details": 1}
+    assert action_summary["failed_action_counts"] == {"cancel_reservation": 1}
+    assert action_summary["failed_actions"][0]["arguments"] == {"reservation_id": "R1"}
 
 
 def test_model_settings_overrides_can_disable_reasoning() -> None:
