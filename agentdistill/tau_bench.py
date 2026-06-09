@@ -829,7 +829,51 @@ def build_tau_teacher_context(traces: list[dict[str, Any]], *, max_traces: int =
         },
         "tau_bench_failure_digest": digest,
         "tau_domain_policy_evidence": build_tau_domain_policy_evidence(traces, max_traces=max_traces),
+        "tau_action_decision_evidence": build_tau_action_decision_evidence(traces, max_traces=max_traces),
         "tau_runtime_evidence": build_tau_runtime_evidence(traces, max_traces=max_traces),
+    }
+
+
+def build_tau_action_decision_evidence(
+    traces: list[dict[str, Any]],
+    *,
+    max_traces: int = 5,
+    max_failed_actions_per_trace: int = 8,
+) -> dict[str, Any]:
+    """Expose compact evidence for failed expected write/read actions."""
+
+    trace_evidence: list[dict[str, Any]] = []
+    for trace in traces[:max_traces]:
+        failed_actions = _trace_action_check_summary(trace)["failed_actions"]
+        if not failed_actions:
+            continue
+        observations = _trace_tool_result_observations(trace)
+        action_items: list[dict[str, Any]] = []
+        for action in failed_actions[:max_failed_actions_per_trace]:
+            related = _related_tau_tool_observations(action, observations)
+            action_items.append(
+                {
+                    "failed_action": action,
+                    "related_tool_results": related[:3],
+                }
+            )
+        trace_evidence.append(
+            {
+                "task_id": trace.get("task_id"),
+                "domain": trace.get("domain"),
+                "split": trace.get("split"),
+                "observed_tool_argument_shapes": _trace_observed_tool_argument_shapes(trace),
+                "failed_actions": action_items,
+            }
+        )
+    return {
+        "schema": "harnessforge.tau_action_decision_evidence.v1",
+        "traces": trace_evidence,
+        "notes": [
+            "Failed actions come from official train reward action_checks.",
+            "Related tool results are matched from the same trace by shared action arguments such as reservation_id.",
+            "Use this to design general state/action policies, not to hard-code ids.",
+        ],
     }
 
 
@@ -1245,6 +1289,89 @@ def _trace_action_check_summary(trace: dict[str, Any]) -> dict[str, Any]:
         "failed_action_counts": dict(sorted(failed_counts.items())),
         "failed_actions": failed[:12],
     }
+
+
+def _trace_tool_result_observations(trace: dict[str, Any]) -> list[dict[str, Any]]:
+    observations: list[dict[str, Any]] = []
+    pending_calls: list[dict[str, Any]] = []
+    for message in _trace_messages(trace):
+        tool_calls = message.get("tool_calls")
+        if isinstance(tool_calls, list):
+            for call in tool_calls:
+                if isinstance(call, dict):
+                    pending_calls.append(
+                        {
+                            "tool_name": call.get("name"),
+                            "tool_input": call.get("arguments"),
+                        }
+                    )
+        if _message_role(message) != "tool":
+            continue
+        call = pending_calls.pop(0) if pending_calls else {}
+        content = message.get("content")
+        parsed = _parse_jsonish_text(content) if isinstance(content, str) else content
+        observations.append(
+            {
+                "tool_name": call.get("tool_name"),
+                "tool_input": call.get("tool_input"),
+                "tool_result": _compact_tau_observation(parsed),
+            }
+        )
+    return observations
+
+
+def _related_tau_tool_observations(action: dict[str, Any], observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    arguments = action.get("arguments")
+    if not isinstance(arguments, dict) or not arguments:
+        return []
+    related: list[dict[str, Any]] = []
+    for observation in observations:
+        haystack = json.dumps(observation, ensure_ascii=False, separators=(",", ":"))
+        if any(str(value) in haystack for value in arguments.values() if value is not None):
+            related.append(observation)
+    return related
+
+
+def _trace_observed_tool_argument_shapes(trace: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
+    shapes: dict[str, list[dict[str, str]]] = {}
+    for message in _trace_messages(trace):
+        tool_calls = message.get("tool_calls")
+        if not isinstance(tool_calls, list):
+            continue
+        for call in tool_calls:
+            if not isinstance(call, dict) or not isinstance(call.get("name"), str):
+                continue
+            shape = _argument_shape(call.get("arguments"))
+            if shape not in shapes.setdefault(call["name"], []):
+                shapes[call["name"]].append(shape)
+    for check in _trace_action_checks(trace):
+        action = check.get("action")
+        if not isinstance(action, dict) or not isinstance(action.get("name"), str):
+            continue
+        shape = _argument_shape(action.get("arguments"))
+        if shape not in shapes.setdefault(action["name"], []):
+            shapes[action["name"]].append(shape)
+    return {name: values[:4] for name, values in sorted(shapes.items())}
+
+
+def _argument_shape(arguments: Any) -> dict[str, str]:
+    if not isinstance(arguments, dict):
+        return {}
+    return {str(key): type(value).__name__ for key, value in sorted(arguments.items())}
+
+
+def _parse_jsonish_text(text: str) -> Any:
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return text
+
+
+def _compact_tau_observation(value: Any, *, max_chars: int = 2400) -> Any:
+    text = json.dumps(value, ensure_ascii=False, separators=(",", ":")) if not isinstance(value, str) else value
+    if len(text) <= max_chars:
+        return value
+    return {"truncated_json": _truncate_text(text, max_chars)}
 
 
 def _trace_runtime_policy_counts(messages: list[dict[str, Any]]) -> Counter[str]:

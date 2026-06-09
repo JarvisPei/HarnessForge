@@ -126,6 +126,11 @@ def test_build_tau_architect_context_includes_policy_and_failed_actions() -> Non
     assert action_summary["failed_action_counts"] == {"cancel_reservation": 1}
     assert action_summary["failed_actions"][0]["arguments"] == {"reservation_id": "R1"}
 
+    decision_trace = context["tau_action_decision_evidence"]["traces"][0]
+    assert decision_trace["observed_tool_argument_shapes"]["cancel_reservation"] == [{"reservation_id": "str"}]
+    assert decision_trace["failed_actions"][0]["failed_action"]["name"] == "cancel_reservation"
+    assert decision_trace["failed_actions"][0]["related_tool_results"][0]["tool_name"] == "get_user_details"
+
 
 def test_model_settings_overrides_can_disable_reasoning() -> None:
     settings = ModelSettings(
