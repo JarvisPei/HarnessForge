@@ -272,17 +272,42 @@ def _compact_probe_message(message: dict[str, Any]) -> dict[str, Any]:
         raw_compact: dict[str, Any] = {}
         for key in [
             "runtime_policy_phase",
-            "runtime_policy_results",
             "runtime_policy_denial",
             "runtime_policy_override",
         ]:
             if raw_data.get(key) is not None:
                 raw_compact[key] = raw_data[key]
+        if raw_data.get("runtime_policy_results") is not None:
+            raw_compact["runtime_policy_results"] = _compact_probe_policy_results(raw_data["runtime_policy_results"])
         if raw_data.get("harnessforge_raw") is not None:
             raw_compact["harnessforge_raw"] = _truncate_text(str(raw_data["harnessforge_raw"]), 800)
         if raw_compact:
             compact["raw_data"] = raw_compact
     return compact
+
+
+def _compact_probe_policy_results(results: Any) -> Any:
+    if not isinstance(results, list):
+        return results
+    keep_keys = {
+        "policy",
+        "requires_tool",
+        "tool_name",
+        "tool_input",
+        "deny_tool",
+        "override_response",
+        "assistant_response",
+        "reason",
+        "next_missing_action",
+        "runtime_policy_phase",
+    }
+    compact_results: list[Any] = []
+    for result in results:
+        if not isinstance(result, dict):
+            compact_results.append(result)
+            continue
+        compact_results.append({key: value for key, value in result.items() if key in keep_keys})
+    return compact_results
 
 
 def attach_active_harness_evidence(

@@ -181,6 +181,16 @@ def test_build_tau_architect_context_tail_mode_keeps_contiguous_tail() -> None:
         {"role": "user", "content": f"message {idx}", "turn_idx": idx}
         for idx in range(20)
     ]
+    trace["messages"][-1]["raw_data"] = {
+        "runtime_policy_results": [
+            {
+                "policy": "progress",
+                "requires_tool": False,
+                "reason": "done",
+                "state_summary": {"large": ["x"] * 100},
+            }
+        ]
+    }
 
     context = build_tau_architect_context([trace], context_mode="tail")
 
@@ -189,6 +199,8 @@ def test_build_tau_architect_context_tail_mode_keeps_contiguous_tail() -> None:
     assert windows[0]["window_reason"] == "failed_trace_tail"
     assert windows[0]["messages"][0]["content"] == "message 6"
     assert windows[0]["messages"][-1]["content"] == "message 19"
+    policy_result = windows[0]["messages"][-1]["raw_data"]["runtime_policy_results"][0]
+    assert policy_result == {"policy": "progress", "requires_tool": False, "reason": "done"}
 
 
 def test_attach_active_harness_evidence_reads_referenced_runtime_policy(tmp_path: Path) -> None:
