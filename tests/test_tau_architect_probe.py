@@ -8,6 +8,7 @@ import httpx
 
 from agentdistill.models import ModelSettings
 from agentdistill.tau_architect_probe import (
+    attach_active_harness_evidence,
     _http_error_details,
     _model_settings_with_overrides,
     build_tau_architect_context,
@@ -138,6 +139,26 @@ def test_build_tau_architect_context_decision_mode_drops_runtime_windows() -> No
     assert context["tau_runtime_evidence"]["trace_windows"] == []
     assert context["tau_action_decision_evidence"]["traces"][0]["failed_actions"]
     assert context["tau_domain_policy_evidence"]["traces"][0]["current_time"] == "2024-05-15 15:00:00 EST"
+
+
+def test_attach_active_harness_evidence_reads_referenced_runtime_policy(tmp_path: Path) -> None:
+    repo = tmp_path
+    policy_dir = repo / "harness" / "runtime_policies"
+    policy_dir.mkdir(parents=True)
+    (policy_dir / "candidate_state.py").write_text("def evaluate(input):\n    return {}\n", encoding="utf-8")
+    context = {
+        "tau_bench_failure_digest": {
+            "runtime_policy_counts": {
+                "candidate_state": 3,
+            }
+        }
+    }
+
+    attach_active_harness_evidence(context, repo_root=repo)
+
+    files = context["active_harness_evidence"]["files"]
+    assert files[0]["path"] == "harness/runtime_policies/candidate_state.py"
+    assert "def evaluate" in files[0]["content"]
 
 
 def test_model_settings_overrides_can_disable_reasoning() -> None:

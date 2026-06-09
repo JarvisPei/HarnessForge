@@ -1324,12 +1324,26 @@ def _related_tau_tool_observations(action: dict[str, Any], observations: list[di
     arguments = action.get("arguments")
     if not isinstance(arguments, dict) or not arguments:
         return []
-    related: list[dict[str, Any]] = []
+    exact: list[dict[str, Any]] = []
+    loose: list[dict[str, Any]] = []
     for observation in observations:
+        if _tau_observation_exactly_matches_arguments(observation, arguments):
+            exact.append(observation)
+            continue
         haystack = json.dumps(observation, ensure_ascii=False, separators=(",", ":"))
         if any(str(value) in haystack for value in arguments.values() if value is not None):
-            related.append(observation)
-    return related
+            loose.append(observation)
+    return exact or loose
+
+
+def _tau_observation_exactly_matches_arguments(observation: dict[str, Any], arguments: dict[str, Any]) -> bool:
+    tool_input = observation.get("tool_input")
+    if isinstance(tool_input, dict) and all(tool_input.get(key) == value for key, value in arguments.items()):
+        return True
+    tool_result = observation.get("tool_result")
+    if isinstance(tool_result, dict) and all(tool_result.get(key) == value for key, value in arguments.items()):
+        return True
+    return False
 
 
 def _trace_observed_tool_argument_shapes(trace: dict[str, Any]) -> dict[str, list[dict[str, str]]]:

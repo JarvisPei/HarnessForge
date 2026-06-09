@@ -90,6 +90,7 @@ async def run_tau_architect_probe(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     context = build_tau_architect_context(traces, context_mode=context_mode)
+    attach_active_harness_evidence(context, repo_root=repo_root)
     messages = build_tau_architect_messages(repo_root, context=context, context_mode=context_mode)
     payload = json.loads(messages[1]["content"])
     (output_dir / "teacher_payload.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -202,6 +203,58 @@ def build_tau_architect_context(traces: list[dict[str, Any]], *, context_mode: C
     return context
 
 
+def attach_active_harness_evidence(
+    context: dict[str, Any],
+    *,
+    repo_root: Path,
+    max_files: int = 2,
+    max_chars_per_file: int = 7000,
+    max_total_chars: int = 10000,
+) -> None:
+    """Attach active generated harness files that may affect the saved trace."""
+
+    policy_names = _runtime_policy_names_from_context(context)
+    files: list[dict[str, Any]] = []
+    total_chars = 0
+    for policy_name in policy_names:
+        path = repo_root / "harness" / "runtime_policies" / f"{policy_name}.py"
+        if not path.exists() or not path.is_file():
+            continue
+        content = path.read_text(encoding="utf-8")
+        remaining = max_total_chars - total_chars
+        if remaining <= 0:
+            break
+        limit = min(max_chars_per_file, remaining)
+        files.append(
+            {
+                "path": str(path.relative_to(repo_root)),
+                "type": "runtime_policy",
+                "content": _truncate_text(content, limit),
+            }
+        )
+        total_chars += len(files[-1]["content"])
+        if len(files) >= max_files:
+            break
+    if files:
+        context["active_harness_evidence"] = {
+            "schema": "harnessforge.active_harness_evidence.v1",
+            "files": files,
+            "notes": [
+                "These are active generated harness files present in the experiment workspace.",
+                "Use them to extend or replace existing behavior instead of blindly duplicating policies.",
+            ],
+        }
+
+
+def _runtime_policy_names_from_context(context: dict[str, Any]) -> list[str]:
+    digest = context.get("tau_bench_failure_digest")
+    counts = digest.get("runtime_policy_counts") if isinstance(digest, dict) else None
+    if not isinstance(counts, dict):
+        return []
+    names = [name for name in counts if isinstance(name, str)]
+    return sorted(names, key=lambda name: ("progress" not in name and "cancel" not in name, name))
+
+
 def _select_tau_architect_windows(windows: Any, *, context_mode: ContextMode) -> list[dict[str, Any]]:
     if not isinstance(windows, list):
         return []
@@ -233,6 +286,12 @@ def _select_tau_architect_windows(windows: Any, *, context_mode: ContextMode) ->
             if chosen_for_trace >= limit_per_trace:
                 break
     return selected
+
+
+def _truncate_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
 
 
 def build_tau_architect_messages(
