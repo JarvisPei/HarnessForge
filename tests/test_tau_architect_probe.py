@@ -145,7 +145,11 @@ def test_attach_active_harness_evidence_reads_referenced_runtime_policy(tmp_path
     repo = tmp_path
     policy_dir = repo / "harness" / "runtime_policies"
     policy_dir.mkdir(parents=True)
+    guideline_dir = repo / "harness" / "guidelines"
+    guideline_dir.mkdir(parents=True)
     (policy_dir / "candidate_state.py").write_text("def evaluate(input):\n    return {}\n", encoding="utf-8")
+    (guideline_dir / "base.md").write_text("base", encoding="utf-8")
+    (guideline_dir / "tau_cancel.md").write_text("# tau cancel guideline", encoding="utf-8")
     context = {
         "tau_bench_failure_digest": {
             "runtime_policy_counts": {
@@ -159,6 +163,8 @@ def test_attach_active_harness_evidence_reads_referenced_runtime_policy(tmp_path
     files = context["active_harness_evidence"]["files"]
     assert files[0]["path"] == "harness/runtime_policies/candidate_state.py"
     assert "def evaluate" in files[0]["content"]
+    assert files[1]["path"] == "harness/guidelines/tau_cancel.md"
+    assert files[1]["type"] == "prompt_guideline"
 
 
 def test_model_settings_overrides_can_disable_reasoning() -> None:

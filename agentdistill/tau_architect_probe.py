@@ -209,32 +209,40 @@ def attach_active_harness_evidence(
     repo_root: Path,
     max_files: int = 1,
     max_chars_per_file: int = 7000,
-    max_total_chars: int = 7000,
+    max_total_chars: int = 9000,
 ) -> None:
     """Attach active generated harness files that may affect the saved trace."""
 
-    policy_names = _runtime_policy_names_from_context(context)
     files: list[dict[str, Any]] = []
     total_chars = 0
+    policy_names = _runtime_policy_names_from_context(context)
     for policy_name in policy_names:
         path = repo_root / "harness" / "runtime_policies" / f"{policy_name}.py"
-        if not path.exists() or not path.is_file():
-            continue
-        content = path.read_text(encoding="utf-8")
-        remaining = max_total_chars - total_chars
-        if remaining <= 0:
-            break
-        limit = min(max_chars_per_file, remaining)
-        files.append(
-            {
-                "path": str(path.relative_to(repo_root)),
-                "type": "runtime_policy",
-                "content": _truncate_text(content, limit),
-            }
+        total_chars = _append_harness_file(
+            files,
+            path=path,
+            repo_root=repo_root,
+            artifact_type="runtime_policy",
+            total_chars=total_chars,
+            max_total_chars=max_total_chars,
+            max_chars_per_file=max_chars_per_file,
         )
-        total_chars += len(files[-1]["content"])
         if len(files) >= max_files:
             break
+    guideline_root = repo_root / "harness" / "guidelines"
+    for path in sorted(guideline_root.glob("*.md")) if guideline_root.exists() else []:
+        if path.name == "base.md":
+            continue
+        total_chars = _append_harness_file(
+            files,
+            path=path,
+            repo_root=repo_root,
+            artifact_type="prompt_guideline",
+            total_chars=total_chars,
+            max_total_chars=max_total_chars,
+            max_chars_per_file=3000,
+        )
+        break
     if files:
         context["active_harness_evidence"] = {
             "schema": "harnessforge.active_harness_evidence.v1",
@@ -253,6 +261,33 @@ def _runtime_policy_names_from_context(context: dict[str, Any]) -> list[str]:
         return []
     names = [name for name in counts if isinstance(name, str)]
     return sorted(names, key=lambda name: ("progress" not in name and "cancel" not in name, name))
+
+
+def _append_harness_file(
+    files: list[dict[str, Any]],
+    *,
+    path: Path,
+    repo_root: Path,
+    artifact_type: str,
+    total_chars: int,
+    max_total_chars: int,
+    max_chars_per_file: int,
+) -> int:
+    if not path.exists() or not path.is_file():
+        return total_chars
+    remaining = max_total_chars - total_chars
+    if remaining <= 0:
+        return total_chars
+    content = path.read_text(encoding="utf-8")
+    limit = min(max_chars_per_file, remaining)
+    files.append(
+        {
+            "path": str(path.relative_to(repo_root)),
+            "type": artifact_type,
+            "content": _truncate_text(content, limit),
+        }
+    )
+    return total_chars + len(files[-1]["content"])
 
 
 def _select_tau_architect_windows(windows: Any, *, context_mode: ContextMode) -> list[dict[str, Any]]:
