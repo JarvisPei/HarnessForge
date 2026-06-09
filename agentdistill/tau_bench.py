@@ -1038,7 +1038,7 @@ def _extract_tau_policy_excerpt(policy: str, *, trace: dict[str, Any], max_chars
         excerpt_parts.append(f"Current time: {current_time}")
     preamble = next((section["text"] for section in sections if section["heading"] == "preamble"), "")
     if preamble:
-        excerpt_parts.append(_truncate_text(preamble.strip(), 1200))
+        excerpt_parts.append(_truncate_text(preamble.strip(), 800))
     for section in selected_sections[:4]:
         excerpt_parts.append(_truncate_text(section["text"].strip(), 1800))
     excerpt = _truncate_text("\n\n".join(part for part in excerpt_parts if part), max_chars)
@@ -1059,8 +1059,9 @@ def _extract_tau_current_time(policy: str) -> str | None:
 def _tau_policy_keywords(trace: dict[str, Any]) -> list[str]:
     text_parts: list[str] = []
     for message in _trace_messages(trace):
+        role = _message_role(message)
         content = _message_content(message)
-        if content:
+        if role in {"user", "assistant"} and content:
             text_parts.append(content)
         tool_calls = message.get("tool_calls")
         if isinstance(tool_calls, list):
