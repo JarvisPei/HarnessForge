@@ -157,6 +157,48 @@ def test_resolve_optional_repo_path_preserves_absolute(tmp_path: Path) -> None:
     assert _resolve_optional_repo_path(Path("/repo"), absolute) == absolute
 
 
+def test_tau_smoke_accepts_harness_directory_overrides(monkeypatch, tmp_path: Path) -> None:
+    captured = {}
+
+    def fake_run_tau_bench_smoke(**kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr("agentdistill.tau_bench.run_tau_bench_smoke", fake_run_tau_bench_smoke)
+    monkeypatch.setattr("agentdistill.tau_bench.load_dotenv", lambda override=True: None)
+
+    import agentdistill.tau_bench as tau_bench
+
+    from agentdistill.tau_bench import smoke
+
+    smoke(
+        domain="airline",
+        split="train",
+        num_tasks=1,
+        task_ids=None,
+        task_set_name=None,
+        user_llm="gpt-5.5",
+        profile=None,
+        output_dir=tmp_path / "out",
+        runtime_policies_dir=Path("harness/runtime_policies"),
+        skills_dir=Path("harness/skills"),
+        guidelines_dir=Path("harness/guidelines"),
+        validators_dir=Path("harness/validators"),
+        max_steps=3,
+        max_errors=1,
+        timeout=10.0,
+        seed=7,
+        user_llm_shim=False,
+    )
+
+    settings = captured["settings"]
+    repo_root = Path(tau_bench.__file__).resolve().parent.parent
+    assert settings.runtime_policies_dir == (repo_root / "harness/runtime_policies").resolve()
+    assert settings.skills_dir == (repo_root / "harness/skills").resolve()
+    assert settings.guidelines_dir == (repo_root / "harness/guidelines").resolve()
+    assert settings.validators_dir == (repo_root / "harness/validators").resolve()
+
+
 def test_parse_tau_tool_call_accepts_arguments() -> None:
     payload = '{"tool_call": {"name": "get_order", "arguments": {"order_id": "O-1"}}}'
 

@@ -58,6 +58,21 @@ def smoke(
         "--runtime-policies-dir",
         help="Override harness runtime policy directory for isolated tau policy ablations.",
     ),
+    skills_dir: Path | None = typer.Option(
+        None,
+        "--skills-dir",
+        help="Override harness skills directory for isolated tau ablations.",
+    ),
+    guidelines_dir: Path | None = typer.Option(
+        None,
+        "--guidelines-dir",
+        help="Override harness guidelines directory for isolated tau ablations.",
+    ),
+    validators_dir: Path | None = typer.Option(
+        None,
+        "--validators-dir",
+        help="Override harness validators directory for isolated tau ablations.",
+    ),
     max_steps: int = typer.Option(80, "--max-steps", min=1),
     max_errors: int = typer.Option(5, "--max-errors", min=1),
     timeout: float | None = typer.Option(600.0, "--timeout"),
@@ -76,6 +91,9 @@ def smoke(
     settings = TauHarnessSettings(
         repo_root=repo_root,
         profile=profile,
+        skills_dir=_resolve_optional_repo_path(repo_root, skills_dir),
+        guidelines_dir=_resolve_optional_repo_path(repo_root, guidelines_dir),
+        validators_dir=_resolve_optional_repo_path(repo_root, validators_dir),
         runtime_policies_dir=_resolve_optional_repo_path(repo_root, runtime_policies_dir),
     )
     try:
