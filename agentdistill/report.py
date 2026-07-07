@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -90,6 +91,7 @@ def build_tau_run_report(run_dir: Path, output_path: Path | None = None) -> dict
 
 def _tau_trace_report_row(run_dir: Path, trace_summary: dict[str, Any]) -> dict[str, Any]:
     trace = _load_tau_trace(run_dir, trace_summary)
+    error_info = _tau_error_info(trace, trace_summary)
     reward_info = trace_summary.get("reward_info")
     if not isinstance(reward_info, dict):
         reward_info = trace.get("reward_info") if isinstance(trace.get("reward_info"), dict) else {}
@@ -125,6 +127,9 @@ def _tau_trace_report_row(run_dir: Path, trace_summary: dict[str, Any]) -> dict[
             for call in actual_tool_calls
             if call.get("name") == "cancel_reservation" and isinstance(call.get("arguments"), dict)
         ],
+        "error_type": error_info.get("type"),
+        "error_category": _tau_error_category(error_info),
+        "error_message": _truncate_text(error_info.get("message"), limit=300),
         "path": trace_summary.get("path"),
     }
 
@@ -133,6 +138,10 @@ def _tau_aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     rewards = [row["official_reward"] for row in rows if isinstance(row.get("official_reward"), (int, float))]
     strict_rows = [row for row in rows if row.get("strict_action_pass") is not None]
     official_passed = sum(1 for row in rows if row.get("official_pass") is True)
+    adapter_error_rows = [row for row in rows if row.get("termination_reason") == "adapter_error"]
+    error_categories = Counter(
+        row.get("error_category") for row in adapter_error_rows if isinstance(row.get("error_category"), str)
+    )
     return {
         "num_tasks": len(rows),
         "official_passed": official_passed,
@@ -140,6 +149,8 @@ def _tau_aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "official_reward_sum": round(float(sum(rewards)), 4),
         "official_reward_mean": round(float(sum(rewards) / len(rewards)), 4) if rewards else None,
         "timeouts": sum(1 for row in rows if row.get("termination_reason") == "timeout"),
+        "adapter_errors": len(adapter_error_rows),
+        "adapter_error_categories": dict(sorted(error_categories.items())),
         "strict_action_evaluated": len(strict_rows),
         "strict_action_passed": sum(1 for row in strict_rows if row.get("strict_action_pass") is True),
         "strict_action_unmatched_tasks": sum(1 for row in strict_rows if row.get("strict_action_pass") is False),
@@ -165,6 +176,37 @@ def _load_tau_trace(run_dir: Path, trace_summary: dict[str, Any]) -> dict[str, A
     except json.JSONDecodeError:
         return {}
     return trace if isinstance(trace, dict) else {}
+
+
+def _tau_error_info(trace: dict[str, Any], trace_summary: dict[str, Any]) -> dict[str, Any]:
+    error = trace.get("error")
+    if not isinstance(error, dict):
+        error = trace_summary.get("error")
+    return error if isinstance(error, dict) else {}
+
+
+def _tau_error_category(error: dict[str, Any]) -> str | None:
+    error_type = str(error.get("type") or "")
+    message = str(error.get("message") or "")
+    lowered = f"{error_type} {message}".lower()
+    if not lowered.strip():
+        return None
+    if "httpstatuserror" in lowered or "transporterror" in lowered or "timeout" in lowered:
+        return "model_transport"
+    if "empty_response" in lowered or "no response received from upstream" in lowered:
+        return "model_transport"
+    if "usermessage must have either content or tool_calls" in lowered:
+        return "user_simulator_empty_message"
+    return "adapter_error"
+
+
+def _truncate_text(value: Any, *, limit: int) -> str | None:
+    if value is None:
+        return None
+    text = " ".join(str(value).split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
 
 
 def _tau_actual_tool_calls(trace: dict[str, Any]) -> list[dict[str, Any]]:

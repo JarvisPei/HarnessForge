@@ -141,3 +141,41 @@ def test_tau_run_report_counts_write_tool_calls(tmp_path: Path) -> None:
     assert report["aggregate"]["actual_write_tool_calls"] == 2
     assert report["tasks"][0]["actual_write_tool_names"] == ["cancel_reservation", "transfer_to_human_agents"]
     assert report["tasks"][0]["actual_cancel_reservation_ids"] == ["R1"]
+
+
+def test_tau_run_report_summarizes_adapter_error_categories(tmp_path: Path) -> None:
+    run_dir = tmp_path / "tau_run"
+    run_dir.mkdir()
+    summary = {
+        "domain": "airline",
+        "split": "train",
+        "task_ids": ["0"],
+        "traces": [
+            {
+                "task_id": "0",
+                "termination_reason": "adapter_error",
+                "path": "0.json",
+                "reward_info": None,
+            }
+        ],
+    }
+    trace = {
+        "task_id": "0",
+        "termination_reason": "adapter_error",
+        "reward_info": None,
+        "messages": [],
+        "error": {
+            "type": "HTTPStatusError",
+            "message": "Server error '500 Internal Server Error': no response received from upstream stream",
+        },
+    }
+    (run_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+    (run_dir / "0.json").write_text(json.dumps(trace), encoding="utf-8")
+
+    report = build_tau_run_report(run_dir)
+
+    assert report["aggregate"]["adapter_errors"] == 1
+    assert report["aggregate"]["adapter_error_categories"] == {"model_transport": 1}
+    assert report["tasks"][0]["error_type"] == "HTTPStatusError"
+    assert report["tasks"][0]["error_category"] == "model_transport"
+    assert "500 Internal Server Error" in report["tasks"][0]["error_message"]
