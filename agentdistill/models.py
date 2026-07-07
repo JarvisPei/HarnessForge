@@ -12,7 +12,7 @@ import httpx
 
 Role = Literal["weak", "teacher", "critic"]
 Provider = Literal["openai", "anthropic"]
-OpenAIAPIStyle = Literal["chat", "responses"]
+OpenAIAPIStyle = Literal["chat", "chat_stream", "responses"]
 
 
 @dataclass(frozen=True)
@@ -41,8 +41,8 @@ class ChatClient:
     async def _complete_openai(self, messages: list[dict[str, str]], temperature: float) -> str:
         if self.settings.api_style == "responses":
             return await self._complete_openai_responses(messages, temperature)
-        if self.settings.api_style != "chat":
-            raise RuntimeError(f"OpenAI API style must be chat or responses, got: {self.settings.api_style}")
+        if self.settings.api_style not in {"chat", "chat_stream"}:
+            raise RuntimeError(f"OpenAI API style must be chat, chat_stream, or responses, got: {self.settings.api_style}")
         url = self.settings.base_url.rstrip("/") + "/chat/completions"
         payload: dict[str, Any] = {
             "model": self.settings.model,
@@ -55,6 +55,9 @@ class ChatClient:
             "Authorization": f"Bearer {self.settings.api_key}",
             "Content-Type": "application/json",
         }
+        if self.settings.api_style == "chat_stream":
+            payload["stream"] = True
+            return await self._post_openai_chat_stream_with_retries(url, headers, payload)
         data = await self._post_json_with_retries(url, headers, payload)
         return data["choices"][0]["message"]["content"]
 
@@ -127,6 +130,41 @@ class ChatClient:
             response.raise_for_status()
             return response.json()
 
+    async def _post_openai_chat_stream_with_retries(
+        self, url: str, headers: dict[str, str], payload: dict[str, Any]
+    ) -> str:
+        attempts = self.settings.max_retries + 1
+        for attempt in range(attempts):
+            try:
+                return await self._post_openai_chat_stream_once(url, headers, payload)
+            except (httpx.HTTPStatusError, httpx.TimeoutException, httpx.TransportError, json.JSONDecodeError) as exc:
+                if attempt >= self.settings.max_retries or not _is_retryable_error(exc):
+                    print(
+                        "[model-retry] exhausted "
+                        f"role={self.settings.role} model={self.settings.model} "
+                        f"attempt={attempt + 1}/{attempts} error={_error_summary(exc)}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    raise
+                sleep_seconds = self.settings.retry_backoff_seconds * (2**attempt)
+                print(
+                    "[model-retry] retrying "
+                    f"role={self.settings.role} model={self.settings.model} "
+                    f"attempt={attempt + 1}/{attempts} wait_seconds={sleep_seconds:g} "
+                    f"error={_error_summary(exc)}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                await asyncio.sleep(sleep_seconds)
+        raise RuntimeError("unreachable retry state")
+
+    async def _post_openai_chat_stream_once(self, url: str, headers: dict[str, str], payload: dict[str, Any]) -> str:
+        async with httpx.AsyncClient(timeout=self.settings.timeout_seconds) as client:
+            async with client.stream("POST", url, headers=headers, json=payload) as response:
+                response.raise_for_status()
+                return await _collect_openai_chat_stream_text(response)
+
 
 def load_model_settings(role: Role, profile: str | None = None) -> ModelSettings:
     prefix = role.upper()
@@ -161,8 +199,8 @@ def load_model_settings(role: Role, profile: str | None = None) -> ModelSettings
         f"{prefix}_API_STYLE{suffix}",
         os.getenv(f"{fallback_prefix}_API_STYLE{suffix}", os.getenv("OPENAI_API_STYLE", "chat")),
     ).strip().lower()
-    if api_style not in {"chat", "responses"}:
-        raise RuntimeError(f"{prefix}_API_STYLE{suffix} must be chat or responses, got: {api_style}")
+    if api_style not in {"chat", "chat_stream", "responses"}:
+        raise RuntimeError(f"{prefix}_API_STYLE{suffix} must be chat, chat_stream, or responses, got: {api_style}")
     provider = os.getenv(f"{prefix}_PROVIDER{suffix}", os.getenv(f"{fallback_prefix}_PROVIDER{suffix}", "openai")).lower()
     if provider not in {"openai", "anthropic"}:
         raise RuntimeError(f"{prefix}_PROVIDER{suffix} must be openai or anthropic, got: {provider}")
@@ -208,6 +246,36 @@ def _response_text_snippet(response: httpx.Response, *, limit: int = 300) -> str
     if len(text) <= limit:
         return text
     return text[: limit - 3] + "..."
+
+
+async def _collect_openai_chat_stream_text(response: httpx.Response) -> str:
+    parts: list[str] = []
+    async for line in response.aiter_lines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        event = line.removeprefix("data:").strip()
+        if not event or event == "[DONE]":
+            continue
+        data = json.loads(event)
+        content = _openai_chat_stream_delta_text(data)
+        if content:
+            parts.append(content)
+    return "".join(parts)
+
+
+def _openai_chat_stream_delta_text(data: dict[str, Any]) -> str:
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    choice = choices[0]
+    if not isinstance(choice, dict):
+        return ""
+    delta = choice.get("delta")
+    if not isinstance(delta, dict):
+        return ""
+    content = delta.get("content")
+    return content if isinstance(content, str) else ""
 
 
 def _env_with_fallback(name: str, fallback_name: str) -> str:

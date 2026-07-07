@@ -44,7 +44,7 @@ from agentdistill.patches import patch_group_is_executable
 from agentdistill.prompt_loader import load_teacher_system_prompt
 from agentdistill.repair_efficiency import build_repair_efficiency_report
 from agentdistill.repair_fixture import run_repair_fixture
-from agentdistill.models import ChatClient, ModelSettings, load_model_settings
+from agentdistill.models import ChatClient, ModelSettings, _collect_openai_chat_stream_text, load_model_settings
 from agentdistill.run import run_task
 from agentdistill.teacher_prompt import build_teacher_payload, enrich_benchmark_context
 from agentdistill.tools import RuntimePolicyRegistry, ToolRegistry
@@ -2057,6 +2057,18 @@ def test_load_model_settings_reads_openai_api_style(monkeypatch) -> None:
     assert settings.api_style == "responses"
 
 
+def test_load_model_settings_reads_openai_chat_stream_api_style(monkeypatch) -> None:
+    monkeypatch.setenv("TEACHER_PROVIDER", "openai")
+    monkeypatch.setenv("TEACHER_BASE_URL", "https://example.com")
+    monkeypatch.setenv("TEACHER_API_KEY", "k")
+    monkeypatch.setenv("TEACHER_MODEL", "m")
+    monkeypatch.setenv("TEACHER_API_STYLE", "chat_stream")
+
+    settings = load_model_settings("teacher")
+
+    assert settings.api_style == "chat_stream"
+
+
 def test_load_model_settings_critic_reasoning_effort_falls_back_to_teacher(monkeypatch) -> None:
     monkeypatch.delenv("CRITIC_REASONING_EFFORT", raising=False)
     monkeypatch.setenv("TEACHER_PROVIDER", "openai")
@@ -2259,6 +2271,42 @@ def test_chat_client_extracts_openai_responses_output_text_field(monkeypatch) ->
     )
 
     assert asyncio.run(client.complete([{"role": "user", "content": "hi"}])) == "direct output"
+
+
+def test_chat_client_uses_openai_chat_stream_when_configured(monkeypatch) -> None:
+    captured = {}
+
+    async def fake_stream_once(self, url, headers, payload):
+        captured["url"] = url
+        captured["payload"] = payload
+        return "streamed text"
+
+    monkeypatch.setattr(ChatClient, "_post_openai_chat_stream_once", fake_stream_once)
+    client = ChatClient(
+        ModelSettings(
+            role="teacher",
+            provider="openai",
+            base_url="https://example.com/v1",
+            api_key="k",
+            model="m",
+            api_style="chat_stream",
+        )
+    )
+
+    assert asyncio.run(client.complete([{"role": "user", "content": "hi"}])) == "streamed text"
+    assert captured["url"] == "https://example.com/v1/chat/completions"
+    assert captured["payload"]["stream"] is True
+
+
+def test_collect_openai_chat_stream_text_joins_delta_content() -> None:
+    class FakeStreamResponse:
+        async def aiter_lines(self):
+            yield 'data: {"choices":[{"delta":{"role":"assistant","content":""},"index":0}]}'
+            yield 'data: {"choices":[{"delta":{"content":"OK"},"index":0}]}'
+            yield 'data: {"choices":[{"delta":{"content":" done"},"index":0}]}'
+            yield "data: [DONE]"
+
+    assert asyncio.run(_collect_openai_chat_stream_text(FakeStreamResponse())) == "OK done"
 
 
 def test_chat_client_does_not_retry_bad_request(monkeypatch) -> None:

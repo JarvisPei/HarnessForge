@@ -340,8 +340,8 @@ def _tau_user_model_settings(model: str) -> ModelSettings:
 
 def _tau_user_api_style() -> str:
     api_style = os.getenv("TAU_USER_API_STYLE", os.getenv("OPENAI_API_STYLE", "chat")).strip().lower()
-    if api_style not in {"chat", "responses"}:
-        raise RuntimeError(f"TAU_USER_API_STYLE must be chat or responses, got: {api_style}")
+    if api_style not in {"chat", "chat_stream", "responses"}:
+        raise RuntimeError(f"TAU_USER_API_STYLE must be chat, chat_stream, or responses, got: {api_style}")
     return api_style
 
 
