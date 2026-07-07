@@ -2045,6 +2045,18 @@ def test_load_model_settings_reads_reasoning_effort(monkeypatch) -> None:
     assert settings.reasoning_effort == "high"
 
 
+def test_load_model_settings_reads_openai_api_style(monkeypatch) -> None:
+    monkeypatch.setenv("TEACHER_PROVIDER", "openai")
+    monkeypatch.setenv("TEACHER_BASE_URL", "https://example.com")
+    monkeypatch.setenv("TEACHER_API_KEY", "k")
+    monkeypatch.setenv("TEACHER_MODEL", "m")
+    monkeypatch.setenv("TEACHER_API_STYLE", "responses")
+
+    settings = load_model_settings("teacher")
+
+    assert settings.api_style == "responses"
+
+
 def test_load_model_settings_critic_reasoning_effort_falls_back_to_teacher(monkeypatch) -> None:
     monkeypatch.delenv("CRITIC_REASONING_EFFORT", raising=False)
     monkeypatch.setenv("TEACHER_PROVIDER", "openai")
@@ -2172,6 +2184,81 @@ def test_chat_client_omits_reasoning_effort_when_unset(monkeypatch) -> None:
 
     assert asyncio.run(client.complete([{"role": "user", "content": "hi"}])) == "ok"
     assert "reasoning_effort" not in captured["payload"]
+
+
+def test_chat_client_uses_openai_responses_api_when_configured(monkeypatch) -> None:
+    captured = {}
+
+    async def fake_post_once(self, url, headers, payload):
+        captured["url"] = url
+        captured["payload"] = payload
+        return {
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "ok from responses",
+                        }
+                    ],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(ChatClient, "_post_json_once", fake_post_once)
+    client = ChatClient(
+        ModelSettings(
+            role="teacher",
+            provider="openai",
+            base_url="https://example.com/v1",
+            api_key="k",
+            model="m",
+            reasoning_effort="high",
+            api_style="responses",
+        )
+    )
+
+    result = asyncio.run(
+        client.complete(
+            [
+                {"role": "system", "content": "You are precise."},
+                {"role": "user", "content": "hi"},
+            ],
+            temperature=0.1,
+        )
+    )
+
+    assert result == "ok from responses"
+    assert captured["url"] == "https://example.com/v1/responses"
+    assert captured["payload"] == {
+        "model": "m",
+        "input": [
+            {"role": "system", "content": "You are precise."},
+            {"role": "user", "content": "hi"},
+        ],
+        "temperature": 0.1,
+        "reasoning": {"effort": "high"},
+    }
+
+
+def test_chat_client_extracts_openai_responses_output_text_field(monkeypatch) -> None:
+    async def fake_post_once(self, url, headers, payload):
+        return {"output_text": "direct output"}
+
+    monkeypatch.setattr(ChatClient, "_post_json_once", fake_post_once)
+    client = ChatClient(
+        ModelSettings(
+            role="weak",
+            provider="openai",
+            base_url="https://example.com/v1",
+            api_key="k",
+            model="m",
+            api_style="responses",
+        )
+    )
+
+    assert asyncio.run(client.complete([{"role": "user", "content": "hi"}])) == "direct output"
 
 
 def test_chat_client_does_not_retry_bad_request(monkeypatch) -> None:

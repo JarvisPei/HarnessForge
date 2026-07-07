@@ -322,18 +322,27 @@ def _tau_user_model_settings(model: str) -> ModelSettings:
     api_key = os.getenv("TAU_USER_API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("TEACHER_API_KEY")
     if not base_url or not api_key:
         raise RuntimeError("TAU user LLM shim requires TAU_USER_* or OPENAI_* or TEACHER_* API env vars")
+    api_style = _tau_user_api_style()
     return ModelSettings(
         role="teacher",
         provider="openai",
         base_url=base_url,
         api_key=api_key,
         model=model.removeprefix("openai/"),
+        api_style=api_style,  # type: ignore[arg-type]
         timeout_seconds=float(os.getenv("TAU_USER_TIMEOUT_SECONDS", os.getenv("REQUEST_TIMEOUT_SECONDS", "600"))),
         max_retries=int(os.getenv("TAU_USER_MAX_RETRIES", os.getenv("REQUEST_MAX_RETRIES", "2"))),
         retry_backoff_seconds=float(
             os.getenv("TAU_USER_RETRY_BACKOFF_SECONDS", os.getenv("REQUEST_RETRY_BACKOFF_SECONDS", "2"))
         ),
     )
+
+
+def _tau_user_api_style() -> str:
+    api_style = os.getenv("TAU_USER_API_STYLE", os.getenv("OPENAI_API_STYLE", "chat")).strip().lower()
+    if api_style not in {"chat", "responses"}:
+        raise RuntimeError(f"TAU_USER_API_STYLE must be chat or responses, got: {api_style}")
+    return api_style
 
 
 def _register_harnessforge_agent(tau: dict[str, Any], name: str, settings: TauHarnessSettings) -> None:

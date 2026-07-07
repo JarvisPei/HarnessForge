@@ -64,7 +64,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Fill `.env` with your relay base URLs, keys, and model names. The current client uses chat-completions-style endpoints and does not require the official SDK.
+Fill `.env` with your relay base URLs, keys, and model names. The client does not require the official SDK. OpenAI-compatible profiles default to `/chat/completions`; set `WEAK_API_STYLE=responses` or `TEACHER_API_STYLE=responses` when your relay/model expects the OpenAI Responses API.
 
 For most demos, start with the default OpenAI GPT profile (`gpt-5.4-mini` weak / `gpt-5.5` teacher).
 
@@ -84,7 +84,7 @@ To use a different profile or relay suffix:
 python -m agentdistill.run --config configs/smoke.yaml --profile ALT_PROFILE
 ```
 
-Provider defaults to the chat-completions path for every profile. Set `WEAK_PROVIDER_<PROFILE>=anthropic` and `TEACHER_PROVIDER_<PROFILE>=anthropic` only for native Anthropic `/messages` endpoints.
+Provider defaults to OpenAI-compatible behavior for every profile. Set `WEAK_API_STYLE_<PROFILE>=responses` or `TEACHER_API_STYLE_<PROFILE>=responses` for OpenAI Responses API relays. Set `WEAK_PROVIDER_<PROFILE>=anthropic` and `TEACHER_PROVIDER_<PROFILE>=anthropic` only for native Anthropic `/messages` endpoints.
 
 By default, teacher-suggested harness changes are stored as proposals under `outputs/.../patches`. To let the teacher update the harness files directly within the allowed `harness/` directories:
 
@@ -108,7 +108,7 @@ python -m agentdistill.run --config configs/tool_stress.yaml --apply-patches --i
 
 If a teacher-generated runtime policy exists, the runner evaluates it after the weak model's initial answer. A policy may force a tool call before the final answer is produced.
 
-For tau-bench runs, add `--user-llm-shim` when an OpenAI-compatible relay accepts HarnessForge's raw chat-completions requests but blocks LiteLLM requests from tau2's user simulator. The shim routes text-only user-simulator calls through the same `ChatClient` path used by HarnessForge.
+For tau-bench runs, add `--user-llm-shim` when an OpenAI-compatible relay accepts HarnessForge's raw client requests but blocks LiteLLM requests from tau2's user simulator. The shim routes text-only user-simulator calls through the same `ChatClient` path used by HarnessForge; set `TAU_USER_API_STYLE=responses` if the user simulator model should use `/responses`.
 
 ## Benchmark Families
 

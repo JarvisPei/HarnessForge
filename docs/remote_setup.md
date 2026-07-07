@@ -85,7 +85,7 @@ TEACHER_API_KEY=
 TEACHER_MODEL=
 ```
 
-For relay APIs, the only requirement is chat-completions-style behavior.
+OpenAI-compatible relay APIs default to chat-completions-style behavior. Set `WEAK_API_STYLE=responses`, `TEACHER_API_STYLE=responses`, or profile-suffixed variants when a model/relay expects the OpenAI Responses API.
 
 Provider defaults to `openai` for every profile. For Anthropic-native `/messages` behavior, set the relevant profile to:
 

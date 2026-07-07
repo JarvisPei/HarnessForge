@@ -12,6 +12,7 @@ import httpx
 
 Role = Literal["weak", "teacher", "critic"]
 Provider = Literal["openai", "anthropic"]
+OpenAIAPIStyle = Literal["chat", "responses"]
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,7 @@ class ModelSettings:
     api_key: str
     model: str
     reasoning_effort: str | None = None
+    api_style: OpenAIAPIStyle = "chat"
     timeout_seconds: float = 120.0
     max_retries: int = 2
     retry_backoff_seconds: float = 2.0
@@ -37,6 +39,10 @@ class ChatClient:
         return await self._complete_openai(messages, temperature)
 
     async def _complete_openai(self, messages: list[dict[str, str]], temperature: float) -> str:
+        if self.settings.api_style == "responses":
+            return await self._complete_openai_responses(messages, temperature)
+        if self.settings.api_style != "chat":
+            raise RuntimeError(f"OpenAI API style must be chat or responses, got: {self.settings.api_style}")
         url = self.settings.base_url.rstrip("/") + "/chat/completions"
         payload: dict[str, Any] = {
             "model": self.settings.model,
@@ -51,6 +57,22 @@ class ChatClient:
         }
         data = await self._post_json_with_retries(url, headers, payload)
         return data["choices"][0]["message"]["content"]
+
+    async def _complete_openai_responses(self, messages: list[dict[str, str]], temperature: float) -> str:
+        url = self.settings.base_url.rstrip("/") + "/responses"
+        payload: dict[str, Any] = {
+            "model": self.settings.model,
+            "input": _openai_responses_input(messages),
+            "temperature": temperature,
+        }
+        if self.settings.reasoning_effort:
+            payload["reasoning"] = {"effort": self.settings.reasoning_effort}
+        headers = {
+            "Authorization": f"Bearer {self.settings.api_key}",
+            "Content-Type": "application/json",
+        }
+        data = await self._post_json_with_retries(url, headers, payload)
+        return _extract_openai_responses_text(data)
 
     async def _complete_anthropic(self, messages: list[dict[str, str]], temperature: float) -> str:
         url = self.settings.base_url.rstrip("/") + "/messages"
@@ -135,6 +157,12 @@ def load_model_settings(role: Role, profile: str | None = None) -> ModelSettings
         f"{prefix}_REASONING_EFFORT{suffix}",
         f"{fallback_prefix}_REASONING_EFFORT{suffix}",
     )
+    api_style = os.getenv(
+        f"{prefix}_API_STYLE{suffix}",
+        os.getenv(f"{fallback_prefix}_API_STYLE{suffix}", os.getenv("OPENAI_API_STYLE", "chat")),
+    ).strip().lower()
+    if api_style not in {"chat", "responses"}:
+        raise RuntimeError(f"{prefix}_API_STYLE{suffix} must be chat or responses, got: {api_style}")
     provider = os.getenv(f"{prefix}_PROVIDER{suffix}", os.getenv(f"{fallback_prefix}_PROVIDER{suffix}", "openai")).lower()
     if provider not in {"openai", "anthropic"}:
         raise RuntimeError(f"{prefix}_PROVIDER{suffix} must be openai or anthropic, got: {provider}")
@@ -145,6 +173,7 @@ def load_model_settings(role: Role, profile: str | None = None) -> ModelSettings
         api_key=_env_with_fallback(f"{prefix}_API_KEY{suffix}", f"{fallback_prefix}_API_KEY{suffix}"),
         model=_env_with_fallback(f"{prefix}_MODEL{suffix}", f"{fallback_prefix}_MODEL{suffix}"),
         reasoning_effort=reasoning_effort,
+        api_style=api_style,  # type: ignore[arg-type]
         timeout_seconds=timeout,
         max_retries=max_retries,
         retry_backoff_seconds=retry_backoff,
@@ -201,6 +230,57 @@ def _required_env(name: str) -> str:
     if not value:
         raise RuntimeError(f"Missing required environment variable: {name}")
     return value
+
+
+def _openai_responses_input(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    return [
+        {
+            "role": _openai_responses_role(message.get("role", "user")),
+            "content": str(message.get("content", "") or ""),
+        }
+        for message in messages
+    ]
+
+
+def _openai_responses_role(role: str) -> str:
+    if role in {"system", "developer"}:
+        return role
+    if role == "assistant":
+        return "assistant"
+    return "user"
+
+
+def _extract_openai_responses_text(data: dict[str, Any]) -> str:
+    output_text = data.get("output_text")
+    if isinstance(output_text, str):
+        return output_text
+    parts: list[str] = []
+    for item in data.get("output", []):
+        if not isinstance(item, dict):
+            continue
+        for block in item.get("content", []):
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") in {"output_text", "text"} and isinstance(block.get("text"), str):
+                parts.append(block["text"])
+    if parts:
+        return "\n".join(parts)
+    choice_content = _extract_chat_choice_text(data)
+    return choice_content if isinstance(choice_content, str) else ""
+
+
+def _extract_chat_choice_text(data: dict[str, Any]) -> str | None:
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return None
+    first_choice = choices[0]
+    if not isinstance(first_choice, dict):
+        return None
+    message = first_choice.get("message")
+    if not isinstance(message, dict):
+        return None
+    content = message.get("content")
+    return content if isinstance(content, str) else None
 
 
 def _extract_anthropic_text(data: dict[str, Any]) -> str:
