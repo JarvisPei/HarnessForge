@@ -24,6 +24,7 @@ from agentdistill.tools import RuntimePolicyRegistry
 
 app = typer.Typer(add_completion=False)
 console = Console()
+TAU_USER_EMPTY_RESPONSE_FALLBACK = "Please continue."
 
 
 @dataclass(frozen=True)
@@ -270,9 +271,17 @@ def _make_tau_user_llm_completion_shim(original_completion: Any) -> Any:
         settings = _tau_user_model_settings(str(model))
         temperature = float(kwargs.get("temperature", 0.1))
         text = _complete_sync(ChatClient(settings), messages, temperature=temperature)
+        text = _tau_user_nonempty_text(text)
         return _LiteLLMShimResponse(model=settings.model, content=text)
 
     return completion_shim
+
+
+def _tau_user_nonempty_text(text: str) -> str:
+    if text.strip():
+        return text
+    fallback = os.getenv("TAU_USER_EMPTY_RESPONSE_FALLBACK", TAU_USER_EMPTY_RESPONSE_FALLBACK).strip()
+    return fallback or TAU_USER_EMPTY_RESPONSE_FALLBACK
 
 
 class _LiteLLMShimResponse(dict):

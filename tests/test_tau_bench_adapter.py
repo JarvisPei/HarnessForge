@@ -291,6 +291,41 @@ def test_tau_user_llm_completion_shim_uses_chat_client(monkeypatch) -> None:
     assert captured["temperature"] == 0.3
 
 
+def test_tau_user_llm_completion_shim_replaces_empty_text(monkeypatch) -> None:
+    async def fake_complete(self, messages, temperature=0.2):
+        return "   "
+
+    def original_completion(**kwargs):
+        raise AssertionError("original LiteLLM completion should not be used for text-only shim calls")
+
+    monkeypatch.setenv("TAU_USER_BASE_URL", "https://example.com/v1")
+    monkeypatch.setenv("TAU_USER_API_KEY", "k")
+    monkeypatch.setattr("agentdistill.tau_bench.ChatClient.complete", fake_complete)
+
+    shim = _make_tau_user_llm_completion_shim(original_completion)
+    response = shim(model="gpt-5.5", messages=[{"role": "user", "content": "hi"}])
+
+    assert response.choices[0].message.content == "Please continue."
+
+
+def test_tau_user_llm_completion_shim_empty_text_fallback_can_be_overridden(monkeypatch) -> None:
+    async def fake_complete(self, messages, temperature=0.2):
+        return ""
+
+    def original_completion(**kwargs):
+        raise AssertionError("original LiteLLM completion should not be used for text-only shim calls")
+
+    monkeypatch.setenv("TAU_USER_BASE_URL", "https://example.com/v1")
+    monkeypatch.setenv("TAU_USER_API_KEY", "k")
+    monkeypatch.setenv("TAU_USER_EMPTY_RESPONSE_FALLBACK", "Can you clarify?")
+    monkeypatch.setattr("agentdistill.tau_bench.ChatClient.complete", fake_complete)
+
+    shim = _make_tau_user_llm_completion_shim(original_completion)
+    response = shim(model="gpt-5.5", messages=[{"role": "user", "content": "hi"}])
+
+    assert response.choices[0].message.content == "Can you clarify?"
+
+
 def test_tau_user_llm_completion_shim_falls_back_for_tool_calls() -> None:
     calls = {}
 
